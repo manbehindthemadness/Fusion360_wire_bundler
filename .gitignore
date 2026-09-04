@@ -1,0 +1,13 @@
+/reference/
+/.idea
+/.venv
+/.codex
+/.agents
+/standards
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+/AGENTS.md
+/summary.txt
+/F360WireGenerator/

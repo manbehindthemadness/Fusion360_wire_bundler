@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "addin",
+  "id": "FB1605C3-3721-4B69-B756-5137AE324E8A",
+  "author": "Fusion 360 Wire Bundler contributors",
+  "description": {
+    "": "Build editable wire, ribbon, and harness assemblies."
+  },
+  "version": "0.1.0",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}
