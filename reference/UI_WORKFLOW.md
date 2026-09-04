@@ -37,6 +37,12 @@ The user may either:
 * Create a child harness inside an existing harness
 * Inspect a previously generated harness
 
+Harness discovery is attribute-driven across the active design. A malformed or
+unsupported stored definition remains visible as a damaged entry with its component
+name and load error; it must not prevent other harnesses from loading. Creating a
+harness from the palette uses a native Fusion command for document-changing inputs,
+then refreshes the persistent palette after the transaction succeeds.
+
 ---
 
 # 2. Select Parent Assembly

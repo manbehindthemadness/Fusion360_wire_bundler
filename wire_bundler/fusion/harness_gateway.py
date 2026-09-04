@@ -13,6 +13,7 @@ import adsk.core
 # noinspection PyUnresolvedReferences
 import adsk.fusion
 
+from ..application import StoredHarness
 from ..domain import next_available_name
 
 ATTRIBUTE_GROUP = "kev0.wire_bundler"
@@ -28,6 +29,20 @@ class _FusionAttributes(Protocol):
         """
         Add a persistent string attribute.
         """
+
+    # noinspection PyPep8Naming
+    def itemByName(self, group: str, name: str) -> Optional[_FusionAttribute]:
+        """
+        Return a persistent attribute by group and name.
+        """
+
+
+class _FusionAttribute(Protocol):
+    """
+    Describe the stored string exposed by a Fusion attribute.
+    """
+
+    value: str
 
 
 class _FusionComponent(Protocol):
@@ -182,6 +197,33 @@ class FusionHarnessGateway:
                     unavailable_names.append(data_file.name)
 
         return next_available_name(requested_name, unavailable_names)
+
+    def list_stored_harnesses(self) -> tuple[StoredHarness, ...]:
+        """
+        Return definitions stored on every marked component in the active design.
+
+        Returns:
+            Component names and their serialized definition attributes.
+        """
+        stored_harnesses: list[StoredHarness] = []
+        components = cast(_FusionComponents, self._design.allComponents)
+        for index in range(components.count):
+            component = components.item(index)
+            if component is None:
+                continue
+            attribute = component.attributes.itemByName(
+                ATTRIBUTE_GROUP,
+                DEFINITION_ATTRIBUTE_NAME,
+            )
+            if attribute is None:
+                continue
+            stored_harnesses.append(
+                StoredHarness(
+                    component_name=component.name,
+                    serialized_definition=attribute.value,
+                )
+            )
+        return tuple(stored_harnesses)
 
     def create_harness_component(self, name: str) -> object:
         """

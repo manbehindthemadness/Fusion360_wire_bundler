@@ -1,6 +1,6 @@
 # Fusion 360 Wire Bundler
 
-Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, and harness assemblies. The project is in its foundation stage; the current command creates an empty harness child component and stores its versioned draft definition in Fusion attributes. Creating a harness converts an active Part design to Hybrid intent; in an Assembly design it creates an external component in Fusion's active cloud folder.
+Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, and harness assemblies. The current milestone provides a persistent Harness Builder palette that discovers and inspects stored procedural harnesses and opens the native creation workflow. Creating a harness stores a versioned draft definition, converts an active Part design to Hybrid intent, or creates an external component in Fusion's active cloud folder when working in an Assembly design.
 
 ## Current milestone
 
@@ -13,6 +13,8 @@ Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, an
 - Transactional empty-harness creation with rollback on metadata failure
 - Fusion component and attribute persistence adapter
 - Conflict-free harness names shared by the component and stored definition
+- Persistent Harness Builder palette with create, refresh, discovery, and summary inspection
+- Isolated reporting of malformed stored definitions without hiding healthy harnesses
 
 The detailed product behavior is defined in `reference/`. Persistent conductor identity, explicit control-structure ordering, editable geometry, and stored procedural metadata are core requirements.
 
@@ -22,12 +24,14 @@ This repository directory is already located under Fusion's `API/AddIns` directo
 
 1. Open Fusion and choose **Utilities > Add-Ins > Scripts and Add-Ins**.
 2. On the **Add-Ins** tab, select `Fusion360_wire_bundler` and choose **Run**.
-3. In the **Solid** workspace, choose the visible **Harness Builder** button in the **Utilities > Add-Ins** panel.
-4. Confirm the dialog suggests the next available harness name, choose a routing mode, and select **OK**.
-5. Confirm that Fusion creates exactly one empty child component beneath the active component and displays a success message. If the document began as a Part design, also confirm that Fusion changed it to Hybrid intent.
-6. Re-run the command with `Harness_001` and confirm the new child is named `Harness_002` without changing the existing harness.
-7. In an Assembly design, choose the visible **Harness Builder** button in the **Assembly** tab's **Insert** panel. Confirm it creates an external harness in the active cloud folder; save the parent assembly to persist the new external component.
-8. Stop the add-in in **Scripts and Add-Ins** and confirm that the command is removed from both panels.
+3. In the **Solid** workspace, choose the visible **Harness Builder** button in the **Utilities > Add-Ins** panel and confirm the persistent palette opens.
+4. Select **Create New Harness**, confirm the native dialog suggests the next available harness name, choose a routing mode, and select **OK**.
+5. Confirm Fusion creates exactly one empty child component beneath the active component, the palette reports success, and the new draft appears under **Existing Harnesses**. If the document began as a Part design, also confirm that Fusion changed it to Hybrid intent.
+6. Select the harness entry and confirm its component name, definition name, routing mode, counts, persistent ID, and draft status appear without closing the palette.
+7. Create another harness and confirm the suggested and created name increments without changing the existing harness.
+8. In an Assembly design, open Harness Builder from the **Assembly** tab's **Insert** panel. Confirm it creates an external harness in the active cloud folder and appears in the palette; save the parent assembly to persist the new external component.
+9. Close and reopen the palette, then stop and run the add-in. Confirm the existing definitions are rediscovered after each operation.
+10. Stop the add-in in **Scripts and Add-Ins** and confirm that the command and palette are removed.
 
 During development, stopping the add-in evicts its `wire_bundler` package modules. Running it again therefore loads current source without restarting Fusion. Changes to the bootstrap file `Fusion360_wire_bundler.py` itself still require one Fusion restart before this reload behavior changes.
 
@@ -64,4 +68,4 @@ F360WireGenerator/               Unrelated third-party example repository
 
 ## Domain boundary
 
-`wire_bundler/domain/` and `wire_bundler/application/` have no Fusion dependency. They define and transactionally persist the empty draft that starts a harness, including deterministic conflict-free naming. `wire_bundler/fusion/` converts a Part design to Hybrid intent when necessary, creates internal children in Hybrid designs or external children in Assembly designs, and stores deterministic schema-versioned JSON in the component attribute group `kev0.wire_bundler` under `harness_definition`. Names are checked against every component in the active design and, for external components, files in the active cloud folder. Standalone wires belong as bodies in Part designs. Fusion geometry inspection, loading and editing existing definitions, non-circular profiles, terminators, and route generation remain future milestones.
+`wire_bundler/domain/` and `wire_bundler/application/` have no Fusion dependency. They define and transactionally persist the empty draft that starts a harness, including deterministic conflict-free naming, and decode discovered definitions without allowing one damaged component to hide healthy neighbors. `wire_bundler/fusion/` converts a Part design to Hybrid intent when necessary, creates internal children in Hybrid designs or external children in Assembly designs, stores deterministic schema-versioned JSON in the component attribute group `kev0.wire_bundler` under `harness_definition`, and discovers marked components across the active design. Names are checked against every component in the active design and, for external components, files in the active cloud folder. Standalone wires belong as bodies in Part designs. Editing definitions, Fusion geometry inspection, non-circular profiles, terminators, and route generation remain future milestones.

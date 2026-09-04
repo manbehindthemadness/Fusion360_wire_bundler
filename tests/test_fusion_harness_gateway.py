@@ -47,6 +47,28 @@ class _Attributes:
         self.values.append((group, name, value))
         return object()
 
+    # noinspection PyPep8Naming
+    def itemByName(self, group: str, name: str) -> Optional[object]:
+        """
+        Return the most recently written matching fake attribute.
+        """
+        for stored_group, stored_name, stored_value in reversed(self.values):
+            if stored_group == group and stored_name == name:
+                return _Attribute(stored_value)
+        return None
+
+
+class _Attribute:
+    """
+    Provide a persisted string value for discovery tests.
+    """
+
+    def __init__(self, value: str) -> None:
+        """
+        Store a fake Fusion attribute value.
+        """
+        self.value = value
+
 
 class _Occurrence:
     """
@@ -408,3 +430,24 @@ def test_requires_cloud_folder_for_assembly_design(fusion_gateway_type: type) ->
 
     with pytest.raises(RuntimeError, match="active Fusion cloud folder"):
         gateway.resolve_harness_name("Harness_001")
+
+
+def test_lists_only_components_with_harness_metadata(fusion_gateway_type: type) -> None:
+    """
+    Discover marked definitions across the complete active design.
+    """
+    design = _Design(_IntentTypes.HybridDesignIntentType, existing_names=("Harness_001",))
+    harness_component = design.allComponents.item(1)
+    assert harness_component is not None
+    harness_component.attributes.add(
+        "kev0.wire_bundler",
+        "harness_definition",
+        "definition-json",
+    )
+    gateway = fusion_gateway_type(design)
+
+    stored_harnesses = gateway.list_stored_harnesses()
+
+    assert len(stored_harnesses) == 1
+    assert stored_harnesses[0].component_name == "Harness_001"
+    assert stored_harnesses[0].serialized_definition == "definition-json"

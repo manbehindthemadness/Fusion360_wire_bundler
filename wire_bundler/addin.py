@@ -4,6 +4,7 @@ Fusion 360 lifecycle and command registration.
 
 from __future__ import annotations
 
+import json
 import traceback
 from pathlib import Path
 
@@ -13,21 +14,25 @@ import adsk.core
 # noinspection PyUnresolvedReferences
 import adsk.fusion
 
-from .application import create_empty_harness, suggest_harness_name
+from .application import create_empty_harness, load_harnesses, suggest_harness_name
 from .domain import RoutingMode
 from .fusion import FusionHarnessGateway
 
 COMMAND_ID = "kev0_wire_bundler_harness_builder"
+CREATE_COMMAND_ID = "kev0_wire_bundler_create_harness"
 COMMAND_NAME = "Harness Builder"
 COMMAND_DESCRIPTION = "Create and edit wire, ribbon, and harness assemblies."
+CREATE_COMMAND_NAME = "Create Harness"
+PALETTE_ID = "kev0_wire_bundler_harness_builder_palette"
+PALETTE_HTML_URL = "palette.html"
 WORKSPACE_ID = "FusionSolidEnvironment"
 PANEL_IDS = ("SolidScriptsAddinsPanel", "InsertAssemblePanel")
 HARNESS_NAME_INPUT_ID = "harness_name"
 ROUTING_MODE_INPUT_ID = "routing_mode"
 DEFAULT_HARNESS_NAME = "Harness_001"
-COMMAND_RESOURCE_FOLDER = str(
-    Path(__file__).resolve().parent.parent / "resources" / "open_harness_builder"
-)
+ADDIN_ROOT = Path(__file__).resolve().parent.parent
+COMMAND_RESOURCE_FOLDER = str(ADDIN_ROOT / "resources" / "open_harness_builder")
+PALETTE_HTML_FILE = ADDIN_ROOT / "palette.html"
 
 _ROUTING_MODE_LABELS = {
     RoutingMode.ROUTING_GATES: "Routing Gates",
@@ -60,10 +65,7 @@ class _HarnessBuilderExecuteHandler(adsk.core.CommandEventHandler):
                 routing_mode,
                 gateway,
             )
-            application.userInterface.messageBox(
-                f"Created {definition.name} and stored its versioned harness definition.",
-                COMMAND_NAME,
-            )
+            _send_palette_state(application, f"Created {definition.name}.")
         except (AttributeError, RuntimeError, TypeError, ValueError):
             _report_failure("create harness")
 
@@ -90,7 +92,7 @@ class _HarnessBuilderValidateInputsHandler(adsk.core.ValidateInputsEventHandler)
         args.areInputsValid = True
 
 
-class _HarnessBuilderCreatedHandler(adsk.core.CommandCreatedEventHandler):
+class _CreateHarnessCreatedHandler(adsk.core.CommandCreatedEventHandler):
     """
     Attach per-command event handlers when Fusion creates a command.
     """
@@ -141,6 +143,90 @@ class _HarnessBuilderCreatedHandler(adsk.core.CommandCreatedEventHandler):
             raise
 
 
+class _ShowPaletteCreatedHandler(adsk.core.CommandCreatedEventHandler):
+    """
+    Show the persistent palette when Fusion creates the launcher command.
+    """
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, _args: adsk.core.CommandCreatedEventArgs) -> None:
+        """
+        Create or reveal the palette immediately for this input-free command.
+
+        Args:
+            _args: Command-created event arguments supplied by Fusion.
+        """
+        try:
+            application = adsk.core.Application.get()
+            _show_palette(application)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            _report_failure("open Harness Builder")
+            raise
+
+
+class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
+    """
+    Handle requests sent by the local Harness Builder palette.
+    """
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, args: adsk.core.HTMLEventArgs) -> None:
+        """
+        Return current harness state or open the native creation dialog.
+
+        Args:
+            args: HTML event arguments supplied by Fusion.
+        """
+        html_args = None
+        try:
+            html_args = adsk.core.HTMLEventArgs.cast(args)
+            if html_args is None:
+                raise TypeError("Fusion did not provide valid palette event arguments.")
+            application = adsk.core.Application.get()
+            if html_args.action == "get_state":
+                html_args.returnData = _serialize_palette_state(application)
+                return
+            if html_args.action == "create_harness":
+                command_definition = application.userInterface.commandDefinitions.itemById(
+                    CREATE_COMMAND_ID
+                )
+                if command_definition is None or not command_definition.execute():
+                    raise RuntimeError("Fusion did not open the Create Harness command.")
+                html_args.returnData = json.dumps({"ok": True})
+                return
+            html_args.returnData = json.dumps(
+                {"ok": False, "error": f"Unsupported palette action: {html_args.action}"}
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            if html_args is not None:
+                html_args.returnData = json.dumps(
+                    {"ok": False, "error": "Harness Builder could not complete the request."}
+                )
+            _report_failure("handle Harness Builder palette request")
+
+
+class _PaletteNavigationHandler(adsk.core.NavigationEventHandler):
+    """
+    Record palette navigation in Fusion's application log.
+    """
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, args: adsk.core.NavigationEventArgs) -> None:
+        """
+        Log the URL Fusion's embedded browser attempts to load.
+
+        Args:
+            args: Navigation event arguments supplied by Fusion.
+        """
+        try:
+            navigation_args = adsk.core.NavigationEventArgs.cast(args)
+            if navigation_args is None:
+                raise TypeError("Fusion did not provide valid palette navigation arguments.")
+            _log_to_fusion(f"Harness Builder navigating to: {navigation_args.navigationURL}")
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            _report_failure("record Harness Builder palette navigation")
+
+
 def start(_context: object) -> None:
     """
     Register the Harness Builder command with Fusion.
@@ -165,10 +251,23 @@ def start(_context: object) -> None:
         )
         if command_definition is None:
             raise RuntimeError("Fusion did not create the Harness Builder command definition.")
-        created_handler = _HarnessBuilderCreatedHandler()
+        created_handler = _ShowPaletteCreatedHandler()
         if not command_definition.commandCreated.add(created_handler):
             raise RuntimeError("Fusion did not register the command-created handler.")
         _handlers.append(created_handler)
+
+        create_command_definition = user_interface.commandDefinitions.addButtonDefinition(
+            CREATE_COMMAND_ID,
+            CREATE_COMMAND_NAME,
+            "Create an empty procedural harness definition.",
+            COMMAND_RESOURCE_FOLDER,
+        )
+        if create_command_definition is None:
+            raise RuntimeError("Fusion did not create the Create Harness command definition.")
+        create_handler = _CreateHarnessCreatedHandler()
+        if not create_command_definition.commandCreated.add(create_handler):
+            raise RuntimeError("Fusion did not register the harness creation handler.")
+        _handlers.append(create_handler)
 
         registered_panel_ids: list[str] = []
         for panel_id in PANEL_IDS:
@@ -223,6 +322,114 @@ def _remove_user_interface(user_interface: adsk.core.UserInterface) -> None:
     command_definition = user_interface.commandDefinitions.itemById(COMMAND_ID)
     if command_definition:
         command_definition.deleteMe()
+    create_command_definition = user_interface.commandDefinitions.itemById(CREATE_COMMAND_ID)
+    if create_command_definition:
+        create_command_definition.deleteMe()
+    palette = user_interface.palettes.itemById(PALETTE_ID)
+    if palette:
+        palette.deleteMe()
+
+
+def _show_palette(application: adsk.core.Application) -> None:
+    """
+    Create or reveal the persistent Harness Builder palette.
+
+    Args:
+        application: Active Fusion application.
+    """
+    user_interface = application.userInterface
+    palette = user_interface.palettes.itemById(PALETTE_ID)
+    if palette is None:
+        if not PALETTE_HTML_FILE.is_file():
+            raise RuntimeError(f"Harness Builder palette file is missing: {PALETTE_HTML_FILE}")
+        palette = user_interface.palettes.add(
+            PALETTE_ID,
+            COMMAND_NAME,
+            PALETTE_HTML_URL,
+            True,
+            True,
+            True,
+            420,
+            620,
+            True,
+        )
+        if palette is None:
+            raise RuntimeError("Fusion did not create the Harness Builder palette.")
+        incoming_handler = _PaletteIncomingHandler()
+        if not palette.incomingFromHTML.add(incoming_handler):
+            palette.deleteMe()
+            raise RuntimeError("Fusion did not register the palette event handler.")
+        navigation_handler = _PaletteNavigationHandler()
+        if not palette.navigatingURL.add(navigation_handler):
+            palette.deleteMe()
+            raise RuntimeError("Fusion did not register the palette navigation handler.")
+        _handlers.extend((incoming_handler, navigation_handler))
+        _log_to_fusion(f"Harness Builder requested palette file: {palette.htmlFileURL}")
+    else:
+        palette.isVisible = True
+    _send_palette_state(application)
+
+
+def _send_palette_state(
+    application: adsk.core.Application,
+    notice: str = "",
+) -> None:
+    """
+    Push the current harness library to an existing palette.
+
+    Args:
+        application: Active Fusion application.
+        notice: Optional user-facing status message.
+    """
+    palette = application.userInterface.palettes.itemById(PALETTE_ID)
+    if palette is None:
+        return
+    palette.sendInfoToHTML("state", _serialize_palette_state(application, notice))
+
+
+def _serialize_palette_state(
+    application: adsk.core.Application,
+    notice: str = "",
+) -> str:
+    """
+    Serialize discovered harness summaries for the palette boundary.
+
+    Args:
+        application: Active Fusion application.
+        notice: Optional user-facing status message.
+
+    Returns:
+        JSON object consumed by the local palette.
+    """
+    results = load_harnesses(_create_harness_gateway(application))
+    harnesses: list[dict[str, object]] = []
+    for result in results:
+        definition = result.definition
+        if definition is None:
+            harnesses.append(
+                {
+                    "componentName": result.component_name,
+                    "error": result.error,
+                    "status": "damaged",
+                }
+            )
+            continue
+        harnesses.append(
+            {
+                "componentName": result.component_name,
+                "definitionName": definition.name,
+                "harnessId": str(definition.harness_id),
+                "routingMode": _ROUTING_MODE_LABELS[definition.routing_mode],
+                "profileCount": len(definition.profiles),
+                "connectionCount": len(definition.connections),
+                "controlCount": len(definition.controls),
+                "wireCount": len(definition.wires),
+                "status": "draft" if result.validation_messages else "valid",
+                "validationMessages": result.validation_messages,
+            }
+        )
+    payload = {"harnesses": harnesses, "notice": notice, "ok": True}
+    return json.dumps(payload, sort_keys=True)
 
 
 def _report_failure(operation: str) -> None:
@@ -238,6 +445,20 @@ def _report_failure(operation: str) -> None:
             f"Wire Bundler failed to {operation}:\n{traceback.format_exc()}",
             COMMAND_NAME,
         )
+
+
+def _log_to_fusion(message: str) -> None:
+    """
+    Write a diagnostic message to Fusion's application log.
+
+    Args:
+        message: Diagnostic text to record.
+    """
+    adsk.core.Application.log(
+        message,
+        adsk.core.LogLevels.InfoLogLevel,
+        adsk.core.LogTypes.FileLogType,
+    )
 
 
 def _create_harness_gateway(application: adsk.core.Application) -> FusionHarnessGateway:
