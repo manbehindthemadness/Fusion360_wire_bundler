@@ -102,7 +102,13 @@
     }
     .status[data-status="valid"] { background: #dff1df; color: #226b22; }
     .status[data-status="damaged"] { background: #f5dfdf; color: #8e3030; }
-    .editor-nav { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+    .editor-nav {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
     .editor-heading { display: grid; gap: 5px; margin-bottom: 14px; }
     .editor-heading .meta { color: var(--muted); }
     .overview {
@@ -188,6 +194,8 @@
         <button id="back" class="button compact" type="button">← All Harnesses</button>
         <button id="add-pathway" class="button compact primary" type="button">Add Pathway</button>
         <button id="add-wires" class="button compact primary" type="button">Add Wires</button>
+        <button id="preview-routes" class="button compact primary" type="button">Preview Routes</button>
+        <button id="clear-preview" class="button compact" type="button">Clear Preview</button>
         <button id="create-from-editor" class="button compact" type="button">New Harness</button>
       </div>
       <div id="editor"></div>
@@ -198,6 +206,8 @@
       back: document.getElementById("back"),
       addPathway: document.getElementById("add-pathway"),
       addWires: document.getElementById("add-wires"),
+      previewRoutes: document.getElementById("preview-routes"),
+      clearPreview: document.getElementById("clear-preview"),
       create: document.getElementById("create"),
       createFromEditor: document.getElementById("create-from-editor"),
       editor: document.getElementById("editor"),
@@ -428,6 +438,7 @@
     function renderEditor(harness) {
       ui.editor.replaceChildren();
       ui.addWires.disabled = harness.status === "damaged" || !harness.pathways?.length;
+      ui.previewRoutes.disabled = harness.status === "damaged" || !harness.wires?.length;
       const heading = document.createElement("div");
       const title = document.createElement("h2");
       const meta = document.createElement("div");
@@ -646,8 +657,43 @@
       }
     }
 
+    async function previewRoutes() {
+      const harness = currentState.harnesses.find(
+        (candidate) => harnessKey(candidate) === selectedHarnessKey,
+      );
+      if (!harness || harness.status === "damaged" || !harness.wires.length) return;
+      ui.notice.style.color = "";
+      ui.notice.textContent = "Solving route preview…";
+      try {
+        const response = await send("preview_routes", { harnessId: harness.harnessId });
+        if (!response.ok) {
+          ui.notice.textContent = response.error || "Routes could not be previewed.";
+          ui.notice.style.color = "var(--danger)";
+        }
+      } catch (error) {
+        ui.notice.textContent = error.message;
+        ui.notice.style.color = "var(--danger)";
+      }
+    }
+
+    async function clearPreview() {
+      ui.notice.style.color = "";
+      try {
+        const response = await send("clear_preview");
+        if (!response.ok) {
+          ui.notice.textContent = response.error || "Route preview could not be cleared.";
+          ui.notice.style.color = "var(--danger)";
+        }
+      } catch (error) {
+        ui.notice.textContent = error.message;
+        ui.notice.style.color = "var(--danger)";
+      }
+    }
+
     ui.addPathway.addEventListener("click", addPathway);
     ui.addWires.addEventListener("click", addWires);
+    ui.previewRoutes.addEventListener("click", previewRoutes);
+    ui.clearPreview.addEventListener("click", clearPreview);
     ui.back.addEventListener("click", closeEditor);
     ui.create.addEventListener("click", createHarness);
     ui.createFromEditor.addEventListener("click", createHarness);

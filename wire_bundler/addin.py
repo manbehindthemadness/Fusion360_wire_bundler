@@ -25,7 +25,7 @@ from .application import (
     suggest_pathway_name,
 )
 from .domain import RoutingMode, loads
-from .fusion import FusionHarnessGateway
+from .fusion import FusionHarnessGateway, clear_route_previews, show_route_previews
 
 COMMAND_ID = "kev0_wire_bundler_harness_builder"
 CREATE_COMMAND_ID = "kev0_wire_bundler_create_harness"
@@ -520,6 +520,22 @@ class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
                 _open_add_wires_command(application, html_args.data)
                 html_args.returnData = json.dumps({"ok": True})
                 return
+            if html_args.action == "preview_routes":
+                try:
+                    route_count = _preview_routes(application, html_args.data)
+                except (RuntimeError, ValueError) as error:
+                    html_args.returnData = json.dumps({"ok": False, "error": str(error)})
+                    _log_to_fusion(f"Harness route preview rejected: {error}")
+                    return
+                html_args.returnData = json.dumps({"ok": True, "routeCount": route_count})
+                return
+            if html_args.action == "clear_preview":
+                design = _require_active_design(application)
+                clear_route_previews(design)
+                application.activeViewport.refresh()
+                _send_palette_state(application, "Cleared route preview.")
+                html_args.returnData = json.dumps({"ok": True})
+                return
             html_args.returnData = json.dumps(
                 {"ok": False, "error": f"Unsupported palette action: {html_args.action}"}
             )
@@ -650,6 +666,9 @@ def stop(_context: object) -> None:
 
     try:
         application = adsk.core.Application.get()
+        design = adsk.fusion.Design.cast(application.activeProduct)
+        if design is not None:
+            clear_route_previews(design)
         _remove_user_interface(application.userInterface)
         _handlers.clear()
         _pending_pathway_harness_id = None
@@ -945,6 +964,49 @@ def _open_add_wires_command(application: adsk.core.Application, serialized_data:
     except Exception:
         _pending_wire_harness_id = None
         raise
+
+
+def _preview_routes(application: adsk.core.Application, serialized_data: str) -> int:
+    """
+    Solve and display route previews for the palette-selected harness.
+
+    Args:
+        application: Active Fusion application.
+        serialized_data: Palette JSON containing the selected harness identity.
+
+    Returns:
+        Number of displayed wire routes.
+    """
+    payload = json.loads(serialized_data)
+    if not isinstance(payload, dict):
+        raise ValueError("Preview Routes request must be a JSON object.")
+    raw_harness_id = payload.get("harnessId")
+    if not isinstance(raw_harness_id, str):
+        raise ValueError("Preview Routes request is missing a harness identity.")
+    harness_id = UUID(raw_harness_id)
+    design = _require_active_design(application)
+    gateway = _create_harness_gateway(application)
+    definition = loads(gateway.read_harness_definition(harness_id))
+    routes = show_route_previews(design, definition)
+    application.activeViewport.refresh()
+    _send_palette_state(application, f"Previewing {len(routes)} wire routes.")
+    return len(routes)
+
+
+def _require_active_design(application: adsk.core.Application) -> adsk.fusion.Design:
+    """
+    Return the active Fusion design or report the missing host context.
+
+    Args:
+        application: Active Fusion application.
+
+    Returns:
+        Active Fusion design.
+    """
+    design = adsk.fusion.Design.cast(application.activeProduct)
+    if design is None:
+        raise RuntimeError("Harness Builder requires an active Fusion design.")
+    return design
 
 
 def _add_profile_selection_input(

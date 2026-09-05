@@ -10,6 +10,7 @@ import sys
 from collections.abc import Callable
 from types import ModuleType, SimpleNamespace
 from typing import Protocol, cast
+from unittest.mock import Mock
 
 import pytest
 
@@ -23,10 +24,13 @@ class _PaletteLifecycleModule(Protocol):
     """
 
     _handlers: list[object]
+    _PaletteIncomingHandler: type
     _ShowPaletteCreatedHandler: type
     _show_palette: Callable[[object], None]
     _create_harness_gateway: Callable[[object], object]
     _serialize_palette_state: Callable[[object, str], str]
+    _preview_routes: Callable[[object, str], int]
+    _log_to_fusion: Callable[[str], None]
     load_harnesses: Callable[[object], tuple[HarnessLoadResult, ...]]
 
 
@@ -118,3 +122,32 @@ def test_palette_state_contains_complete_editor_definition(
     assert harness["wires"][0]["wireNumber"] == "001"
     assert harness["wires"][0]["orderedPathwayIds"] == [str(valid_harness.pathways[0].pathway_id)]
     assert harness["wires"][0]["orderedControlIds"] == [str(valid_harness.controls[0].control_id)]
+
+
+def test_route_capacity_error_is_returned_to_palette(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Keep expected preview rejection actionable without a generic failure dialog.
+    """
+    application = object()
+    logged_messages: list[str] = []
+    core_module = sys.modules["adsk.core"]
+    core_module.Application = SimpleNamespace(get=lambda: application)  # type: ignore[attr-defined]
+    core_module.HTMLEventArgs = SimpleNamespace(cast=lambda args: args)  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        addin_module,
+        "_preview_routes",
+        Mock(side_effect=ValueError("Gate 4 cannot fit 3 wires.")),
+    )
+    monkeypatch.setattr(addin_module, "_log_to_fusion", logged_messages.append)
+    html_args = SimpleNamespace(action="preview_routes", data="{}", returnData="")
+
+    addin_module._PaletteIncomingHandler().notify(html_args)
+
+    assert json.loads(html_args.returnData) == {
+        "ok": False,
+        "error": "Gate 4 cannot fit 3 wires.",
+    }
+    assert logged_messages == ["Harness route preview rejected: Gate 4 cannot fit 3 wires."]

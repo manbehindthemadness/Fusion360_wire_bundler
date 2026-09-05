@@ -31,7 +31,7 @@ from wire_bundler.domain import (  # noqa: E402
     loads,
     validate_harness,
 )
-from wire_bundler.fusion import FusionHarnessGateway  # noqa: E402
+from wire_bundler.fusion import FusionHarnessGateway, show_route_previews  # noqa: E402
 
 SCENARIO_NAME = "reference_harness"
 ARTIFACT_ROOT = ADDIN_ROOT / "artifacts" / "verification"
@@ -175,6 +175,14 @@ def run(_context: object) -> None:
             for connection in stored_definition.connections:
                 if not gateway.is_entity_token_resolvable(connection.entity_token):
                     raise AssertionError(f"Connection geometry did not resolve: {connection.name}")
+
+        with report.step("Solve and display lightweight route previews"):
+            route_previews = show_route_previews(design, stored_definition)
+            if tuple(route.wire_id for route in route_previews) != WIRE_IDS:
+                raise AssertionError("Route preview changed stable wire order.")
+            if any(len(route.points) != 5 for route in route_previews):
+                raise AssertionError("Route preview did not traverse every ordered gate.")
+            application.activeViewport.refresh()
 
         with report.step("Rediscover harness through Fusion metadata"):
             matching_harnesses = tuple(
