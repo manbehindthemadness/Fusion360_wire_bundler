@@ -15,6 +15,7 @@ from .model import (
     ControlKind,
     ControlStructure,
     HarnessDefinition,
+    PathwayDefinition,
     RoutingMode,
     WireDefinition,
     WireProfile,
@@ -76,38 +77,49 @@ def loads(serialized: str) -> HarnessDefinition:
 
     payload = _require_mapping(raw_payload, "$")
     schema_version = _require_int(payload, "schema_version", "$.schema_version")
-    if schema_version != SCHEMA_VERSION:
+    if schema_version not in (1, 2, SCHEMA_VERSION):
         raise DefinitionParseError(
             "$.schema_version",
-            f"unsupported version {schema_version}; expected {SCHEMA_VERSION}",
+            f"unsupported version {schema_version}; expected 1, 2, or {SCHEMA_VERSION}",
         )
 
+    harness_id = _require_uuid(payload, "harness_id", "$.harness_id")
+    name = _require_str(payload, "name", "$.name")
+    routing_mode = _require_enum(RoutingMode, payload, "routing_mode", "$.routing_mode")
+    profiles = tuple(
+        _parse_profile(item, f"$.profiles[{index}]")
+        for index, item in enumerate(_require_list(payload, "profiles", "$.profiles"))
+    )
+    connections = tuple(
+        _parse_connection(item, f"$.connections[{index}]")
+        for index, item in enumerate(_require_list(payload, "connections", "$.connections"))
+    )
+    controls = tuple(
+        _parse_control(item, f"$.controls[{index}]")
+        for index, item in enumerate(_require_list(payload, "controls", "$.controls"))
+    )
+    pathways = (
+        tuple(
+            _parse_pathway(item, f"$.pathways[{index}]")
+            for index, item in enumerate(_require_list(payload, "pathways", "$.pathways"))
+        )
+        if schema_version >= 2
+        else ()
+    )
+    wires = tuple(
+        _parse_wire(item, f"$.wires[{index}]", schema_version, pathways)
+        for index, item in enumerate(_require_list(payload, "wires", "$.wires"))
+    )
     definition = HarnessDefinition(
-        schema_version=schema_version,
-        harness_id=_require_uuid(payload, "harness_id", "$.harness_id"),
-        name=_require_str(payload, "name", "$.name"),
-        routing_mode=_require_enum(
-            RoutingMode,
-            payload,
-            "routing_mode",
-            "$.routing_mode",
-        ),
-        profiles=tuple(
-            _parse_profile(item, f"$.profiles[{index}]")
-            for index, item in enumerate(_require_list(payload, "profiles", "$.profiles"))
-        ),
-        connections=tuple(
-            _parse_connection(item, f"$.connections[{index}]")
-            for index, item in enumerate(_require_list(payload, "connections", "$.connections"))
-        ),
-        controls=tuple(
-            _parse_control(item, f"$.controls[{index}]")
-            for index, item in enumerate(_require_list(payload, "controls", "$.controls"))
-        ),
-        wires=tuple(
-            _parse_wire(item, f"$.wires[{index}]")
-            for index, item in enumerate(_require_list(payload, "wires", "$.wires"))
-        ),
+        schema_version=SCHEMA_VERSION,
+        harness_id=harness_id,
+        name=name,
+        routing_mode=routing_mode,
+        profiles=profiles,
+        connections=connections,
+        controls=controls,
+        pathways=pathways,
+        wires=wires,
     )
     return definition
 
@@ -152,6 +164,17 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
             }
             for control in definition.controls
         ],
+        "pathways": [
+            {
+                "pathway_id": str(pathway.pathway_id),
+                "name": pathway.name,
+                "routing_mode": pathway.routing_mode.value,
+                "ordered_control_ids": [
+                    str(control_id) for control_id in pathway.ordered_control_ids
+                ],
+            }
+            for pathway in definition.pathways
+        ],
         "wires": [
             {
                 "wire_id": str(wire.wire_id),
@@ -159,6 +182,7 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
                 "start_connection_id": str(wire.start_connection_id),
                 "end_connection_id": str(wire.end_connection_id),
                 "profile_id": str(wire.profile_id),
+                "ordered_pathway_ids": [str(pathway_id) for pathway_id in wire.ordered_pathway_ids],
                 "ordered_control_ids": [str(control_id) for control_id in wire.ordered_control_ids],
             }
             for wire in definition.wires
@@ -228,13 +252,55 @@ def _parse_control(raw_value: object, path: str) -> ControlStructure:
     return control
 
 
-def _parse_wire(raw_value: object, path: str) -> WireDefinition:
+def _parse_pathway(raw_value: object, path: str) -> PathwayDefinition:
+    """
+    Parse one reusable ordered pathway.
+
+    Args:
+        raw_value: Untrusted pathway value.
+        path: Pathway path for error reporting.
+
+    Returns:
+        Parsed pathway definition.
+    """
+    value = _require_mapping(raw_value, path)
+    raw_control_ids = _require_list(
+        value,
+        "ordered_control_ids",
+        f"{path}.ordered_control_ids",
+    )
+    control_ids = tuple(
+        _parse_uuid(raw_id, f"{path}.ordered_control_ids[{index}]")
+        for index, raw_id in enumerate(raw_control_ids)
+    )
+    pathway = PathwayDefinition(
+        pathway_id=_require_uuid(value, "pathway_id", f"{path}.pathway_id"),
+        name=_require_str(value, "name", f"{path}.name"),
+        routing_mode=_require_enum(
+            RoutingMode,
+            value,
+            "routing_mode",
+            f"{path}.routing_mode",
+        ),
+        ordered_control_ids=control_ids,
+    )
+    return pathway
+
+
+def _parse_wire(
+    raw_value: object,
+    path: str,
+    schema_version: int,
+    pathways: tuple[PathwayDefinition, ...],
+) -> WireDefinition:
     """
     Parse one authoritative conductor mapping.
 
     Args:
         raw_value: Untrusted wire value.
         path: Wire path for error reporting.
+        schema_version: Source definition schema version.
+        pathways: Parsed pathways available for legacy inference.
 
     Returns:
         Parsed conductor mapping.
@@ -249,6 +315,21 @@ def _parse_wire(raw_value: object, path: str) -> WireDefinition:
         _parse_uuid(raw_id, f"{path}.ordered_control_ids[{index}]")
         for index, raw_id in enumerate(raw_control_ids)
     )
+    if schema_version >= 3:
+        raw_pathway_ids = _require_list(
+            value,
+            "ordered_pathway_ids",
+            f"{path}.ordered_pathway_ids",
+        )
+        pathway_ids = tuple(
+            _parse_uuid(raw_id, f"{path}.ordered_pathway_ids[{index}]")
+            for index, raw_id in enumerate(raw_pathway_ids)
+        )
+    else:
+        matching_pathways = tuple(
+            pathway.pathway_id for pathway in pathways if pathway.ordered_control_ids == control_ids
+        )
+        pathway_ids = matching_pathways if len(matching_pathways) == 1 else ()
     wire = WireDefinition(
         wire_id=_require_uuid(value, "wire_id", f"{path}.wire_id"),
         wire_number=_require_str(value, "wire_number", f"{path}.wire_number"),
@@ -263,6 +344,7 @@ def _parse_wire(raw_value: object, path: str) -> WireDefinition:
             f"{path}.end_connection_id",
         ),
         profile_id=_require_uuid(value, "profile_id", f"{path}.profile_id"),
+        ordered_pathway_ids=pathway_ids,
         ordered_control_ids=control_ids,
     )
     return wire

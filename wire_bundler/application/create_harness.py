@@ -104,6 +104,7 @@ def create_empty_harness(
         profiles=(),
         connections=(),
         controls=(),
+        pathways=(),
         wires=(),
     )
     serialized_definition = dumps(definition)

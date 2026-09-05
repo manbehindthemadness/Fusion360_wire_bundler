@@ -7,6 +7,8 @@ from __future__ import annotations
 import json
 import traceback
 from pathlib import Path
+from typing import Optional
+from uuid import UUID
 
 # noinspection PyUnresolvedReferences
 import adsk.core
@@ -14,24 +16,43 @@ import adsk.core
 # noinspection PyUnresolvedReferences
 import adsk.fusion
 
-from .application import create_empty_harness, load_harnesses, suggest_harness_name
-from .domain import RoutingMode
+from .application import (
+    add_pathway,
+    add_wire_batch,
+    create_empty_harness,
+    load_harnesses,
+    suggest_harness_name,
+    suggest_pathway_name,
+)
+from .domain import RoutingMode, loads
 from .fusion import FusionHarnessGateway
 
 COMMAND_ID = "kev0_wire_bundler_harness_builder"
 CREATE_COMMAND_ID = "kev0_wire_bundler_create_harness"
+ADD_PATHWAY_COMMAND_ID = "kev0_wire_bundler_add_pathway"
+ADD_WIRES_COMMAND_ID = "kev0_wire_bundler_add_wires"
 COMMAND_NAME = "Harness Builder"
 COMMAND_DESCRIPTION = "Create and edit wire, ribbon, and harness assemblies."
 CREATE_COMMAND_NAME = "Create Harness"
+ADD_PATHWAY_COMMAND_NAME = "Add Pathway"
+ADD_WIRES_COMMAND_NAME = "Add Wires"
 PALETTE_ID = "kev0_wire_bundler_harness_builder_palette"
 PALETTE_HTML_URL = "palette.html"
 WORKSPACE_ID = "FusionSolidEnvironment"
 PANEL_IDS = ("SolidScriptsAddinsPanel", "InsertAssemblePanel")
 HARNESS_NAME_INPUT_ID = "harness_name"
+PATHWAY_NAME_INPUT_ID = "pathway_name"
+PATHWAY_GATES_INPUT_ID = "pathway_gates"
+WIRE_PATHWAY_INPUT_ID = "wire_pathway"
+WIRE_DIAMETER_INPUT_ID = "wire_diameter"
+SOURCE_CONNECTIONS_INPUT_ID = "source_connections"
+DESTINATION_CONNECTIONS_INPUT_ID = "destination_connections"
 ROUTING_MODE_INPUT_ID = "routing_mode"
 DEFAULT_HARNESS_NAME = "Harness_001"
 ADDIN_ROOT = Path(__file__).resolve().parent.parent
 COMMAND_RESOURCE_FOLDER = str(ADDIN_ROOT / "resources" / "open_harness_builder")
+ADD_PATHWAY_RESOURCE_FOLDER = str(ADDIN_ROOT / "resources" / "add_routing_gate")
+ADD_WIRES_RESOURCE_FOLDER = str(ADDIN_ROOT / "resources" / "add_harness_wire")
 PALETTE_HTML_FILE = ADDIN_ROOT / "palette.html"
 
 _ROUTING_MODE_LABELS = {
@@ -40,6 +61,8 @@ _ROUTING_MODE_LABELS = {
 }
 
 _handlers: list[object] = []
+_pending_pathway_harness_id: Optional[UUID] = None
+_pending_wire_harness_id: Optional[UUID] = None
 
 
 class _HarnessBuilderExecuteHandler(adsk.core.CommandEventHandler):
@@ -143,6 +166,301 @@ class _CreateHarnessCreatedHandler(adsk.core.CommandCreatedEventHandler):
             raise
 
 
+class _AddPathwayExecuteHandler(adsk.core.CommandEventHandler):
+    """
+    Persist an ordered pathway selected from Fusion sketch profiles.
+    """
+
+    def __init__(self, harness_id: UUID) -> None:
+        """
+        Bind the handler to the harness selected in the palette.
+
+        Args:
+            harness_id: Stable identity of the owning harness.
+        """
+        super().__init__()
+        self._harness_id = harness_id
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, args: adsk.core.CommandEventArgs) -> None:
+        """
+        Add the selected gate profiles to the owning harness as one pathway.
+
+        Args:
+            args: Command event arguments supplied by Fusion.
+        """
+        try:
+            application = adsk.core.Application.get()
+            command_inputs = args.command.commandInputs
+            pathway = add_pathway(
+                self._harness_id,
+                _read_pathway_name(command_inputs),
+                _read_routing_mode(command_inputs),
+                _read_pathway_gate_tokens(command_inputs),
+                _create_harness_gateway(application),
+            )
+            _send_palette_state(application, f"Created {pathway.name}.")
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            _report_failure("add pathway")
+
+
+class _AddPathwayValidateInputsHandler(adsk.core.ValidateInputsEventHandler):
+    """
+    Require a name, routing mode, and at least one selected profile.
+    """
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, args: adsk.core.ValidateInputsEventArgs) -> None:
+        """
+        Validate the complete pathway draft before Fusion enables execution.
+
+        Args:
+            args: Validation event arguments supplied by Fusion.
+        """
+        try:
+            _read_pathway_name(args.inputs)
+            _read_routing_mode(args.inputs)
+            _read_pathway_gate_tokens(args.inputs)
+        except ValueError:
+            args.areInputsValid = False
+            return
+        args.areInputsValid = True
+
+
+class _AddPathwayCreatedHandler(adsk.core.CommandCreatedEventHandler):
+    """
+    Build the ordered profile-selection command for the selected harness.
+    """
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
+        """
+        Add pathway inputs and retain their event handlers.
+
+        Args:
+            args: Command-created event arguments supplied by Fusion.
+        """
+        global _pending_pathway_harness_id
+
+        harness_id = _pending_pathway_harness_id
+        _pending_pathway_harness_id = None
+        try:
+            if harness_id is None:
+                raise RuntimeError("No harness was selected for pathway creation.")
+            application = adsk.core.Application.get()
+            gateway = _create_harness_gateway(application)
+            definition = loads(gateway.read_harness_definition(harness_id))
+            initial_name = suggest_pathway_name(harness_id, "Pathway_001", gateway)
+            command_inputs = args.command.commandInputs
+
+            name_input = command_inputs.addStringValueInput(
+                PATHWAY_NAME_INPUT_ID,
+                "Pathway Name",
+                initial_name,
+            )
+            if name_input is None:
+                raise RuntimeError("Fusion did not create the pathway name input.")
+
+            routing_mode_input = command_inputs.addDropDownCommandInput(
+                ROUTING_MODE_INPUT_ID,
+                "Routing Mode",
+                adsk.core.DropDownStyles.TextListDropDownStyle,
+            )
+            if routing_mode_input is None:
+                raise RuntimeError("Fusion did not create the pathway routing-mode input.")
+            for routing_mode, label in _ROUTING_MODE_LABELS.items():
+                list_item = routing_mode_input.listItems.add(
+                    label,
+                    routing_mode is definition.routing_mode,
+                )
+                if list_item is None:
+                    raise RuntimeError(f"Fusion did not add the routing mode option: {label}")
+
+            gate_input = command_inputs.addSelectionInput(
+                PATHWAY_GATES_INPUT_ID,
+                "Ordered Gate Profiles",
+                "Select sketch profiles in pathway traversal order",
+            )
+            if gate_input is None:
+                raise RuntimeError("Fusion did not create the pathway gate selection input.")
+            if not gate_input.addSelectionFilter("Profiles"):
+                raise RuntimeError("Fusion did not apply the sketch-profile selection filter.")
+            if not gate_input.setSelectionLimits(1, 0):
+                raise RuntimeError("Fusion did not configure the pathway selection limits.")
+
+            execute_handler = _AddPathwayExecuteHandler(harness_id)
+            validate_handler = _AddPathwayValidateInputsHandler()
+            if not args.command.execute.add(execute_handler):
+                raise RuntimeError("Fusion did not register the pathway execution handler.")
+            if not args.command.validateInputs.add(validate_handler):
+                raise RuntimeError("Fusion did not register the pathway validation handler.")
+            _handlers.extend((execute_handler, validate_handler))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            _report_failure("open Add Pathway")
+            raise
+
+
+class _AddWiresExecuteHandler(adsk.core.CommandEventHandler):
+    """
+    Persist ordered source-to-destination wire assignments.
+    """
+
+    def __init__(self, harness_id: UUID, pathway_ids_by_name: dict[str, UUID]) -> None:
+        """
+        Bind the handler to one harness and its displayed pathway choices.
+
+        Args:
+            harness_id: Stable identity of the owning harness.
+            pathway_ids_by_name: Displayed pathway names mapped to stable identities.
+        """
+        super().__init__()
+        self._harness_id = harness_id
+        self._pathway_ids_by_name = pathway_ids_by_name
+
+    def notify(self, args: adsk.core.CommandEventArgs) -> None:
+        """
+        Pair endpoint selections in order and add their logical wire mappings.
+
+        Args:
+            args: Command event arguments supplied by Fusion.
+        """
+        try:
+            application = adsk.core.Application.get()
+            command_inputs = args.command.commandInputs
+            result = add_wire_batch(
+                self._harness_id,
+                _read_wire_pathway_id(command_inputs, self._pathway_ids_by_name),
+                _read_profile_tokens(command_inputs, SOURCE_CONNECTIONS_INPUT_ID, "source"),
+                _read_profile_tokens(
+                    command_inputs,
+                    DESTINATION_CONNECTIONS_INPUT_ID,
+                    "destination",
+                ),
+                _read_wire_diameter_mm(command_inputs),
+                _create_harness_gateway(application),
+            )
+            _send_palette_state(application, f"Created {len(result.wires)} wires.")
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            _report_failure("add wires")
+
+
+class _AddWiresValidateInputsHandler(adsk.core.ValidateInputsEventHandler):
+    """
+    Require a pathway, valid diameter, and equally sized endpoint selections.
+    """
+
+    def __init__(self, pathway_ids_by_name: dict[str, UUID]) -> None:
+        """
+        Retain the displayed pathway choices for identity validation.
+
+        Args:
+            pathway_ids_by_name: Displayed pathway names mapped to stable identities.
+        """
+        super().__init__()
+        self._pathway_ids_by_name = pathway_ids_by_name
+
+    def notify(self, args: adsk.core.ValidateInputsEventArgs) -> None:
+        """
+        Validate the complete wire batch before Fusion enables execution.
+
+        Args:
+            args: Validation event arguments supplied by Fusion.
+        """
+        try:
+            _read_wire_pathway_id(args.inputs, self._pathway_ids_by_name)
+            _read_wire_diameter_mm(args.inputs)
+            sources = _read_profile_tokens(args.inputs, SOURCE_CONNECTIONS_INPUT_ID, "source")
+            destinations = _read_profile_tokens(
+                args.inputs,
+                DESTINATION_CONNECTIONS_INPUT_ID,
+                "destination",
+            )
+            if len(sources) != len(destinations):
+                raise ValueError("Source and destination profile counts must match.")
+        except ValueError:
+            args.areInputsValid = False
+            return
+        args.areInputsValid = True
+
+
+class _AddWiresCreatedHandler(adsk.core.CommandCreatedEventHandler):
+    """
+    Build the native ordered endpoint-selection command.
+    """
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
+        """
+        Add wire inputs and retain their event handlers.
+
+        Args:
+            args: Command-created event arguments supplied by Fusion.
+        """
+        global _pending_wire_harness_id
+
+        harness_id = _pending_wire_harness_id
+        _pending_wire_harness_id = None
+        try:
+            if harness_id is None:
+                raise RuntimeError("No harness was selected for wire assignment.")
+            application = adsk.core.Application.get()
+            gateway = _create_harness_gateway(application)
+            definition = loads(gateway.read_harness_definition(harness_id))
+            if not definition.pathways:
+                raise RuntimeError("Create a pathway before adding wires.")
+            pathway_ids_by_name = {
+                pathway.name: pathway.pathway_id for pathway in definition.pathways
+            }
+            command_inputs = args.command.commandInputs
+
+            pathway_input = command_inputs.addDropDownCommandInput(
+                WIRE_PATHWAY_INPUT_ID,
+                "Pathway",
+                adsk.core.DropDownStyles.TextListDropDownStyle,
+            )
+            if pathway_input is None:
+                raise RuntimeError("Fusion did not create the wire pathway input.")
+            for index, pathway in enumerate(definition.pathways):
+                if pathway_input.listItems.add(pathway.name, index == 0) is None:
+                    raise RuntimeError(f"Fusion did not add the pathway option: {pathway.name}")
+
+            diameter_value = adsk.core.ValueInput.createByString("1.5 mm")
+            diameter_input = command_inputs.addValueInput(
+                WIRE_DIAMETER_INPUT_ID,
+                "Wire Diameter",
+                "mm",
+                diameter_value,
+            )
+            if diameter_input is None:
+                raise RuntimeError("Fusion did not create the wire diameter input.")
+
+            source_input = _add_profile_selection_input(
+                command_inputs,
+                SOURCE_CONNECTIONS_INPUT_ID,
+                "Ordered Source Profiles",
+                "Select each source profile in wire order",
+            )
+            destination_input = _add_profile_selection_input(
+                command_inputs,
+                DESTINATION_CONNECTIONS_INPUT_ID,
+                "Ordered Destination Profiles",
+                "Select matching destination profiles in the same order",
+            )
+            source_input.hasFocus = True
+            destination_input.hasFocus = False
+
+            execute_handler = _AddWiresExecuteHandler(harness_id, pathway_ids_by_name)
+            validate_handler = _AddWiresValidateInputsHandler(pathway_ids_by_name)
+            if not args.command.execute.add(execute_handler):
+                raise RuntimeError("Fusion did not register the wire execution handler.")
+            if not args.command.validateInputs.add(validate_handler):
+                raise RuntimeError("Fusion did not register the wire validation handler.")
+            _handlers.extend((execute_handler, validate_handler))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            _report_failure("open Add Wires")
+            raise
+
+
 class _ShowPaletteCreatedHandler(adsk.core.CommandCreatedEventHandler):
     """
     Show the persistent palette when Fusion creates the launcher command.
@@ -192,6 +510,14 @@ class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
                 )
                 if command_definition is None or not command_definition.execute():
                     raise RuntimeError("Fusion did not open the Create Harness command.")
+                html_args.returnData = json.dumps({"ok": True})
+                return
+            if html_args.action == "add_pathway":
+                _open_add_pathway_command(application, html_args.data)
+                html_args.returnData = json.dumps({"ok": True})
+                return
+            if html_args.action == "add_wires":
+                _open_add_wires_command(application, html_args.data)
                 html_args.returnData = json.dumps({"ok": True})
                 return
             html_args.returnData = json.dumps(
@@ -269,6 +595,32 @@ def start(_context: object) -> None:
             raise RuntimeError("Fusion did not register the harness creation handler.")
         _handlers.append(create_handler)
 
+        pathway_command_definition = user_interface.commandDefinitions.addButtonDefinition(
+            ADD_PATHWAY_COMMAND_ID,
+            ADD_PATHWAY_COMMAND_NAME,
+            "Create a reusable pathway from ordered sketch profiles.",
+            ADD_PATHWAY_RESOURCE_FOLDER,
+        )
+        if pathway_command_definition is None:
+            raise RuntimeError("Fusion did not create the Add Pathway command definition.")
+        pathway_handler = _AddPathwayCreatedHandler()
+        if not pathway_command_definition.commandCreated.add(pathway_handler):
+            raise RuntimeError("Fusion did not register the pathway creation handler.")
+        _handlers.append(pathway_handler)
+
+        wire_command_definition = user_interface.commandDefinitions.addButtonDefinition(
+            ADD_WIRES_COMMAND_ID,
+            ADD_WIRES_COMMAND_NAME,
+            "Assign ordered source and destination profiles to an existing pathway.",
+            ADD_WIRES_RESOURCE_FOLDER,
+        )
+        if wire_command_definition is None:
+            raise RuntimeError("Fusion did not create the Add Wires command definition.")
+        wire_handler = _AddWiresCreatedHandler()
+        if not wire_command_definition.commandCreated.add(wire_handler):
+            raise RuntimeError("Fusion did not register the wire creation handler.")
+        _handlers.append(wire_handler)
+
         registered_panel_ids: list[str] = []
         for panel_id in PANEL_IDS:
             panel = workspace.toolbarPanels.itemById(panel_id)
@@ -294,10 +646,14 @@ def stop(_context: object) -> None:
     Args:
         _context: Context object supplied by Fusion.
     """
+    global _pending_pathway_harness_id, _pending_wire_harness_id
+
     try:
         application = adsk.core.Application.get()
         _remove_user_interface(application.userInterface)
         _handlers.clear()
+        _pending_pathway_harness_id = None
+        _pending_wire_harness_id = None
     except Exception:
         _report_failure("stop")
         raise
@@ -325,6 +681,12 @@ def _remove_user_interface(user_interface: adsk.core.UserInterface) -> None:
     create_command_definition = user_interface.commandDefinitions.itemById(CREATE_COMMAND_ID)
     if create_command_definition:
         create_command_definition.deleteMe()
+    pathway_command_definition = user_interface.commandDefinitions.itemById(ADD_PATHWAY_COMMAND_ID)
+    if pathway_command_definition:
+        pathway_command_definition.deleteMe()
+    wire_command_definition = user_interface.commandDefinitions.itemById(ADD_WIRES_COMMAND_ID)
+    if wire_command_definition:
+        wire_command_definition.deleteMe()
     palette = user_interface.palettes.itemById(PALETTE_ID)
     if palette:
         palette.deleteMe()
@@ -401,7 +763,8 @@ def _serialize_palette_state(
     Returns:
         JSON object consumed by the local palette.
     """
-    results = load_harnesses(_create_harness_gateway(application))
+    gateway = _create_harness_gateway(application)
+    results = load_harnesses(gateway)
     harnesses: list[dict[str, object]] = []
     for result in results:
         definition = result.definition
@@ -419,11 +782,64 @@ def _serialize_palette_state(
                 "componentName": result.component_name,
                 "definitionName": definition.name,
                 "harnessId": str(definition.harness_id),
+                "schemaVersion": definition.schema_version,
                 "routingMode": _ROUTING_MODE_LABELS[definition.routing_mode],
-                "profileCount": len(definition.profiles),
-                "connectionCount": len(definition.connections),
-                "controlCount": len(definition.controls),
-                "wireCount": len(definition.wires),
+                "profiles": [
+                    {
+                        "profileId": str(profile.profile_id),
+                        "name": profile.name,
+                        "diameterMm": profile.diameter_mm,
+                    }
+                    for profile in definition.profiles
+                ],
+                "connections": [
+                    {
+                        "connectionId": str(connection.connection_id),
+                        "name": connection.name,
+                        "hasLinkedGeometry": gateway.is_entity_token_resolvable(
+                            connection.entity_token
+                        ),
+                    }
+                    for connection in definition.connections
+                ],
+                "controls": [
+                    {
+                        "controlId": str(control.control_id),
+                        "name": control.name,
+                        "kind": control.kind.value,
+                        "hasLinkedGeometry": gateway.is_entity_token_resolvable(
+                            control.entity_token
+                        ),
+                    }
+                    for control in definition.controls
+                ],
+                "pathways": [
+                    {
+                        "pathwayId": str(pathway.pathway_id),
+                        "name": pathway.name,
+                        "routingMode": _ROUTING_MODE_LABELS[pathway.routing_mode],
+                        "orderedControlIds": [
+                            str(control_id) for control_id in pathway.ordered_control_ids
+                        ],
+                    }
+                    for pathway in definition.pathways
+                ],
+                "wires": [
+                    {
+                        "wireId": str(wire.wire_id),
+                        "wireNumber": wire.wire_number,
+                        "startConnectionId": str(wire.start_connection_id),
+                        "endConnectionId": str(wire.end_connection_id),
+                        "profileId": str(wire.profile_id),
+                        "orderedPathwayIds": [
+                            str(pathway_id) for pathway_id in wire.ordered_pathway_ids
+                        ],
+                        "orderedControlIds": [
+                            str(control_id) for control_id in wire.ordered_control_ids
+                        ],
+                    }
+                    for wire in definition.wires
+                ],
                 "status": "draft" if result.validation_messages else "valid",
                 "validationMessages": result.validation_messages,
             }
@@ -461,6 +877,179 @@ def _log_to_fusion(message: str) -> None:
     )
 
 
+def _open_add_pathway_command(application: adsk.core.Application, serialized_data: str) -> None:
+    """
+    Open the native pathway command for the harness selected in the palette.
+
+    Args:
+        application: Active Fusion application.
+        serialized_data: Palette JSON containing the selected harness identity.
+
+    Raises:
+        RuntimeError: If Fusion cannot open the command.
+        ValueError: If the palette payload is malformed.
+    """
+    global _pending_pathway_harness_id
+
+    payload = json.loads(serialized_data)
+    if not isinstance(payload, dict):
+        raise ValueError("Add Pathway request must be a JSON object.")
+    raw_harness_id = payload.get("harnessId")
+    if not isinstance(raw_harness_id, str):
+        raise ValueError("Add Pathway request is missing a harness identity.")
+    harness_id = UUID(raw_harness_id)
+    command_definition = application.userInterface.commandDefinitions.itemById(
+        ADD_PATHWAY_COMMAND_ID
+    )
+    if command_definition is None:
+        raise RuntimeError("Fusion Add Pathway command is unavailable.")
+
+    _pending_pathway_harness_id = harness_id
+    try:
+        if not command_definition.execute():
+            raise RuntimeError("Fusion did not open the Add Pathway command.")
+    except Exception:
+        _pending_pathway_harness_id = None
+        raise
+
+
+def _open_add_wires_command(application: adsk.core.Application, serialized_data: str) -> None:
+    """
+    Open the native wire-assignment command for the selected harness.
+
+    Args:
+        application: Active Fusion application.
+        serialized_data: Palette JSON containing the selected harness identity.
+
+    Raises:
+        RuntimeError: If Fusion cannot open the command.
+        ValueError: If the palette payload is malformed.
+    """
+    global _pending_wire_harness_id
+
+    payload = json.loads(serialized_data)
+    if not isinstance(payload, dict):
+        raise ValueError("Add Wires request must be a JSON object.")
+    raw_harness_id = payload.get("harnessId")
+    if not isinstance(raw_harness_id, str):
+        raise ValueError("Add Wires request is missing a harness identity.")
+    harness_id = UUID(raw_harness_id)
+    command_definition = application.userInterface.commandDefinitions.itemById(ADD_WIRES_COMMAND_ID)
+    if command_definition is None:
+        raise RuntimeError("Fusion Add Wires command is unavailable.")
+
+    _pending_wire_harness_id = harness_id
+    try:
+        if not command_definition.execute():
+            raise RuntimeError("Fusion did not open the Add Wires command.")
+    except Exception:
+        _pending_wire_harness_id = None
+        raise
+
+
+def _add_profile_selection_input(
+    command_inputs: adsk.core.CommandInputs,
+    input_id: str,
+    name: str,
+    prompt: str,
+) -> adsk.core.SelectionCommandInput:
+    """
+    Add a required multi-profile selection input.
+
+    Args:
+        command_inputs: Inputs owned by the active Add Wires command.
+        input_id: Stable input identity.
+        name: User-facing field name.
+        prompt: Selection prompt displayed by Fusion.
+
+    Returns:
+        Configured profile-selection input.
+    """
+    selection_input = command_inputs.addSelectionInput(input_id, name, prompt)
+    if selection_input is None:
+        raise RuntimeError(f"Fusion did not create the {name} input.")
+    if not selection_input.addSelectionFilter("Profiles"):
+        raise RuntimeError(f"Fusion did not apply the sketch-profile filter to {name}.")
+    if not selection_input.setSelectionLimits(1, 0):
+        raise RuntimeError(f"Fusion did not configure the selection limits for {name}.")
+    return selection_input
+
+
+def _read_wire_pathway_id(
+    command_inputs: adsk.core.CommandInputs,
+    pathway_ids_by_name: dict[str, UUID],
+) -> UUID:
+    """
+    Resolve the selected pathway label to its stable identity.
+
+    Args:
+        command_inputs: Inputs owned by the active Add Wires command.
+        pathway_ids_by_name: Displayed pathway names mapped to stable identities.
+
+    Returns:
+        Selected pathway identity.
+    """
+    pathway_input = adsk.core.DropDownCommandInput.cast(
+        command_inputs.itemById(WIRE_PATHWAY_INPUT_ID)
+    )
+    if pathway_input is None or pathway_input.selectedItem is None:
+        raise ValueError("Select a pathway.")
+    pathway_id = pathway_ids_by_name.get(pathway_input.selectedItem.name)
+    if pathway_id is None:
+        raise ValueError("Selected pathway is unavailable.")
+    return pathway_id
+
+
+def _read_wire_diameter_mm(command_inputs: adsk.core.CommandInputs) -> float:
+    """
+    Read a valid positive wire diameter and convert Fusion centimeters to millimeters.
+
+    Args:
+        command_inputs: Inputs owned by the active Add Wires command.
+
+    Returns:
+        Wire diameter in millimeters.
+    """
+    diameter_input = adsk.core.ValueCommandInput.cast(
+        command_inputs.itemById(WIRE_DIAMETER_INPUT_ID)
+    )
+    if diameter_input is None or not diameter_input.isValidExpression:
+        raise ValueError("Wire diameter must be a valid length expression.")
+    diameter_mm = diameter_input.value * 10.0
+    if diameter_mm <= 0.0:
+        raise ValueError("Wire diameter must be positive.")
+    return diameter_mm
+
+
+def _read_profile_tokens(
+    command_inputs: adsk.core.CommandInputs,
+    input_id: str,
+    role: str,
+) -> tuple[str, ...]:
+    """
+    Return selected Fusion profile tokens in user selection order.
+
+    Args:
+        command_inputs: Inputs owned by the active Add Wires command.
+        input_id: Selection input identity.
+        role: Endpoint role used in validation messages.
+
+    Returns:
+        Persistent entity tokens in selection order.
+    """
+    selection_input = adsk.core.SelectionCommandInput.cast(command_inputs.itemById(input_id))
+    if selection_input is None or selection_input.selectionCount < 1:
+        raise ValueError(f"Select at least one {role} profile.")
+    tokens: list[str] = []
+    for index in range(selection_input.selectionCount):
+        selection = selection_input.selection(index)
+        profile = adsk.fusion.Profile.cast(selection.entity if selection is not None else None)
+        if profile is None or not profile.entityToken.strip():
+            raise ValueError(f"{role.title()} selection {index + 1} is not a valid sketch profile.")
+        tokens.append(profile.entityToken)
+    return tuple(tokens)
+
+
 def _create_harness_gateway(application: adsk.core.Application) -> FusionHarnessGateway:
     """
     Create a gateway for the active Fusion design and cloud folder.
@@ -478,6 +1067,53 @@ def _create_harness_gateway(application: adsk.core.Application) -> FusionHarness
     if design is None:
         raise RuntimeError("Harness Builder requires an active Fusion design.")
     return FusionHarnessGateway(design, application.data.activeFolder)
+
+
+def _read_pathway_name(command_inputs: adsk.core.CommandInputs) -> str:
+    """
+    Read and normalize the required pathway name input.
+
+    Args:
+        command_inputs: Inputs owned by the active Add Pathway command.
+
+    Returns:
+        Non-empty normalized pathway name.
+    """
+    name_input = adsk.core.StringValueCommandInput.cast(
+        command_inputs.itemById(PATHWAY_NAME_INPUT_ID)
+    )
+    if name_input is None:
+        raise ValueError("Pathway name input is unavailable.")
+    name = name_input.value.strip()
+    if not name:
+        raise ValueError("Pathway name must not be empty.")
+    return name
+
+
+def _read_pathway_gate_tokens(command_inputs: adsk.core.CommandInputs) -> tuple[str, ...]:
+    """
+    Return selected Fusion profile tokens in traversal order.
+
+    Args:
+        command_inputs: Inputs owned by the active Add Pathway command.
+
+    Returns:
+        Persistent entity tokens in Fusion selection order.
+    """
+    gate_input = adsk.core.SelectionCommandInput.cast(
+        command_inputs.itemById(PATHWAY_GATES_INPUT_ID)
+    )
+    if gate_input is None or gate_input.selectionCount < 1:
+        raise ValueError("Select at least one pathway gate profile.")
+
+    tokens: list[str] = []
+    for index in range(gate_input.selectionCount):
+        selection = gate_input.selection(index)
+        profile = adsk.fusion.Profile.cast(selection.entity if selection is not None else None)
+        if profile is None or not profile.entityToken.strip():
+            raise ValueError(f"Pathway gate selection {index + 1} is not a valid sketch profile.")
+        tokens.append(profile.entityToken)
+    return tuple(tokens)
 
 
 def _read_harness_name(command_inputs: adsk.core.CommandInputs) -> str:

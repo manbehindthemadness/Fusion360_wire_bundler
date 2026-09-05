@@ -96,6 +96,7 @@ def test_creates_and_persists_normalized_empty_harness() -> None:
     assert definition.profiles == ()
     assert definition.connections == ()
     assert definition.controls == ()
+    assert definition.pathways == ()
     assert definition.wires == ()
     assert gateway.deleted_components == []
 

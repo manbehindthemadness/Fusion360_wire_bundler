@@ -18,6 +18,7 @@ def test_round_trip_preserves_definition(valid_harness: HarnessDefinition) -> No
     parsed = loads(serialized)
 
     assert parsed == valid_harness
+    assert parsed.wires[0].ordered_pathway_ids == valid_harness.wires[0].ordered_pathway_ids
     assert parsed.wires[0].ordered_control_ids == valid_harness.wires[0].ordered_control_ids
 
 
@@ -43,6 +44,37 @@ def test_rejects_unknown_schema_version(valid_harness: HarnessDefinition) -> Non
 
     assert error_info.value.path == "$.schema_version"
     assert "unsupported version" in error_info.value.reason
+
+
+def test_reads_version_one_definition_as_current_schema(valid_harness: HarnessDefinition) -> None:
+    """
+    Preserve existing harnesses while introducing reusable pathways in version two.
+    """
+    payload = json.loads(dumps(valid_harness))
+    payload["schema_version"] = 1
+    payload.pop("pathways")
+
+    migrated = loads(json.dumps(payload))
+
+    assert migrated.schema_version == valid_harness.schema_version
+    assert migrated.pathways == ()
+    assert migrated.wires[0].ordered_pathway_ids == ()
+    assert migrated.wires[0].ordered_control_ids == valid_harness.wires[0].ordered_control_ids
+
+
+def test_reads_version_two_wire_pathway_from_matching_controls(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Infer the initial pathway identity for definitions written before schema three.
+    """
+    payload = json.loads(dumps(valid_harness))
+    payload["schema_version"] = 2
+    payload["wires"][0].pop("ordered_pathway_ids")
+
+    migrated = loads(json.dumps(payload))
+
+    assert migrated.wires[0].ordered_pathway_ids == (valid_harness.pathways[0].pathway_id,)
 
 
 @pytest.mark.parametrize(

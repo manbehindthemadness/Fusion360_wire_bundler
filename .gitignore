@@ -11,3 +11,16 @@ __pycache__/
 /AGENTS.md
 /summary.txt
 /F360WireGenerator/
+
+# macOS metadata and filesystem artifacts
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.fseventsd
+
+# Generated verification output
+/artifacts/

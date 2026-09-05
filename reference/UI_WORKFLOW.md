@@ -1009,6 +1009,13 @@ The persistent palette could ultimately be organized into the following sections
 └─────────────────────────────────────────────┘
 ```
 
+The palette begins as a searchable harness library. Selecting one harness replaces
+the library in place with its editor; it must not open another palette or dialog.
+Returning to the library is one action. Data refreshes preserve the selected
+harness, expanded sections, active filters, and scroll position whenever those
+items still exist. Native Fusion dialogs are reserved for operations that require
+viewport selection, transactional document changes, or destructive confirmation.
+
 ---
 
 # Interaction Philosophy

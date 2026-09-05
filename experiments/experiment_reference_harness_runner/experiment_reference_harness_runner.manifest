@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "id": "91EEC5F7-23F2-4D18-AD5E-D12B8E86BA57",
+  "author": "Fusion 360 Wire Bundler contributors",
+  "description": {
+    "": "Create and verify the evolving Wire Bundler reference harness."
+  },
+  "version": "0.1.0",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

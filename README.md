@@ -1,6 +1,6 @@
 # Fusion 360 Wire Bundler
 
-Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, and harness assemblies. The current milestone provides a persistent Harness Builder palette that discovers and inspects stored procedural harnesses and opens the native creation workflow. Creating a harness stores a versioned draft definition, converts an active Part design to Hybrid intent, or creates an external component in Fusion's active cloud folder when working in an Assembly design.
+Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, and harness assemblies. The current milestone provides a persistent Harness Builder palette that discovers and inspects stored procedural harnesses, records reusable pathways, and pairs ordered source and destination profiles into stable logical wires. Creating a harness stores a versioned draft definition, converts an active Part design to Hybrid intent, or creates an external component in Fusion's active cloud folder when working in an Assembly design.
 
 ## Current milestone
 
@@ -13,7 +13,12 @@ Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, an
 - Transactional empty-harness creation with rollback on metadata failure
 - Fusion component and attribute persistence adapter
 - Conflict-free harness names shared by the component and stored definition
-- Persistent Harness Builder palette with create, refresh, discovery, and summary inspection
+- Persistent Harness Builder palette with filtering and in-place harness inspection
+- Reusable routing- or profile-gate pathways captured in explicit selection order
+- Ordered source-to-destination profile pairing through a selected pathway
+- Stable wire, connection, profile, pathway, and routing-control identities
+- Persistent Fusion entity tokens with reload-time linked-geometry health reporting
+- Schema version 3 persistence with automatic in-memory reading of versions 1 and 2
 - Isolated reporting of malformed stored definitions without hiding healthy harnesses
 
 The detailed product behavior is defined in `reference/`. Persistent conductor identity, explicit control-structure ordering, editable geometry, and stored procedural metadata are core requirements.
@@ -27,11 +32,16 @@ This repository directory is already located under Fusion's `API/AddIns` directo
 3. In the **Solid** workspace, choose the visible **Harness Builder** button in the **Utilities > Add-Ins** panel and confirm the persistent palette opens.
 4. Select **Create New Harness**, confirm the native dialog suggests the next available harness name, choose a routing mode, and select **OK**.
 5. Confirm Fusion creates exactly one empty child component beneath the active component, the palette reports success, and the new draft appears under **Existing Harnesses**. If the document began as a Part design, also confirm that Fusion changed it to Hybrid intent.
-6. Select the harness entry and confirm its component name, definition name, routing mode, counts, persistent ID, and draft status appear without closing the palette.
-7. Create another harness and confirm the suggested and created name increments without changing the existing harness.
-8. In an Assembly design, open Harness Builder from the **Assembly** tab's **Insert** panel. Confirm it creates an external harness in the active cloud folder and appears in the palette; save the parent assembly to persist the new external component.
-9. Close and reopen the palette, then stop and run the add-in. Confirm the existing definitions are rediscovered after each operation.
-10. Stop the add-in in **Scripts and Add-Ins** and confirm that the command and palette are removed.
+6. Select the harness entry and confirm the in-place editor shows its persistent ID plus expandable Pathways, Wires, Connections, Routing, and Validation sections.
+7. Create at least two closed sketch profiles to act as gates. Select **Add Pathway**, confirm the dialog defaults to the harness routing mode, choose routing or profile gates, then select the profiles in traversal order and choose **OK**.
+8. Create equal numbers of closed source and destination sketch profiles. Select **Add Wires**, choose the pathway and diameter, select source profiles in wire order, then select matching destination profiles in the same order and choose **OK**.
+9. Confirm the palette shows one wire per ordered pair, sequential wire numbers, the shared profile, the selected pathway, and linked source/destination geometry. No solid wire bodies are generated in this milestone.
+10. Refresh, close and reopen the palette, then stop and run the add-in; confirm the pathways, wires, pairings, and linked-geometry status survive each reload.
+11. Delete or invalidate one selected sketch profile, refresh the palette, and confirm the corresponding connection or routing control reports missing linked geometry.
+12. Add another pathway with the same proposed name and confirm the suggested and persisted name increments without changing the existing pathway.
+13. Create another harness and confirm the suggested and created name increments without changing the existing harness.
+14. In an Assembly design, open Harness Builder from the **Assembly** tab's **Insert** panel. Confirm it creates an external harness in the active cloud folder and appears in the palette; save the parent assembly to persist the new external component.
+15. Stop the add-in in **Scripts and Add-Ins** and confirm that the command and palette are removed.
 
 During development, stopping the add-in evicts its `wire_bundler` package modules. Running it again therefore loads current source without restarting Fusion. Changes to the bootstrap file `Fusion360_wire_bundler.py` itself still require one Fusion restart before this reload behavior changes.
 
@@ -44,11 +54,26 @@ The local development environment uses `uv` and Python 3.9 or newer. It is separ
 ```bash
 uv sync
 uv run pytest
-uv run ruff check Fusion360_wire_bundler.py wire_bundler tests
-uv run ruff format --check Fusion360_wire_bundler.py wire_bundler tests
+uv run ruff check Fusion360_wire_bundler.py wire_bundler tests experiments
+uv run ruff format --check Fusion360_wire_bundler.py wire_bundler tests experiments
 ```
 
 PyCharm should use `.venv/bin/python` as the project interpreter. Do not install an unrelated `adsk` package from PyPI; Fusion provides its API modules to add-ins inside the host process. Pure application logic should remain importable without `adsk` so it can be covered by local unit tests later.
+
+## Reference verification scenario
+
+`experiments/experiment_reference_harness.py` is a live Fusion integration scenario, not a
+normal pytest test. In **Utilities > Scripts and Add-Ins**, select the **Scripts** tab, use the
+green **+** button to register `experiments/experiment_reference_harness_runner/`, then run
+`experiment_reference_harness_runner` while no command transaction is active.
+
+The scenario creates a new unsaved Hybrid design, builds three source profiles, three ordered
+routing gates, and three destination profiles, then exercises harness creation, pathway
+persistence, the production ordered wire-assignment service, validation, entity-token resolution, and metadata
+rediscovery. The design remains open after either outcome for inspection. Timestamped `.log`
+and `.json` reports are written beneath the ignored `artifacts/verification/` directory and key
+messages are also mirrored into Fusion's application log. Extend this same scenario with solver
+and body-generation assertions as those production services are implemented.
 
 ## Layout
 
@@ -58,6 +83,8 @@ Fusion360_wire_bundler.py        Fusion run/stop entry point
 pyproject.toml                    Python and uv project metadata
 wire_bundler/                    Fusion lifecycle, host adapters, domain, and application services
 tests/                           Application-owned unit tests
+experiments/                     Live Fusion integration scenarios and reporting support
+artifacts/verification/          Ignored generated scenario logs and JSON reports
 resources/originals/             Full-resolution source artwork for all commands
 resources/                       Fusion standard and high-DPI command icon sets
 reference/                       Product and engineering specifications
@@ -68,4 +95,4 @@ F360WireGenerator/               Unrelated third-party example repository
 
 ## Domain boundary
 
-`wire_bundler/domain/` and `wire_bundler/application/` have no Fusion dependency. They define and transactionally persist the empty draft that starts a harness, including deterministic conflict-free naming, and decode discovered definitions without allowing one damaged component to hide healthy neighbors. `wire_bundler/fusion/` converts a Part design to Hybrid intent when necessary, creates internal children in Hybrid designs or external children in Assembly designs, stores deterministic schema-versioned JSON in the component attribute group `kev0.wire_bundler` under `harness_definition`, and discovers marked components across the active design. Names are checked against every component in the active design and, for external components, files in the active cloud folder. Standalone wires belong as bodies in Part designs. Editing definitions, Fusion geometry inspection, non-circular profiles, terminators, and route generation remain future milestones.
+`wire_bundler/domain/` and `wire_bundler/application/` have no Fusion dependency. They define and transactionally persist harness drafts, ordered reusable pathways, and ordered wire assignments, including deterministic conflict-free naming, and decode discovered definitions without allowing one damaged component to hide healthy neighbors. `wire_bundler/fusion/` converts a Part design to Hybrid intent when necessary, creates internal children in Hybrid designs or external children in Assembly designs, stores deterministic schema-versioned JSON in the component attribute group `kev0.wire_bundler` under `harness_definition`, discovers marked components across the active design, and resolves stored entity tokens for linked-geometry health reporting. Names are checked against every component in the active design and, for external components, files in the active cloud folder. Standalone wires belong as bodies in Part designs. Pathway/wire editing and deletion, capacity and collision analysis, non-circular profiles, terminators, and route geometry generation remain future milestones.

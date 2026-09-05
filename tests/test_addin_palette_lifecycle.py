@@ -5,12 +5,16 @@ Regression tests for the Fusion palette launcher lifecycle.
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from collections.abc import Callable
 from types import ModuleType, SimpleNamespace
 from typing import Protocol, cast
 
 import pytest
+
+from wire_bundler.application import HarnessLoadResult
+from wire_bundler.domain import HarnessDefinition
 
 
 class _PaletteLifecycleModule(Protocol):
@@ -21,6 +25,9 @@ class _PaletteLifecycleModule(Protocol):
     _handlers: list[object]
     _ShowPaletteCreatedHandler: type
     _show_palette: Callable[[object], None]
+    _create_harness_gateway: Callable[[object], object]
+    _serialize_palette_state: Callable[[object, str], str]
+    load_harnesses: Callable[[object], tuple[HarnessLoadResult, ...]]
 
 
 @pytest.fixture
@@ -72,3 +79,42 @@ def test_palette_is_shown_during_command_creation(
     created_handler.notify(SimpleNamespace(command=object()))
 
     assert shown_applications == [application]
+
+
+def test_palette_state_contains_complete_editor_definition(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Include stable identities and ordered relationships needed by the editor.
+    """
+    gateway = SimpleNamespace(
+        is_entity_token_resolvable=lambda entity_token: entity_token == "fusion-gate-token"
+    )
+    result = HarnessLoadResult(
+        component_name="Harness_001",
+        definition=valid_harness,
+        error=None,
+        validation_messages=(),
+    )
+    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
+    monkeypatch.setattr(addin_module, "load_harnesses", lambda _gateway: (result,))
+
+    payload = json.loads(addin_module._serialize_palette_state(object(), "Ready"))
+
+    harness = payload["harnesses"][0]
+    assert payload["notice"] == "Ready"
+    assert harness["schemaVersion"] == valid_harness.schema_version
+    assert harness["profiles"][0]["name"] == "Primary wire"
+    assert harness["connections"][0]["name"] == "J1 / Pin 1"
+    assert harness["controls"][0]["kind"] == "routing_gate"
+    assert harness["controls"][0]["hasLinkedGeometry"]
+    assert not harness["connections"][0]["hasLinkedGeometry"]
+    assert harness["pathways"][0]["name"] == "Main Pathway"
+    assert harness["pathways"][0]["orderedControlIds"] == [
+        str(valid_harness.controls[0].control_id)
+    ]
+    assert harness["wires"][0]["wireNumber"] == "001"
+    assert harness["wires"][0]["orderedPathwayIds"] == [str(valid_harness.pathways[0].pathway_id)]
+    assert harness["wires"][0]["orderedControlIds"] == [str(valid_harness.controls[0].control_id)]

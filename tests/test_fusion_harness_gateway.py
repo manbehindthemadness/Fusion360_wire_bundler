@@ -13,7 +13,7 @@ from typing import Optional
 import pytest
 
 from wire_bundler.application import create_empty_harness
-from wire_bundler.domain import RoutingMode
+from wire_bundler.domain import HarnessDefinition, RoutingMode, dumps
 
 
 class _IntentTypes:
@@ -273,12 +273,20 @@ class _Design:
             reject_attribute_write,
         )
         self.rootComponent = self.activeComponent
+        self.resolved_entity_tokens: dict[str, tuple[object, ...]] = {}
         existing_components: list[_Component] = [self.rootComponent]
         for name in existing_names:
             component = _Component()
             component.name = name
             existing_components.append(component)
         self.allComponents = _Components(tuple(existing_components))
+
+    # noinspection PyPep8Naming
+    def findEntityByToken(self, entity_token: str) -> tuple[object, ...]:
+        """
+        Return configured entities for a persistent Fusion token.
+        """
+        return self.resolved_entity_tokens.get(entity_token, ())
 
 
 @pytest.fixture
@@ -451,3 +459,44 @@ def test_lists_only_components_with_harness_metadata(fusion_gateway_type: type) 
     assert len(stored_harnesses) == 1
     assert stored_harnesses[0].component_name == "Harness_001"
     assert stored_harnesses[0].serialized_definition == "definition-json"
+
+
+def test_reads_and_replaces_definition_by_stable_harness_id(
+    fusion_gateway_type: type,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Update a marked component without depending on its editable component name.
+    """
+    design = _Design(_IntentTypes.HybridDesignIntentType, existing_names=("Renamed Harness",))
+    harness_component = design.allComponents.item(1)
+    assert harness_component is not None
+    original = dumps(valid_harness)
+    harness_component.attributes.add(
+        "kev0.wire_bundler",
+        "harness_definition",
+        original,
+    )
+    gateway = fusion_gateway_type(design)
+
+    assert gateway.read_harness_definition(valid_harness.harness_id) == original
+
+    replacement = original.replace("Harness_001", "Harness Updated")
+    gateway.replace_harness_definition(valid_harness.harness_id, replacement)
+
+    assert gateway.read_harness_definition(valid_harness.harness_id) == replacement
+
+
+def test_reports_whether_persisted_entity_token_resolves(
+    fusion_gateway_type: type,
+) -> None:
+    """
+    Resolve stored geometry through Fusion instead of comparing token strings.
+    """
+    design = _Design(_IntentTypes.HybridDesignIntentType)
+    design.resolved_entity_tokens["live-profile"] = (object(),)
+    gateway = fusion_gateway_type(design)
+
+    assert gateway.is_entity_token_resolvable("live-profile")
+    assert not gateway.is_entity_token_resolvable("deleted-profile")
+    assert not gateway.is_entity_token_resolvable("  ")

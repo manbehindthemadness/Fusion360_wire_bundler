@@ -4,88 +4,558 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Harness Builder</title>
+  <!-- Dynamic elements use these classes at runtime. -->
+  <!--suppress CssUnusedSymbol -->
   <style>
-    :root { font: 13px system-ui, sans-serif; }
-    body { margin: 0; padding: 16px; background: #f4f5f6; color: #202428; }
-    header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-    h1 { margin: 0; font-size: 18px; }
-    h2 { margin: 22px 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
-    button { border: 1px solid #7778; border-radius: 4px; padding: 7px 11px; color: #202428; cursor: pointer; }
-    #create { width: 100%; margin-top: 16px; background: #1777c8; color: white; border-color: #1777c8; }
-    #notice { min-height: 18px; margin: 10px 0 0; color: #287d28; }
+    :root {
+      color-scheme: light;
+      font: 13px system-ui, sans-serif;
+      --accent: #1777c8;
+      --border: #c8cdd2;
+      --muted: #68717a;
+      --surface: #fff;
+      --surface-subtle: #f4f5f6;
+      --text: #202428;
+      --danger: #b44242;
+      --success: #287d28;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--surface-subtle); color: var(--text); }
+    button, input { font: inherit; }
+    button { color: inherit; cursor: pointer; }
+    button:focus-visible, input:focus-visible, summary:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .app-header {
+      position: sticky;
+      z-index: 10;
+      top: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 50px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    h1 { margin: 0; font-size: 17px; }
+    h2 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
+    h3 { margin: 0; font-size: 13px; }
+    .button {
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 7px 10px;
+      background: var(--surface);
+    }
+    .button:hover { border-color: #9199a1; background: #f8f9fa; }
+    .button:disabled { cursor: default; opacity: .5; }
+    .button.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .button.compact { padding: 5px 8px; }
+    main { padding: 14px; }
+    #notice { min-height: 18px; margin: 0 0 10px; color: var(--success); }
+    .library-actions { display: grid; gap: 10px; }
+    #create { width: 100%; }
+    .filter {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 8px 10px;
+      background: var(--surface);
+      color: var(--text);
+    }
+    .section-label {
+      margin: 20px 0 8px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
     #harnesses { display: grid; gap: 8px; }
-    #harnesses > button { width: 100%; padding: 10px; text-align: left; background: transparent; }
-    .harness strong, .harness span { display: block; }
-    .harness span { margin-top: 4px; opacity: .72; font-size: 12px; }
-    #harnesses > button[data-status="damaged"] { border-color: #b44242; }
-    #details { margin-top: 16px; padding-top: 12px; border-top: 1px solid #7775; }
-    #details dl { display: grid; grid-template-columns: max-content 1fr; gap: 5px 12px; }
-    #details dt { opacity: .7; }
-    #details dd { margin: 0; overflow-wrap: anywhere; }
-    .empty { opacity: .65; }
+    .harness-card {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px 10px;
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 11px;
+      background: var(--surface);
+      text-align: left;
+    }
+    .harness-card:hover { border-color: var(--accent); }
+    .harness-card[data-status="damaged"] { border-color: var(--danger); }
+    .harness-card strong { overflow-wrap: anywhere; }
+    .harness-card .summary { grid-column: 1 / -1; color: var(--muted); font-size: 12px; }
+    .status {
+      align-self: start;
+      border-radius: 999px;
+      padding: 2px 7px;
+      background: #e8edf1;
+      color: #48525b;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .status[data-status="valid"] { background: #dff1df; color: #226b22; }
+    .status[data-status="damaged"] { background: #f5dfdf; color: #8e3030; }
+    .editor-nav { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+    .editor-heading { display: grid; gap: 5px; margin-bottom: 14px; }
+    .editor-heading .meta { color: var(--muted); }
+    .overview {
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr);
+      gap: 5px 12px;
+      margin: 0 0 12px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+    .overview dt { color: var(--muted); }
+    .overview dd { margin: 0; overflow-wrap: anywhere; }
+    details {
+      margin-top: 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+    }
+    summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 11px;
+      font-weight: 700;
+      cursor: pointer;
+      list-style: none;
+    }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { content: "▸"; color: var(--muted); }
+    details[open] summary::after { content: "▾"; }
+    .count { color: var(--muted); font-size: 11px; font-weight: 500; }
+    .section-content { display: grid; gap: 8px; padding: 0 11px 11px; }
+    .item {
+      display: grid;
+      gap: 3px;
+      padding-top: 8px;
+      border-top: 1px solid #e5e8eb;
+    }
+    .item:first-child { padding-top: 0; border-top: 0; }
+    .item-main { display: flex; justify-content: space-between; gap: 10px; }
+    .item-main strong { overflow-wrap: anywhere; }
+    .item-meta, .route { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    .route { line-height: 1.5; }
+    .wire-filter { margin-bottom: 2px; }
+    .wire-rows { display: grid; gap: 8px; }
+    .validation-list { margin: 0; padding-left: 20px; }
+    .validation-list li + li { margin-top: 6px; }
+    .validation-list.errors { color: var(--danger); }
+    .empty { margin: 0; color: var(--muted); }
+    .error-panel {
+      border: 1px solid var(--danger);
+      border-radius: 6px;
+      padding: 11px;
+      background: #fff8f8;
+      color: #7e2929;
+      overflow-wrap: anywhere;
+    }
+    [hidden] { display: none !important; }
   </style>
 </head>
 <body>
-  <header><h1>Harness Builder</h1><button id="refresh" type="button">Refresh</button></header>
-  <button id="create" type="button">Create New Harness</button>
-  <p id="notice" role="status"></p>
-  <h2>Existing Harnesses</h2>
-  <div id="harnesses"><p class="empty">Loading…</p></div>
-  <section id="details" hidden></section>
+  <header class="app-header">
+    <h1>Harness Builder</h1>
+    <button id="refresh" class="button compact" type="button">Refresh</button>
+  </header>
+  <main>
+    <p id="notice" role="status"></p>
+    <section id="library-view" aria-label="Harness library">
+      <div class="library-actions">
+        <button id="create" class="button primary" type="button">Create New Harness</button>
+        <input id="harness-filter" class="filter" type="search"
+               aria-label="Filter harnesses" placeholder="Filter harnesses…"
+               autocomplete="off" spellcheck="false">
+      </div>
+      <p class="section-label">Existing Harnesses</p>
+      <div id="harnesses"><p class="empty">Loading…</p></div>
+    </section>
+    <section id="editor-view" aria-label="Harness editor" hidden>
+      <div class="editor-nav">
+        <button id="back" class="button compact" type="button">← All Harnesses</button>
+        <button id="add-pathway" class="button compact primary" type="button">Add Pathway</button>
+        <button id="add-wires" class="button compact primary" type="button">Add Wires</button>
+        <button id="create-from-editor" class="button compact" type="button">New Harness</button>
+      </div>
+      <div id="editor"></div>
+    </section>
+  </main>
   <script>
-    const list = document.getElementById("harnesses");
-    const details = document.getElementById("details");
-    const notice = document.getElementById("notice");
+    const ui = {
+      back: document.getElementById("back"),
+      addPathway: document.getElementById("add-pathway"),
+      addWires: document.getElementById("add-wires"),
+      create: document.getElementById("create"),
+      createFromEditor: document.getElementById("create-from-editor"),
+      editor: document.getElementById("editor"),
+      editorView: document.getElementById("editor-view"),
+      harnessFilter: document.getElementById("harness-filter"),
+      libraryView: document.getElementById("library-view"),
+      list: document.getElementById("harnesses"),
+      notice: document.getElementById("notice"),
+      refresh: document.getElementById("refresh"),
+    };
 
-    function showDetails(harness) {
-      const rows = harness.status === "damaged"
-        ? [["Component", harness.componentName], ["Status", "Damaged metadata"], ["Error", harness.error]]
-        : [["Component", harness.componentName], ["Definition", harness.definitionName],
-           ["Routing", harness.routingMode], ["Wires", harness.wireCount],
-           ["Connections", harness.connectionCount], ["Controls", harness.controlCount],
-           ["Profiles", harness.profileCount], ["ID", harness.harnessId]];
-      details.replaceChildren();
-      const heading = document.createElement("h2");
-      heading.textContent = "Harness Details";
-      const description = document.createElement("dl");
-      rows.forEach(([label, value]) => {
-        const term = document.createElement("dt");
-        const definition = document.createElement("dd");
-        term.textContent = label;
-        definition.textContent = value ?? "";
-        if (label === "Error") definition.style.color = "#b44242";
-        description.append(term, definition);
-      });
-      details.append(heading, description);
-      details.hidden = false;
+    function readSession(key) {
+      try { return window.sessionStorage.getItem(key); }
+      catch (_error) { return null; }
     }
 
-    function render(state) {
-      notice.textContent = state.notice || "";
-      list.replaceChildren();
-      if (!state.harnesses.length) {
-        const empty = document.createElement("p");
-        empty.className = "empty";
-        empty.textContent = "No procedural harnesses in this design.";
-        list.append(empty);
-        details.hidden = true;
+    function writeSession(key, value) {
+      try { window.sessionStorage.setItem(key, value); }
+      catch (_error) { /* Palette storage is an optional convenience. */ }
+    }
+
+    function removeSession(key) {
+      try { window.sessionStorage.removeItem(key); }
+      catch (_error) { /* Palette storage is an optional convenience. */ }
+    }
+
+    let currentState = { harnesses: [], notice: "" };
+    let selectedHarnessKey = readSession("wireBundler.selectedHarness") || "";
+    const wireFilters = new Map();
+    const storedExpandedSections = readSession("wireBundler.expandedSections");
+    let hasStoredExpansionState = storedExpandedSections !== null;
+    let expandedSectionIds = [];
+    try {
+      expandedSectionIds = JSON.parse(storedExpandedSections || "[]");
+      if (!Array.isArray(expandedSectionIds)) expandedSectionIds = [];
+    } catch (_error) {
+      expandedSectionIds = [];
+    }
+    const expandedSections = new Set(expandedSectionIds);
+
+    function harnessKey(harness) {
+      return harness.harnessId || `component:${harness.componentName}`;
+    }
+
+    function emptyMessage(text) {
+      const paragraph = document.createElement("p");
+      paragraph.className = "empty";
+      paragraph.textContent = text;
+      return paragraph;
+    }
+
+    function statusBadge(harness) {
+      const badge = document.createElement("span");
+      badge.className = "status";
+      badge.dataset.status = harness.status;
+      badge.textContent = harness.status;
+      return badge;
+    }
+
+    function renderLibrary() {
+      const query = ui.harnessFilter.value.trim().toLocaleLowerCase();
+      const harnesses = currentState.harnesses.filter((harness) => {
+        const searchable = `${harness.componentName} ${harness.routingMode || ""} ${harness.status}`;
+        return searchable.toLocaleLowerCase().includes(query);
+      });
+      ui.list.replaceChildren();
+      if (!harnesses.length) {
+        const message = currentState.harnesses.length
+          ? "No harnesses match this filter."
+          : "No procedural harnesses in this design.";
+        ui.list.append(emptyMessage(message));
         return;
       }
-      state.harnesses.forEach((harness) => {
+      harnesses.forEach((harness) => {
         const button = document.createElement("button");
         const name = document.createElement("strong");
         const summary = document.createElement("span");
         button.type = "button";
-        button.className = "harness";
+        button.className = "harness-card";
         button.dataset.status = harness.status;
         name.textContent = harness.componentName;
+        summary.className = "summary";
         summary.textContent = harness.status === "damaged"
           ? "Metadata could not be loaded"
-          : `${harness.routingMode} · ${harness.wireCount} wires · ${harness.status}`;
-        button.append(name, summary);
-        button.addEventListener("click", () => showDetails(harness));
-        list.append(button);
+          : `${harness.routingMode} · ${harness.wires.length} wires`;
+        button.append(name, statusBadge(harness), summary);
+        button.addEventListener("click", () => openHarness(harnessKey(harness)));
+        ui.list.append(button);
       });
+    }
+
+    function definitionList(items, renderItem, emptyText) {
+      const container = document.createElement("div");
+      container.className = "section-content";
+      if (!items.length) {
+        container.append(emptyMessage(emptyText));
+        return container;
+      }
+      items.forEach((item) => container.append(renderItem(item)));
+      return container;
+    }
+
+    function itemRow(title, meta, route = "") {
+      const row = document.createElement("div");
+      const main = document.createElement("div");
+      const heading = document.createElement("strong");
+      const metadata = document.createElement("span");
+      row.className = "item";
+      main.className = "item-main";
+      heading.textContent = title;
+      metadata.className = "item-meta";
+      metadata.textContent = meta;
+      main.append(heading, metadata);
+      row.append(main);
+      if (route) {
+        const routeText = document.createElement("div");
+        routeText.className = "route";
+        routeText.textContent = route;
+        row.append(routeText);
+      }
+      return row;
+    }
+
+    function editorSection(id, title, count, content, openByDefault = false) {
+      const section = document.createElement("details");
+      const summary = document.createElement("summary");
+      const label = document.createElement("span");
+      const counter = document.createElement("span");
+      section.dataset.section = id;
+      section.open = expandedSections.has(id) || (openByDefault && !hasStoredExpansionState);
+      label.textContent = title;
+      counter.className = "count";
+      counter.textContent = count;
+      summary.append(label, counter);
+      section.append(summary, content);
+      section.addEventListener("toggle", () => {
+        hasStoredExpansionState = true;
+        if (section.open) expandedSections.add(id);
+        else expandedSections.delete(id);
+        writeSession(
+          "wireBundler.expandedSections",
+          JSON.stringify([...expandedSections]),
+        );
+      });
+      return section;
+    }
+
+    function renderWires(harness) {
+      const key = harnessKey(harness);
+      const connections = new Map(
+        harness.connections.map((connection) => [connection.connectionId, connection.name]),
+      );
+      const profiles = new Map(
+        harness.profiles.map((profile) => [profile.profileId, profile.name]),
+      );
+      const controls = new Map(
+        harness.controls.map((control) => [control.controlId, control.name]),
+      );
+      const pathways = new Map(
+        harness.pathways.map((pathway) => [pathway.pathwayId, pathway.name]),
+      );
+      const container = document.createElement("div");
+      const filter = document.createElement("input");
+      const rows = document.createElement("div");
+      container.className = "section-content";
+      filter.className = "filter wire-filter";
+      filter.type = "search";
+      filter.placeholder = "Filter wires…";
+      filter.setAttribute("aria-label", "Filter wires");
+      filter.value = wireFilters.get(key) || "";
+      filter.autocomplete = "off";
+      rows.className = "wire-rows";
+      const renderRows = () => {
+        const wireFilter = filter.value.trim().toLocaleLowerCase();
+        wireFilters.set(key, wireFilter);
+        const wires = harness.wires.filter((wire) => {
+          const searchable = [
+            wire.wireNumber,
+            connections.get(wire.startConnectionId),
+            connections.get(wire.endConnectionId),
+            profiles.get(wire.profileId),
+          ].join(" ").toLocaleLowerCase();
+          return searchable.includes(wireFilter);
+        });
+        rows.replaceChildren();
+        if (!wires.length) {
+          const text = harness.wires.length
+            ? "No wires match this filter."
+            : "No wires defined yet.";
+          rows.append(emptyMessage(text));
+          return;
+        }
+        wires.forEach((wire) => {
+          const start = connections.get(wire.startConnectionId) || "Missing start";
+          const end = connections.get(wire.endConnectionId) || "Missing destination";
+          const profile = profiles.get(wire.profileId) || "Missing profile";
+          const route = wire.orderedControlIds.length
+            ? `Path: ${wire.orderedPathwayIds.map((id) => pathways.get(id) || "Missing pathway").join(" → ")} · Gates: ${wire.orderedControlIds.map((id) => controls.get(id) || "Missing control").join(" → ")}`
+            : "Route: direct / not configured";
+          rows.append(itemRow(`#${wire.wireNumber}  ${start} → ${end}`, profile, route));
+        });
+      };
+      filter.addEventListener("input", renderRows);
+      container.append(filter, rows);
+      renderRows();
+      return container;
+    }
+
+    function renderPathways(harness) {
+      const controls = new Map(
+        harness.controls.map((control) => [control.controlId, control]),
+      );
+      return definitionList(
+        harness.pathways,
+        (pathway) => {
+          const route = pathway.orderedControlIds.length
+            ? pathway.orderedControlIds.map((id) => {
+              const control = controls.get(id);
+              return control ? control.name : "Missing gate";
+            }).join(" → ")
+            : "No gates";
+          return itemRow(pathway.name, pathway.routingMode, route);
+        },
+        "No pathways defined yet.",
+      );
+    }
+
+    function renderEditor(harness) {
+      ui.editor.replaceChildren();
+      ui.addWires.disabled = harness.status === "damaged" || !harness.pathways?.length;
+      const heading = document.createElement("div");
+      const title = document.createElement("h2");
+      const meta = document.createElement("div");
+      heading.className = "editor-heading";
+      meta.className = "meta";
+      title.textContent = harness.componentName;
+      meta.textContent = harness.status === "damaged"
+        ? "Damaged harness metadata"
+        : `${harness.routingMode} · ${harness.status}`;
+      heading.append(title, meta);
+      ui.editor.append(heading);
+
+      if (harness.status === "damaged") {
+        const error = document.createElement("div");
+        error.className = "error-panel";
+        error.textContent = harness.error || "The stored definition could not be loaded.";
+        ui.editor.append(error);
+        return;
+      }
+
+      const overview = document.createElement("dl");
+      const overviewRows = [
+        ["Definition", harness.definitionName],
+        ["Schema", harness.schemaVersion],
+        ["Harness ID", harness.harnessId],
+      ];
+      overview.className = "overview";
+      overviewRows.forEach(([label, value]) => {
+        const term = document.createElement("dt");
+        const description = document.createElement("dd");
+        term.textContent = label;
+        description.textContent = value;
+        overview.append(term, description);
+      });
+      ui.editor.append(overview);
+
+      const connections = definitionList(
+        harness.connections,
+        (connection) => itemRow(
+          connection.name,
+          connection.hasLinkedGeometry ? "Geometry linked" : "Geometry missing",
+        ),
+        "No connections defined yet.",
+      );
+      const routing = definitionList(
+        harness.controls,
+        (control) => itemRow(
+          control.name,
+          control.kind.replaceAll("_", " "),
+          control.hasLinkedGeometry ? "Geometry linked" : "Geometry missing",
+        ),
+        "No routing controls defined yet.",
+      );
+      const validation = document.createElement("div");
+      validation.className = "section-content";
+      if (harness.validationMessages.length) {
+        const list = document.createElement("ul");
+        list.className = "validation-list errors";
+        harness.validationMessages.forEach((message) => {
+          const item = document.createElement("li");
+          item.textContent = message;
+          list.append(item);
+        });
+        validation.append(list);
+      } else {
+        validation.append(emptyMessage("No logical validation findings."));
+      }
+
+      ui.editor.append(
+        editorSection(
+          "pathways",
+          "Pathways",
+          `${harness.pathways.length}`,
+          renderPathways(harness),
+          harness.pathways.length > 0,
+        ),
+        editorSection("wires", "Wires", `${harness.wires.length}`, renderWires(harness), true),
+        editorSection("connections", "Connections", `${harness.connections.length}`, connections),
+        editorSection("routing", "Routing", `${harness.controls.length}`, routing),
+        editorSection(
+          "validation",
+          "Validation",
+          harness.validationMessages.length ? `${harness.validationMessages.length} findings` : "Clear",
+          validation,
+          harness.validationMessages.length > 0,
+        ),
+      );
+    }
+
+    function openHarness(key) {
+      const harness = currentState.harnesses.find((candidate) => harnessKey(candidate) === key);
+      if (!harness) return;
+      selectedHarnessKey = key;
+      writeSession("wireBundler.selectedHarness", key);
+      ui.libraryView.hidden = true;
+      ui.editorView.hidden = false;
+      renderEditor(harness);
+      window.scrollTo(0, 0);
+    }
+
+    function closeEditor() {
+      selectedHarnessKey = "";
+      removeSession("wireBundler.selectedHarness");
+      ui.editorView.hidden = true;
+      ui.libraryView.hidden = false;
+      ui.editor.replaceChildren();
+      ui.harnessFilter.focus();
+    }
+
+    function render(state) {
+      const scrollTop = document.scrollingElement.scrollTop;
+      currentState = state;
+      ui.notice.textContent = state.notice || "";
+      renderLibrary();
+      const selected = state.harnesses.find(
+        (harness) => harnessKey(harness) === selectedHarnessKey,
+      );
+      if (selected) {
+        ui.libraryView.hidden = true;
+        ui.editorView.hidden = false;
+        renderEditor(selected);
+      } else {
+        selectedHarnessKey = "";
+        removeSession("wireBundler.selectedHarness");
+        ui.editorView.hidden = true;
+        ui.libraryView.hidden = false;
+      }
+      window.requestAnimationFrame(() => window.scrollTo(0, scrollTop));
     }
 
     function waitForFusionHost() {
@@ -107,24 +577,82 @@
       });
     }
 
-    async function send(action) {
+    async function send(action, payload = {}) {
       const fusionHost = await waitForFusionHost();
-      const response = await fusionHost.fusionSendData(action, "{}");
+      const response = await fusionHost.fusionSendData(action, JSON.stringify(payload));
       return JSON.parse(response);
     }
 
     async function refresh() {
-      try { render(await send("get_state")); }
-      catch (error) { notice.textContent = error.message; notice.style.color = "#b44242"; }
+      try {
+        ui.notice.style.color = "";
+        render(await send("get_state"));
+      } catch (error) {
+        ui.notice.textContent = error.message;
+        ui.notice.style.color = "var(--danger)";
+      }
     }
 
-    document.getElementById("refresh").addEventListener("click", refresh);
-    document.getElementById("create").addEventListener("click", async () => {
-      notice.style.color = "";
-      notice.textContent = "Opening Create Harness…";
-      try { await send("create_harness"); }
-      catch (error) { notice.textContent = error.message; notice.style.color = "#b44242"; }
-    });
+    async function createHarness() {
+      ui.notice.style.color = "";
+      ui.notice.textContent = "Opening Create Harness…";
+      try {
+        const response = await send("create_harness");
+        if (!response.ok) {
+          ui.notice.textContent = response.error || "Create Harness could not be opened.";
+          ui.notice.style.color = "var(--danger)";
+        }
+      } catch (error) {
+        ui.notice.textContent = error.message;
+        ui.notice.style.color = "var(--danger)";
+      }
+    }
+
+    async function addPathway() {
+      const harness = currentState.harnesses.find(
+        (candidate) => harnessKey(candidate) === selectedHarnessKey,
+      );
+      if (!harness || harness.status === "damaged") return;
+      ui.notice.style.color = "";
+      ui.notice.textContent = "Opening Add Pathway…";
+      try {
+        const response = await send("add_pathway", { harnessId: harness.harnessId });
+        if (!response.ok) {
+          ui.notice.textContent = response.error || "Add Pathway could not be opened.";
+          ui.notice.style.color = "var(--danger)";
+        }
+      } catch (error) {
+        ui.notice.textContent = error.message;
+        ui.notice.style.color = "var(--danger)";
+      }
+    }
+
+    async function addWires() {
+      const harness = currentState.harnesses.find(
+        (candidate) => harnessKey(candidate) === selectedHarnessKey,
+      );
+      if (!harness || harness.status === "damaged" || !harness.pathways.length) return;
+      ui.notice.style.color = "";
+      ui.notice.textContent = "Opening Add Wires…";
+      try {
+        const response = await send("add_wires", { harnessId: harness.harnessId });
+        if (!response.ok) {
+          ui.notice.textContent = response.error || "Add Wires could not be opened.";
+          ui.notice.style.color = "var(--danger)";
+        }
+      } catch (error) {
+        ui.notice.textContent = error.message;
+        ui.notice.style.color = "var(--danger)";
+      }
+    }
+
+    ui.addPathway.addEventListener("click", addPathway);
+    ui.addWires.addEventListener("click", addWires);
+    ui.back.addEventListener("click", closeEditor);
+    ui.create.addEventListener("click", createHarness);
+    ui.createFromEditor.addEventListener("click", createHarness);
+    ui.harnessFilter.addEventListener("input", renderLibrary);
+    ui.refresh.addEventListener("click", refresh);
     window.fusionJavaScriptHandler = { handle(action, data) {
       if (action === "state") render(JSON.parse(data));
       return "OK";

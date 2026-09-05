@@ -143,6 +143,21 @@ harness_id   = a7132e...
 
 This prevents geometry changes or renaming from breaking wire identity.
 
+## Connection Identity and Naming
+
+Every physical, derived-exit, junction, and termination connection must have a
+stable internal UUID independent of its user-facing name. Names must be readable,
+unique within their configured scope, and generated consistently from a
+user-configurable naming convention. A convention may include connector or group
+name, connection kind, sequence number, zero padding, and separators; changing a
+display convention must not change connection identity or wire mapping.
+
+The UI must show the same resolved connection name in selection prompts, exit
+interfaces, wire mapping, validation findings, and generated metadata. Automatic
+names remain editable, and collisions are resolved deterministically. The exact
+default templates and configuration surface remain to be established rather than
+being inferred from temporary development names.
+
 ---
 
 ## Persistent Wire Identity
@@ -513,6 +528,34 @@ An optional preview mode should display approximate wire diameters or ribbon env
 
 This mode may update more slowly but provides better validation of physical interference.
 
+## Preview Performance and Level of Detail
+
+Preview must scale to complex harnesses with at least hundreds of connections
+without continuously creating finished Fusion features or bodies. Use the
+lightest representation that answers the current question:
+
+```text
+Level 0   Connection, gate, junction, and exit-interface markers
+Level 1   Lightweight centerlines and wire-identity correspondence
+Level 2   Diameter and clearance envelopes for selected or affected wires
+Commit    One finished Fusion body per wire
+```
+
+Interactive edits should update only dirty pathway spans and affected wires,
+reuse unchanged packing and route results, coalesce rapid manipulator changes,
+and defer precise recalculation until interaction settles. Large-harness views
+may show selected, failing, or locally affected wires while retaining full
+mapping and validation status in the palette. Collision checks should reject
+distant wire pairs through a spatial broad phase before performing detailed
+curve-separation work.
+
+Preview centerlines and envelopes are disposable visualization data, not
+temporary finished sweeps. Final body generation occurs only on explicit build or
+regeneration, reports progress, and must avoid leaving a partially generated
+harness after cancellation or failure. Concrete performance thresholds require
+measurement in Fusion and must not be invented before representative 100-plus
+connection experiments exist.
+
 ---
 
 # Preview Status
@@ -717,6 +760,81 @@ A future regeneration operation could then ask the user whether to:
 
 ---
 
+# Pathway Junction Wire Disposition
+
+A Y junction attaches a branch pathway to a movable slice plane on its parent
+pathway. Each parent wire must have an explicit disposition at that junction:
+
+```text
+EXCLUDE_BRANCH    Present on Pathway A after the slice; absent from Pathway B
+BRANCH            Continues on Pathway A and creates a branch leg on Pathway B
+REDIRECT_BRANCH   Present on Pathway A only up to the slice, then on Pathway B
+```
+
+The UI may present `EXCLUDE_BRANCH` as a per-wire exclusion and
+`REDIRECT_BRANCH` as a Redirect option. Persist the disposition against the
+stable incoming wire UUID rather than relying on list position or a changing
+default.
+
+A redirected wire is removed from every downstream routing-gate packing and
+generated span on Pathway A. Its route consists of the parent-pathway prefix, a
+generated junction transition, Pathway B, and the branch exit termination. This
+supports controlled partial exits such as individual ground straps. Moving the
+slice plane regenerates the transition while preserving wire identity.
+
+`BRANCH` represents a true Y connection: the parent route continues after the
+slice and an additional branch leg enters Pathway B. The branch leg must receive
+its own stable physical-wire identity and an explicit electrical relationship to
+the incoming wire; one wire UUID must never silently identify two generated
+bodies. The detailed splice and electrical-net representation remains a separate
+data-model decision within Y-junction implementation.
+
+Gate-capacity and wire-to-wire collision validation must use the resulting
+per-span membership: all incoming wires before the slice; excluded and branched
+parent wires after the slice on Pathway A; and redirected wires plus new branch
+legs on Pathway B.
+
+---
+
+# Pathway Extensions and Open Exits
+
+An extension attaches Pathway B directly to Pathway A's exit interface. Unlike a
+Y junction, it has no mid-path slice, split, or duplicated branch leg. Every wire
+that has not been terminated at Pathway A's exit continues through Pathway B with
+the same stable wire identity.
+
+```text
+Pathway A → Exit A → Pathway B → Exit B → optional further extension
+                         │
+                         └── locally terminated wires leave the route here
+```
+
+At each exit interface, every arriving wire has an explicit lifecycle state:
+
+```text
+OPEN          Available for termination or extension
+TERMINATED    Connected locally and absent from later pathway segments
+EXTENDED      Continues through the attached extension pathway
+```
+
+Creating an extension initially assigns all `OPEN` wires to the new pathway.
+Users may terminate selected wires at the current exit; only the remaining wires
+continue. The new pathway derives its entry positions, orientations, profiles,
+and conductor identities from the previous exit interface rather than requiring
+the source connections to be selected again. Its generated exit interface can be
+terminated normally or extended again.
+
+A wire route is therefore an ordered chain of pathway legs, with capacity and
+wire-to-wire collision validation calculated from the membership of each leg.
+An extension pathway is an ordinary pathway leg and may host one or more movable
+Y junctions under the same rules as the initial pathway. Junction dispositions
+change membership for the remainder of that leg and for every branch or extension
+downstream. The resulting route topology is a directed graph rather than a single
+linear chain. Initial implementation should reject cycles so a route cannot
+eventually feed back into an earlier pathway.
+
+---
+
 # Recommended Add-In Workflow
 
 A typical creation workflow should be:
@@ -741,6 +859,44 @@ A typical creation workflow should be:
 18. Rename wire components with numerical identifier and length.
 19. Store harness metadata.
 20. Preserve all wire paths and construction features for later editing.
+
+---
+
+# Deferred Presentation and Routing Research
+
+The following ideas are explicitly deferred and must not expand the scope or
+acceptance criteria of the core connection, pathway, wire-generation, and
+validation milestones:
+
+* **Pathway coverings**
+  Investigate optional procedural sheath, harness tape, and heat-shrink geometry
+  placed along a completed pathway at user-controlled intervals. This is a
+  late-game aesthetic layer derived from generated bundle geometry, not part of
+  the authoritative wire definition or a prerequisite for a valid harness.
+
+* **Twisted bundles**
+  Investigate low-priority support for conductors that rotate around a shared
+  bundle axis. Any future design must account for pitch, phase, conductor length,
+  bend behavior, and wire-to-wire clearance without changing conductor identity.
+
+* **Wire tips and material assignment**
+  Investigate optional start and end tip bodies that extend outward from their
+  connection profiles. Tip length is user-defined and stored canonically in
+  millimeters while the UI may display the active Fusion document units. For a
+  circular parent wire, tip diameter defaults to 60 percent of the parent-wire
+  diameter and remains adjustable. Tip material defaults to copper and remains
+  adjustable. Common tip defaults may be shared by both ends while permitting
+  independent start and end overrides. Tip and insulation regions must be created
+  as editable features and joined into one finished wire body. Region-specific
+  material or appearance assignments must remain represented in metadata and on
+  suitable faces without leaving multiple final wire bodies. Future design work
+  must define endpoint direction, regeneration behavior, Fusion material-library
+  versus per-face appearance support, and whether tip extensions contribute to
+  reported conductor or cut length.
+
+Generated coverings, tips, material assignments, and twist settings should remain
+optional, regenerable, and separable from the underlying connection mapping and
+pathway definition.
 
 ---
 

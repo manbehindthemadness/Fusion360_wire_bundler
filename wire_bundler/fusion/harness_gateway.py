@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional, Protocol, cast
+from uuid import UUID
 
 # noinspection PyUnresolvedReferences
 import adsk.core
@@ -14,7 +15,7 @@ import adsk.core
 import adsk.fusion
 
 from ..application import StoredHarness
-from ..domain import next_available_name
+from ..domain import DefinitionParseError, loads, next_available_name
 
 ATTRIBUTE_GROUP = "kev0.wire_bundler"
 DEFINITION_ATTRIBUTE_NAME = "harness_definition"
@@ -225,6 +226,55 @@ class FusionHarnessGateway:
             )
         return tuple(stored_harnesses)
 
+    def read_harness_definition(self, harness_id: UUID) -> str:
+        """
+        Return the serialized definition owned by one harness.
+
+        Args:
+            harness_id: Persistent harness identity to find.
+
+        Returns:
+            Stored definition JSON.
+        """
+        _component, attribute = self._find_harness_component(harness_id)
+        return attribute.value
+
+    def replace_harness_definition(
+        self,
+        harness_id: UUID,
+        serialized_definition: str,
+    ) -> None:
+        """
+        Replace the serialized definition owned by one harness.
+
+        Args:
+            harness_id: Persistent harness identity to update.
+            serialized_definition: Complete replacement definition JSON.
+        """
+        component, _attribute = self._find_harness_component(harness_id)
+        updated_attribute = component.attributes.add(
+            ATTRIBUTE_GROUP,
+            DEFINITION_ATTRIBUTE_NAME,
+            serialized_definition,
+        )
+        if updated_attribute is None:
+            raise RuntimeError("Fusion did not update the harness definition attribute.")
+
+    def is_entity_token_resolvable(self, entity_token: str) -> bool:
+        """
+        Return whether Fusion can still resolve a persisted entity token.
+
+        Args:
+            entity_token: Persistent token previously obtained from Fusion geometry.
+
+        Returns:
+            ``True`` when the active design resolves at least one matching entity.
+        """
+        if not entity_token.strip():
+            return False
+        resolved_entities = self._design.findEntityByToken(entity_token)
+        return bool(resolved_entities)
+
     def create_harness_component(self, name: str) -> object:
         """
         Create an empty child component under the active component.
@@ -299,6 +349,41 @@ class FusionHarnessGateway:
         if not occurrence.deleteMe():
             raise RuntimeError("Fusion did not delete the incomplete harness component.")
         self._restore_design_intent(handle.original_design_intent)
+
+    def _find_harness_component(
+        self,
+        harness_id: UUID,
+    ) -> tuple[_FusionComponent, _FusionAttribute]:
+        """
+        Find the marked Fusion component owning one valid harness definition.
+
+        Args:
+            harness_id: Persistent harness identity to locate.
+
+        Returns:
+            Matching component and definition attribute.
+
+        Raises:
+            RuntimeError: If no matching readable harness exists.
+        """
+        components = cast(_FusionComponents, self._design.allComponents)
+        for index in range(components.count):
+            component = components.item(index)
+            if component is None:
+                continue
+            attribute = component.attributes.itemByName(
+                ATTRIBUTE_GROUP,
+                DEFINITION_ATTRIBUTE_NAME,
+            )
+            if attribute is None:
+                continue
+            try:
+                definition = loads(attribute.value)
+            except (DefinitionParseError, TypeError, ValueError):
+                continue
+            if definition.harness_id == harness_id:
+                return component, attribute
+        raise RuntimeError(f"Harness definition is unavailable: {harness_id}")
 
     @staticmethod
     def _require_handle(component: object) -> _HarnessComponentHandle:

@@ -12,6 +12,7 @@ from .model import (
     SCHEMA_VERSION,
     ControlKind,
     HarnessDefinition,
+    PathwayDefinition,
     RoutingMode,
 )
 
@@ -60,6 +61,7 @@ def validate_harness(definition: HarnessDefinition) -> tuple[ValidationIssue, ..
     _validate_profiles(definition, issues)
     _validate_connections(definition, issues)
     _validate_controls(definition, issues)
+    _validate_pathways(definition, issues)
     _validate_wires(definition, issues)
     return tuple(issues)
 
@@ -88,6 +90,10 @@ def _validate_unique_ids(
         *(
             (control.control_id, f"controls[{index}].control_id")
             for index, control in enumerate(definition.controls)
+        ),
+        *(
+            (pathway.pathway_id, f"pathways[{index}].pathway_id")
+            for index, pathway in enumerate(definition.pathways)
         ),
         *((wire.wire_id, f"wires[{index}].wire_id") for index, wire in enumerate(definition.wires)),
     ]
@@ -168,17 +174,12 @@ def _validate_controls(
     issues: list[ValidationIssue],
 ) -> None:
     """
-    Validate routing-control references and mode compatibility.
+    Validate routing-control references.
 
     Args:
         definition: Harness definition to validate.
         issues: Mutable issue accumulator.
     """
-    expected_kind: ControlKind = (
-        ControlKind.ROUTING_GATE
-        if definition.routing_mode is RoutingMode.ROUTING_GATES
-        else ControlKind.PROFILE_GATE
-    )
     for index, control in enumerate(definition.controls):
         path = f"controls[{index}]"
         if not control.name.strip():
@@ -193,14 +194,90 @@ def _validate_controls(
                     "Control must reference Fusion geometry.",
                 )
             )
-        if control.kind is not expected_kind:
+
+
+def _validate_pathways(
+    definition: HarnessDefinition,
+    issues: list[ValidationIssue],
+) -> None:
+    """
+    Validate pathway names, ordered gates, and routing-mode compatibility.
+
+    Args:
+        definition: Harness definition to validate.
+        issues: Mutable issue accumulator.
+    """
+    controls_by_id = {control.control_id: control for control in definition.controls}
+    seen_names: dict[str, str] = {}
+    for index, pathway in enumerate(definition.pathways):
+        path = f"pathways[{index}]"
+        normalized_name = pathway.name.strip()
+        if not normalized_name:
             issues.append(
                 ValidationIssue(
-                    "control_mode_mismatch",
-                    f"{path}.kind",
-                    f"Control kind must be {expected_kind.value} for this routing mode.",
+                    "missing_pathway_name",
+                    f"{path}.name",
+                    "Pathway name is required.",
                 )
             )
+        else:
+            name_key = normalized_name.casefold()
+            previous_path = seen_names.get(name_key)
+            if previous_path is not None:
+                issues.append(
+                    ValidationIssue(
+                        "duplicate_pathway_name",
+                        f"{path}.name",
+                        f"Pathway name duplicates {previous_path}.",
+                    )
+                )
+            else:
+                seen_names[name_key] = f"{path}.name"
+
+        if not pathway.ordered_control_ids:
+            issues.append(
+                ValidationIssue(
+                    "missing_pathway_controls",
+                    f"{path}.ordered_control_ids",
+                    "At least one ordered gate is required.",
+                )
+            )
+
+        expected_kind: ControlKind = (
+            ControlKind.ROUTING_GATE
+            if pathway.routing_mode is RoutingMode.ROUTING_GATES
+            else ControlKind.PROFILE_GATE
+        )
+        seen_control_ids: set[UUID] = set()
+        for control_index, control_id in enumerate(pathway.ordered_control_ids):
+            control_path = f"{path}.ordered_control_ids[{control_index}]"
+            control = controls_by_id.get(control_id)
+            if control is None:
+                issues.append(
+                    ValidationIssue(
+                        "missing_pathway_control_reference",
+                        control_path,
+                        "Referenced routing control does not exist.",
+                    )
+                )
+            elif control.kind is not expected_kind:
+                issues.append(
+                    ValidationIssue(
+                        "pathway_control_mode_mismatch",
+                        control_path,
+                        f"Control kind must be {expected_kind.value} for this pathway.",
+                    )
+                )
+            if control_id in seen_control_ids:
+                issues.append(
+                    ValidationIssue(
+                        "duplicate_pathway_control",
+                        control_path,
+                        "A gate may appear only once in a pathway.",
+                    )
+                )
+            else:
+                seen_control_ids.add(control_id)
 
 
 def _validate_wires(
@@ -217,6 +294,7 @@ def _validate_wires(
     profile_ids = {profile.profile_id for profile in definition.profiles}
     connection_ids = {connection.connection_id for connection in definition.connections}
     control_ids = {control.control_id for control in definition.controls}
+    pathways_by_id = {pathway.pathway_id: pathway for pathway in definition.pathways}
     seen_numbers: dict[str, str] = {}
     seen_endpoints: dict[UUID, str] = {}
 
@@ -260,6 +338,63 @@ def _validate_wires(
                     "At least one ordered control is required.",
                 )
             )
+
+        if not wire.ordered_pathway_ids:
+            issues.append(
+                ValidationIssue(
+                    "missing_wire_pathways",
+                    f"{path}.ordered_pathway_ids",
+                    "At least one ordered pathway is required.",
+                )
+            )
+
+        resolved_pathways: list[PathwayDefinition] = []
+        seen_wire_pathways: set[UUID] = set()
+        for pathway_index, pathway_id in enumerate(wire.ordered_pathway_ids):
+            pathway_path = f"{path}.ordered_pathway_ids[{pathway_index}]"
+            pathway = pathways_by_id.get(pathway_id)
+            if pathway is None:
+                issues.append(
+                    ValidationIssue(
+                        "missing_pathway_reference",
+                        pathway_path,
+                        "Referenced pathway does not exist.",
+                    )
+                )
+            else:
+                resolved_pathways.append(pathway)
+            if pathway_id in seen_wire_pathways:
+                issues.append(
+                    ValidationIssue(
+                        "duplicate_wire_pathway",
+                        pathway_path,
+                        "A pathway may appear only once in a wire route.",
+                    )
+                )
+            else:
+                seen_wire_pathways.add(pathway_id)
+
+        controls_are_resolvable = all(
+            control_id in control_ids for control_id in wire.ordered_control_ids
+        )
+        if (
+            wire.ordered_control_ids
+            and controls_are_resolvable
+            and len(resolved_pathways) == len(wire.ordered_pathway_ids)
+        ):
+            expected_control_ids = tuple(
+                control_id
+                for pathway in resolved_pathways
+                for control_id in pathway.ordered_control_ids
+            )
+            if expected_control_ids != wire.ordered_control_ids:
+                issues.append(
+                    ValidationIssue(
+                        "wire_pathway_controls_mismatch",
+                        f"{path}.ordered_control_ids",
+                        "Wire control order must match its ordered pathways.",
+                    )
+                )
 
         seen_wire_controls: set[UUID] = set()
         for control_index, control_id in enumerate(wire.ordered_control_ids):

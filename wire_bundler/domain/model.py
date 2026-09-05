@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from enum import Enum
 from uuid import UUID
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 
 class RoutingMode(str, Enum):
@@ -80,6 +80,24 @@ class ControlStructure:
 
 
 @dataclass(frozen=True)
+class PathwayDefinition:
+    """
+    Group an ordered sequence of routing controls into a reusable pathway.
+
+    Args:
+        pathway_id: Persistent pathway identity.
+        name: User-facing pathway name.
+        routing_mode: Routing strategy used by every gate in the pathway.
+        ordered_control_ids: Gate identities in traversal order.
+    """
+
+    pathway_id: UUID
+    name: str
+    routing_mode: RoutingMode
+    ordered_control_ids: tuple[UUID, ...]
+
+
+@dataclass(frozen=True)
 class WireDefinition:
     """
     Map one persistent conductor from a start to a destination.
@@ -90,6 +108,7 @@ class WireDefinition:
         start_connection_id: Referenced physical starting connection.
         end_connection_id: Referenced physical destination connection.
         profile_id: Referenced conductor profile.
+        ordered_pathway_ids: Pathway identities in traversal order.
         ordered_control_ids: Control identities in traversal order.
     """
 
@@ -98,6 +117,7 @@ class WireDefinition:
     start_connection_id: UUID
     end_connection_id: UUID
     profile_id: UUID
+    ordered_pathway_ids: tuple[UUID, ...]
     ordered_control_ids: tuple[UUID, ...]
 
 
@@ -114,6 +134,7 @@ class HarnessDefinition:
         profiles: Available conductor profiles.
         connections: Available physical connections.
         controls: Available routing controls.
+        pathways: Reusable ordered routing pathways.
         wires: Authoritative conductor mappings.
     """
 
@@ -124,4 +145,5 @@ class HarnessDefinition:
     profiles: tuple[WireProfile, ...]
     connections: tuple[Connection, ...]
     controls: tuple[ControlStructure, ...]
+    pathways: tuple[PathwayDefinition, ...]
     wires: tuple[WireDefinition, ...]
