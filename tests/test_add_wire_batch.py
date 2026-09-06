@@ -70,7 +70,7 @@ class _RecordingWireGateway(WireBatchGateway):
 
 def test_adds_ordered_wire_pairs_on_selected_pathway(valid_harness: HarnessDefinition) -> None:
     """
-    Preserve source/destination pairing and explicit pathway identity.
+    Preserve End A/End B pairing and explicit pathway identity.
     """
     empty_harness = replace(valid_harness, profiles=(), connections=(), wires=())
     gateway = _RecordingWireGateway(empty_harness)
@@ -102,6 +102,12 @@ def test_adds_ordered_wire_pairs_on_selected_pathway(valid_harness: HarnessDefin
         "source-2",
         "destination-1",
         "destination-2",
+    ]
+    assert [connection.name for connection in result.connections] == [
+        "End A 001",
+        "End A 002",
+        "End B 001",
+        "End B 002",
     ]
     assert [wire.wire_number for wire in result.wires] == ["001", "002"]
     assert result.wires[0].start_connection_id == SOURCE_IDS[0]

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from uuid import UUID
+from uuid import UUID, uuid5
 
 SCHEMA_VERSION = 3
 
@@ -54,11 +54,32 @@ class Connection:
         connection_id: Persistent connection identity.
         name: User-facing connection name.
         entity_token: Opaque Fusion entity token resolved by the host adapter.
+        additional_entity_tokens: Remaining connection members in explicit order.
+        member_ids: Persistent per-member identities aligned with the token order.
     """
 
     connection_id: UUID
     name: str
     entity_token: str
+    additional_entity_tokens: tuple[str, ...] = ()
+    member_ids: tuple[UUID, ...] = ()
+
+    @property
+    def member_identities(self) -> tuple[UUID, ...]:
+        """
+        Return saved member identities or deterministic identities for legacy data.
+        """
+        return self.member_ids or tuple(
+            uuid5(self.connection_id, f"member:{index}") for index in range(len(self.member_tokens))
+        )
+
+    @property
+    def member_tokens(self) -> tuple[str, ...]:
+        """
+        Return the primary profile followed by the remaining connection members.
+        """
+        tokens = (self.entity_token, *self.additional_entity_tokens)
+        return tokens
 
 
 @dataclass(frozen=True)
@@ -89,12 +110,16 @@ class PathwayDefinition:
         name: User-facing pathway name.
         routing_mode: Routing strategy used by every gate in the pathway.
         ordered_control_ids: Gate identities in traversal order.
+        start_name: Optional label at the start of gate traversal.
+        end_name: Optional label at the end of gate traversal.
     """
 
     pathway_id: UUID
     name: str
     routing_mode: RoutingMode
     ordered_control_ids: tuple[UUID, ...]
+    start_name: str = ""
+    end_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -110,6 +135,9 @@ class WireDefinition:
         profile_id: Referenced conductor profile.
         ordered_pathway_ids: Pathway identities in traversal order.
         ordered_control_ids: Control identities in traversal order.
+        start_end_name: Organizational name for this wire's End A.
+        end_end_name: Organizational name for this wire's End B.
+        display_name: Optional user-facing label replacing the numbered designation.
     """
 
     wire_id: UUID
@@ -119,6 +147,9 @@ class WireDefinition:
     profile_id: UUID
     ordered_pathway_ids: tuple[UUID, ...]
     ordered_control_ids: tuple[UUID, ...]
+    start_end_name: str = ""
+    end_end_name: str = ""
+    display_name: str = ""
 
 
 @dataclass(frozen=True)

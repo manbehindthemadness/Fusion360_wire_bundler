@@ -5,8 +5,9 @@ Translate Fusion profiles into routing frames and transient centerline graphics.
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass, replace
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 # noinspection PyUnresolvedReferences
 import adsk.core
@@ -26,6 +27,28 @@ _PREVIEW_COLORS = (
     (220, 153, 42),
     (37, 153, 165),
 )
+
+
+@dataclass
+class _PreviewState:
+    """
+    Retain the inputs and paths actually displayed by one transient preview.
+    """
+
+    definition: HarnessDefinition
+    routes: dict[UUID, RoutePreview]
+    color_indices: dict[UUID, int]
+    clearance_mm: float
+
+
+_preview_states: dict[str, _PreviewState] = {}
+
+
+def _is_preview_group(group: adsk.fusion.CustomGraphicsGroup) -> bool:
+    """
+    Recognize both current uniquely identified groups and older preview groups.
+    """
+    return group.id == PREVIEW_GROUP_ID or group.id.startswith(f"{PREVIEW_GROUP_ID}:")
 
 
 def show_route_previews(
@@ -54,7 +77,7 @@ def show_route_previews(
     preview_group = root_component.customGraphicsGroups.add()
     if preview_group is None:
         raise RuntimeError("Fusion did not create the route-preview graphics group.")
-    preview_group.id = PREVIEW_GROUP_ID
+    preview_group.id = f"{PREVIEW_GROUP_ID}:{uuid4()}"
     preview_group.name = f"{definition.name} Route Preview"
     try:
         for index, route in enumerate(routes):
@@ -62,6 +85,12 @@ def show_route_previews(
     except (AttributeError, RuntimeError, TypeError, ValueError):
         preview_group.deleteMe()
         raise
+    _preview_states[preview_group.id] = _PreviewState(
+        definition,
+        {route.wire_id: route for route in routes},
+        {route.wire_id: index for index, route in enumerate(routes)},
+        clearance_mm,
+    )
     return routes
 
 
@@ -75,8 +104,173 @@ def clear_route_previews(design: adsk.fusion.Design) -> None:
     groups = design.rootComponent.customGraphicsGroups
     for index in range(groups.count - 1, -1, -1):
         group = groups.item(index)
-        if group is not None and group.id == PREVIEW_GROUP_ID:
+        if group is not None and _is_preview_group(group):
+            _preview_states.pop(group.id, None)
             group.deleteMe()
+
+
+def _routing_signature(definition: HarnessDefinition, wire: WireDefinition) -> tuple[object, ...]:
+    """
+    Compare all ordered routing members while ignoring organizational labels.
+    """
+    connections = {item.connection_id: item for item in definition.connections}
+    profiles = {item.profile_id: item for item in definition.profiles}
+    controls = {item.control_id: item for item in definition.controls}
+    start = connections.get(wire.start_connection_id)
+    end = connections.get(wire.end_connection_id)
+    profile = profiles.get(wire.profile_id)
+    return (
+        wire.wire_id,
+        wire.wire_number,
+        wire.ordered_control_ids,
+        start.member_tokens if start else None,
+        end.member_tokens if end else None,
+        profile.diameter_mm if profile else None,
+        tuple(controls.get(identity) for identity in wire.ordered_control_ids),
+    )
+
+
+def _wire_graphics(
+    group: adsk.fusion.CustomGraphicsGroup,
+    wire_ids: set[UUID],
+) -> tuple[adsk.fusion.CustomGraphicsGroup, ...]:
+    """
+    Find existing children by stable wire identity without touching other paths.
+    """
+    identities = {str(identity) for identity in wire_ids}
+    children = []
+    for index in range(group.count):
+        child = adsk.fusion.CustomGraphicsGroup.cast(group.item(index))
+        if child is not None and child.id in identities:
+            children.append(child)
+    return tuple(children)
+
+
+def refresh_route_previews(
+    design: adsk.fusion.Design,
+    definition: HarnessDefinition,
+) -> tuple[str, ...]:
+    """
+    Recompute affected bundles of an active preview and redraw only changed paths.
+
+    Missing ends are excluded from packing. Failed bundles lose stale graphics;
+    unrelated bundles stay visible. Return warnings without undoing a saved edit.
+    """
+    groups = design.rootComponent.customGraphicsGroups
+    warnings: list[str] = []
+    for index in range(groups.count):
+        group = groups.item(index)
+        if group is None:
+            continue
+        state = _preview_states.get(group.id)
+        if state is None or state.definition.harness_id != definition.harness_id:
+            continue
+        old_wires = {wire.wire_id: wire for wire in state.definition.wires}
+        new_wires = {wire.wire_id: wire for wire in definition.wires}
+        relocated_ids = {
+            identity
+            for identity, wire in old_wires.items()
+            if identity not in new_wires
+            or new_wires[identity].ordered_control_ids != wire.ordered_control_ids
+        }
+        for child in _wire_graphics(group, relocated_ids):
+            child.deleteMe()
+        for identity in relocated_ids:
+            state.routes.pop(identity, None)
+        affected: set[tuple[UUID, ...]] = set()
+        for wire_id in old_wires.keys() | new_wires.keys():
+            old = old_wires.get(wire_id)
+            new = new_wires.get(wire_id)
+            if (
+                old is None
+                or new is None
+                or wire_id not in state.routes
+                or _routing_signature(state.definition, old) != _routing_signature(definition, new)
+            ):
+                if old is not None:
+                    affected.add(old.ordered_control_ids)
+                if new is not None:
+                    affected.add(new.ordered_control_ids)
+        connection_ids = {item.connection_id for item in definition.connections}
+        for control_ids in sorted(affected, key=lambda ids: tuple(str(item) for item in ids)):
+            bundle = tuple(
+                wire for wire in definition.wires if wire.ordered_control_ids == control_ids
+            )
+            eligible = tuple(
+                wire
+                for wire in bundle
+                if wire.start_connection_id in connection_ids
+                and wire.end_connection_id in connection_ids
+            )
+            affected_ids = {wire.wire_id for wire in bundle}
+            solved: dict[UUID, RoutePreview] = {}
+            try:
+                if eligible:
+                    routes = _solve_definition_routes(
+                        design, replace(definition, wires=eligible), state.clearance_mm
+                    )
+                    solved = {route.wire_id: route for route in routes}
+            except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+                warnings.append(f"Preview update failed for a routing group: {error}")
+            removed_ids = affected_ids - solved.keys()
+            for child in _wire_graphics(group, removed_ids):
+                child.deleteMe()
+            for wire_id in removed_ids:
+                state.routes.pop(wire_id, None)
+            for wire_id, route in solved.items():
+                if state.routes.get(wire_id) == route:
+                    continue
+                previous = _wire_graphics(group, {wire_id})
+                color_index = state.color_indices.setdefault(
+                    wire_id, max(state.color_indices.values(), default=-1) + 1
+                )
+                try:
+                    _add_route_graphics(group, route, color_index)
+                except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+                    for child in _wire_graphics(group, {wire_id}):
+                        child.deleteMe()
+                    state.routes.pop(wire_id, None)
+                    warnings.append(f"Could not draw wire {route.wire_number}: {error}")
+                    continue
+                for child in previous:
+                    child.deleteMe()
+                state.routes[wire_id] = route
+        state.definition = definition
+    return tuple(warnings)
+
+
+def highlight_route_preview(design: adsk.fusion.Design, wire_id: Optional[UUID]) -> int:
+    """
+    Emphasize one existing wire centerline and restore all other preview widths.
+
+    A missing preview is a harmless no-op; None clears hover emphasis.
+    """
+    return highlight_route_members(design, (wire_id,) if wire_id is not None else ())
+
+
+def highlight_route_members(design: adsk.fusion.Design, wire_ids: tuple[UUID, ...]) -> int:
+    """
+    Emphasize a set of existing wire previews and restore all other widths.
+    """
+    selected_ids = {str(wire_id) for wire_id in wire_ids}
+    selected_count = 0
+    groups = design.rootComponent.customGraphicsGroups
+    for index in range(groups.count):
+        group = groups.item(index)
+        if group is None or not _is_preview_group(group):
+            continue
+        for child_index in range(group.count):
+            wire_group = adsk.fusion.CustomGraphicsGroup.cast(group.item(child_index))
+            if wire_group is None:
+                continue
+            selected = wire_group.id in selected_ids
+            for line_index in range(wire_group.count):
+                lines = adsk.fusion.CustomGraphicsLines.cast(wire_group.item(line_index))
+                if lines is not None:
+                    lines.weight = 5.0 if selected else 1.0
+                    if selected:
+                        selected_count += 1
+    return selected_count
 
 
 def _solve_definition_routes(
@@ -123,6 +317,14 @@ def _solve_definition_routes(
                     start=_profile_center(design, start_connection.entity_token),
                     end=_profile_center(design, end_connection.entity_token),
                     diameter_mm=profile.diameter_mm,
+                    start_guides=tuple(
+                        _profile_center(design, token)
+                        for token in start_connection.additional_entity_tokens
+                    ),
+                    end_guides=tuple(
+                        _profile_center(design, token)
+                        for token in end_connection.additional_entity_tokens
+                    ),
                 )
             )
         routes = solve_parallel_routes(tuple(route_inputs), gates, clearance_mm)
@@ -241,6 +443,7 @@ def _add_route_graphics(
     if lines is None:
         raise RuntimeError(f"Fusion did not draw wire {route.wire_number}.")
     lines.name = f"Wire {route.wire_number} Centerline"
+    lines.weight = 1.0
     red, green, blue = _PREVIEW_COLORS[color_index % len(_PREVIEW_COLORS)]
     color = adsk.core.Color.create(red, green, blue, 255)
     color_effect = adsk.fusion.CustomGraphicsSolidColorEffect.create(color)

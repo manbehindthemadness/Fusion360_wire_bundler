@@ -19,22 +19,41 @@ import adsk.fusion
 from .application import (
     add_pathway,
     add_wire_batch,
+    append_pathway_gates,
     create_empty_harness,
     load_harnesses,
+    move_pathway_gate,
+    move_wire_endpoint,
+    remove_pathway_gate,
+    remove_wire,
+    rename_pathway,
+    rename_route_end,
+    rename_wire,
+    set_wire_diameter,
     suggest_harness_name,
     suggest_pathway_name,
 )
-from .domain import RoutingMode, loads
-from .fusion import FusionHarnessGateway, clear_route_previews, show_route_previews
+from .application.edit_harness import edit_end_members
+from .domain import HarnessDefinition, RoutingMode, loads
+from .fusion import (
+    FusionHarnessGateway,
+    clear_route_previews,
+    highlight_route_preview,
+    show_route_previews,
+)
+from .fusion.route_preview import highlight_route_members, refresh_route_previews
 
 COMMAND_ID = "kev0_wire_bundler_harness_builder"
 CREATE_COMMAND_ID = "kev0_wire_bundler_create_harness"
 ADD_PATHWAY_COMMAND_ID = "kev0_wire_bundler_add_pathway"
+APPEND_GATES_COMMAND_ID = "kev0_wire_bundler_append_pathway_gates"
+EDIT_END_COMMAND_ID = "kev0_wire_bundler_edit_end_members"
 ADD_WIRES_COMMAND_ID = "kev0_wire_bundler_add_wires"
 COMMAND_NAME = "Harness Builder"
 COMMAND_DESCRIPTION = "Create and edit wire, ribbon, and harness assemblies."
 CREATE_COMMAND_NAME = "Create Harness"
 ADD_PATHWAY_COMMAND_NAME = "Add Pathway"
+APPEND_GATES_COMMAND_NAME = "Add Gates"
 ADD_WIRES_COMMAND_NAME = "Add Wires"
 PALETTE_ID = "kev0_wire_bundler_harness_builder_palette"
 PALETTE_HTML_URL = "palette.html"
@@ -62,7 +81,10 @@ _ROUTING_MODE_LABELS = {
 
 _handlers: list[object] = []
 _pending_pathway_harness_id: Optional[UUID] = None
+_pending_append_gate_ids: Optional[tuple[UUID, UUID]] = None
+_pending_end_edit: Optional[dict[str, object]] = None
 _pending_wire_harness_id: Optional[UUID] = None
+_pending_wire_pathway_id: Optional[UUID] = None
 
 
 class _HarnessBuilderExecuteHandler(adsk.core.CommandEventHandler):
@@ -300,9 +322,175 @@ class _AddPathwayCreatedHandler(adsk.core.CommandCreatedEventHandler):
             raise
 
 
+class _EditEndExecuteHandler(adsk.core.CommandEventHandler):
+    """
+    Persist profiles selected for a connection-member edit.
+    """
+
+    def __init__(self, payload: dict[str, object]) -> None:
+        """
+        Retain the selected end and member identity for the native command.
+        """
+        super().__init__()
+        self._payload = payload
+
+    def notify(self, args: adsk.core.CommandEventArgs) -> None:
+        """
+        Apply the profile selection and refresh the palette after success.
+        """
+        try:
+            application = adsk.core.Application.get()
+            tokens = _read_pathway_gate_tokens(args.command.commandInputs)
+            _apply_end_member_edit(application, self._payload, tokens)
+            warning = _refresh_active_preview(
+                application, _read_payload_uuid(self._payload, "harnessId", "harness")
+            )
+            application.activeViewport.refresh()
+            _send_palette_state(application, f"Updated end members. {warning}".strip())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            _report_failure("edit end members")
+
+
+class _EditEndCreatedHandler(adsk.core.CommandCreatedEventHandler):
+    """
+    Open native profile selection for adding or replacing end members.
+    """
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
+        """
+        Configure ordered profile selection and retain execution handlers.
+        """
+        global _pending_end_edit
+        payload = _pending_end_edit
+        _pending_end_edit = None
+        if payload is None:
+            raise RuntimeError("No end was selected.")
+        selection = _add_profile_selection_input(
+            args.command.commandInputs,
+            PATHWAY_GATES_INPUT_ID,
+            "Connection Profiles",
+            "Select profiles for this end sequence",
+        )
+        if not selection.setSelectionLimits(1, 1 if payload.get("editAction") == "replace" else 0):
+            raise RuntimeError("Fusion could not set end-member selection limits.")
+        execute_handler = _EditEndExecuteHandler(payload)
+        validate_handler = _AppendGatesValidateInputsHandler()
+        if not args.command.execute.add(execute_handler):
+            raise RuntimeError("Fusion could not register the end edit handler.")
+        if not args.command.validateInputs.add(validate_handler):
+            raise RuntimeError("Fusion could not register end edit validation.")
+        _handlers.extend((execute_handler, validate_handler))
+
+
+class _AppendGatesExecuteHandler(adsk.core.CommandEventHandler):
+    """
+    Append selected sketch profiles to an existing pathway.
+    """
+
+    def __init__(self, harness_id: UUID, pathway_id: UUID) -> None:
+        """
+        Bind the handler to the selected harness and pathway.
+
+        Args:
+            harness_id: Stable identity of the owning harness.
+            pathway_id: Stable identity of the pathway being extended.
+        """
+        super().__init__()
+        self._harness_id = harness_id
+        self._pathway_id = pathway_id
+
+    def notify(self, args: adsk.core.CommandEventArgs) -> None:
+        """
+        Persist the selected profiles at the end of the pathway.
+
+        Args:
+            args: Command event arguments supplied by Fusion.
+        """
+        try:
+            application = adsk.core.Application.get()
+            controls = append_pathway_gates(
+                self._harness_id,
+                self._pathway_id,
+                _read_pathway_gate_tokens(args.command.commandInputs),
+                _create_harness_gateway(application),
+            )
+            warning = _refresh_active_preview(application, self._harness_id)
+            application.activeViewport.refresh()
+            _send_palette_state(application, f"Added {len(controls)} gates. {warning}".strip())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            _report_failure("add pathway gates")
+
+
+class _AppendGatesCreatedHandler(adsk.core.CommandCreatedEventHandler):
+    """
+    Build the ordered gate-selection command for one existing pathway.
+    """
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
+        """
+        Add gate selection input and retain its event handlers.
+
+        Args:
+            args: Command-created event arguments supplied by Fusion.
+        """
+        global _pending_append_gate_ids
+
+        pending_ids = _pending_append_gate_ids
+        _pending_append_gate_ids = None
+        try:
+            if pending_ids is None:
+                raise RuntimeError("No pathway was selected for gate creation.")
+            harness_id, pathway_id = pending_ids
+            gate_input = args.command.commandInputs.addSelectionInput(
+                PATHWAY_GATES_INPUT_ID,
+                "Additional Gate Profiles",
+                "Select additional sketch profiles in traversal order",
+            )
+            if gate_input is None:
+                raise RuntimeError("Fusion did not create the gate selection input.")
+            if not gate_input.addSelectionFilter("Profiles"):
+                raise RuntimeError("Fusion did not apply the sketch-profile selection filter.")
+            if not gate_input.setSelectionLimits(1, 0):
+                raise RuntimeError("Fusion did not configure the gate selection limits.")
+
+            execute_handler = _AppendGatesExecuteHandler(harness_id, pathway_id)
+            validate_handler = _AppendGatesValidateInputsHandler()
+            if not args.command.execute.add(execute_handler):
+                raise RuntimeError("Fusion did not register the add-gates execution handler.")
+            if not args.command.validateInputs.add(validate_handler):
+                raise RuntimeError("Fusion did not register the add-gates validation handler.")
+            _handlers.extend((execute_handler, validate_handler))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            _report_failure("open Add Gates")
+            raise
+
+
+class _AppendGatesValidateInputsHandler(adsk.core.ValidateInputsEventHandler):
+    """
+    Require at least one selected gate profile.
+    """
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, args: adsk.core.ValidateInputsEventArgs) -> None:
+        """
+        Validate gate selections before Fusion enables execution.
+
+        Args:
+            args: Validation event arguments supplied by Fusion.
+        """
+        try:
+            _read_pathway_gate_tokens(args.inputs)
+        except ValueError:
+            args.areInputsValid = False
+            return
+        args.areInputsValid = True
+
+
 class _AddWiresExecuteHandler(adsk.core.CommandEventHandler):
     """
-    Persist ordered source-to-destination wire assignments.
+    Persist ordered End A-to-End B wire assignments.
     """
 
     def __init__(self, harness_id: UUID, pathway_ids_by_name: dict[str, UUID]) -> None:
@@ -330,16 +518,20 @@ class _AddWiresExecuteHandler(adsk.core.CommandEventHandler):
             result = add_wire_batch(
                 self._harness_id,
                 _read_wire_pathway_id(command_inputs, self._pathway_ids_by_name),
-                _read_profile_tokens(command_inputs, SOURCE_CONNECTIONS_INPUT_ID, "source"),
+                _read_profile_tokens(command_inputs, SOURCE_CONNECTIONS_INPUT_ID, "End A"),
                 _read_profile_tokens(
                     command_inputs,
                     DESTINATION_CONNECTIONS_INPUT_ID,
-                    "destination",
+                    "End B",
                 ),
                 _read_wire_diameter_mm(command_inputs),
                 _create_harness_gateway(application),
             )
-            _send_palette_state(application, f"Created {len(result.wires)} wires.")
+            warning = _refresh_active_preview(application, self._harness_id)
+            application.activeViewport.refresh()
+            _send_palette_state(
+                application, f"Created {len(result.wires)} wires. {warning}".strip()
+            )
         except (AttributeError, RuntimeError, TypeError, ValueError):
             _report_failure("add wires")
 
@@ -369,14 +561,18 @@ class _AddWiresValidateInputsHandler(adsk.core.ValidateInputsEventHandler):
         try:
             _read_wire_pathway_id(args.inputs, self._pathway_ids_by_name)
             _read_wire_diameter_mm(args.inputs)
-            sources = _read_profile_tokens(args.inputs, SOURCE_CONNECTIONS_INPUT_ID, "source")
-            destinations = _read_profile_tokens(
+            end_a_profiles = _read_profile_tokens(
+                args.inputs,
+                SOURCE_CONNECTIONS_INPUT_ID,
+                "End A",
+            )
+            end_b_profiles = _read_profile_tokens(
                 args.inputs,
                 DESTINATION_CONNECTIONS_INPUT_ID,
-                "destination",
+                "End B",
             )
-            if len(sources) != len(destinations):
-                raise ValueError("Source and destination profile counts must match.")
+            if len(end_a_profiles) != len(end_b_profiles):
+                raise ValueError("End A and End B profile counts must match.")
         except ValueError:
             args.areInputsValid = False
             return
@@ -396,10 +592,12 @@ class _AddWiresCreatedHandler(adsk.core.CommandCreatedEventHandler):
         Args:
             args: Command-created event arguments supplied by Fusion.
         """
-        global _pending_wire_harness_id
+        global _pending_wire_harness_id, _pending_wire_pathway_id
 
         harness_id = _pending_wire_harness_id
+        selected_pathway_id = _pending_wire_pathway_id
         _pending_wire_harness_id = None
+        _pending_wire_pathway_id = None
         try:
             if harness_id is None:
                 raise RuntimeError("No harness was selected for wire assignment.")
@@ -408,6 +606,10 @@ class _AddWiresCreatedHandler(adsk.core.CommandCreatedEventHandler):
             definition = loads(gateway.read_harness_definition(harness_id))
             if not definition.pathways:
                 raise RuntimeError("Create a pathway before adding wires.")
+            if selected_pathway_id is not None and all(
+                pathway.pathway_id != selected_pathway_id for pathway in definition.pathways
+            ):
+                raise RuntimeError("The selected pathway is no longer available.")
             pathway_ids_by_name = {
                 pathway.name: pathway.pathway_id for pathway in definition.pathways
             }
@@ -421,7 +623,12 @@ class _AddWiresCreatedHandler(adsk.core.CommandCreatedEventHandler):
             if pathway_input is None:
                 raise RuntimeError("Fusion did not create the wire pathway input.")
             for index, pathway in enumerate(definition.pathways):
-                if pathway_input.listItems.add(pathway.name, index == 0) is None:
+                is_selected = (
+                    pathway.pathway_id == selected_pathway_id
+                    if selected_pathway_id is not None
+                    else index == 0
+                )
+                if pathway_input.listItems.add(pathway.name, is_selected) is None:
                     raise RuntimeError(f"Fusion did not add the pathway option: {pathway.name}")
 
             diameter_value = adsk.core.ValueInput.createByString("1.5 mm")
@@ -434,20 +641,20 @@ class _AddWiresCreatedHandler(adsk.core.CommandCreatedEventHandler):
             if diameter_input is None:
                 raise RuntimeError("Fusion did not create the wire diameter input.")
 
-            source_input = _add_profile_selection_input(
+            end_a_input = _add_profile_selection_input(
                 command_inputs,
                 SOURCE_CONNECTIONS_INPUT_ID,
-                "Ordered Source Profiles",
-                "Select each source profile in wire order",
+                "Ordered End A Profiles",
+                "Select each End A profile in wire order",
             )
-            destination_input = _add_profile_selection_input(
+            end_b_input = _add_profile_selection_input(
                 command_inputs,
                 DESTINATION_CONNECTIONS_INPUT_ID,
-                "Ordered Destination Profiles",
-                "Select matching destination profiles in the same order",
+                "Ordered End B Profiles",
+                "Select matching End B profiles in the same order",
             )
-            source_input.hasFocus = True
-            destination_input.hasFocus = False
+            end_a_input.hasFocus = True
+            end_b_input.hasFocus = False
 
             execute_handler = _AddWiresExecuteHandler(harness_id, pathway_ids_by_name)
             validate_handler = _AddWiresValidateInputsHandler(pathway_ids_by_name)
@@ -516,8 +723,62 @@ class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
                 _open_add_pathway_command(application, html_args.data)
                 html_args.returnData = json.dumps({"ok": True})
                 return
+            if html_args.action == "edit_end_members":
+                _open_end_member_edit(application, html_args.data)
+                html_args.returnData = json.dumps({"ok": True})
+                return
+            if html_args.action == "append_pathway_gates":
+                _open_append_gates_command(application, html_args.data)
+                html_args.returnData = json.dumps({"ok": True})
+                return
             if html_args.action == "add_wires":
                 _open_add_wires_command(application, html_args.data)
+                html_args.returnData = json.dumps({"ok": True})
+                return
+            if html_args.action in {
+                "move_pathway_gate",
+                "remove_pathway_gate",
+                "move_wire_endpoint",
+                "remove_wire",
+                "rename_route_end",
+                "rename_pathway",
+                "rename_wire",
+                "set_wire_diameter",
+                "remove_end_member",
+                "move_end_member",
+            }:
+                try:
+                    notice = _apply_palette_edit(application, html_args.action, html_args.data)
+                except (RuntimeError, TypeError, ValueError) as error:
+                    html_args.returnData = json.dumps({"ok": False, "error": str(error)})
+                    _log_to_fusion(f"Harness edit rejected: {error}")
+                    return
+                warning = _refresh_active_preview(
+                    application,
+                    _read_payload_uuid(
+                        _read_palette_payload(html_args.data), "harnessId", "harness"
+                    ),
+                )
+                application.activeViewport.refresh()
+                _send_palette_state(application, f"{notice} {warning}".strip())
+                html_args.returnData = json.dumps({"ok": True})
+                return
+            if html_args.action == "highlight_member":
+                try:
+                    count = _highlight_member(application, html_args.data)
+                except (RuntimeError, TypeError, ValueError) as error:
+                    html_args.returnData = json.dumps({"ok": False, "error": str(error)})
+                    _log_to_fusion(f"Harness highlight rejected: {error}")
+                    return
+                html_args.returnData = json.dumps({"ok": True, "selectionCount": count})
+                return
+            if html_args.action == "clear_preview_highlight":
+                highlight_route_preview(_require_active_design(application), None)
+                application.activeViewport.refresh()
+                html_args.returnData = json.dumps({"ok": True})
+                return
+            if html_args.action == "clear_highlight":
+                _clear_highlight(application)
                 html_args.returnData = json.dumps({"ok": True})
                 return
             if html_args.action == "preview_routes":
@@ -624,10 +885,36 @@ def start(_context: object) -> None:
             raise RuntimeError("Fusion did not register the pathway creation handler.")
         _handlers.append(pathway_handler)
 
+        append_gates_definition = user_interface.commandDefinitions.addButtonDefinition(
+            APPEND_GATES_COMMAND_ID,
+            APPEND_GATES_COMMAND_NAME,
+            "Append ordered sketch profiles to an existing pathway.",
+            ADD_PATHWAY_RESOURCE_FOLDER,
+        )
+        if append_gates_definition is None:
+            raise RuntimeError("Fusion did not create the Add Gates command definition.")
+        append_gates_handler = _AppendGatesCreatedHandler()
+        if not append_gates_definition.commandCreated.add(append_gates_handler):
+            raise RuntimeError("Fusion did not register the Add Gates command handler.")
+        _handlers.append(append_gates_handler)
+
+        end_definition = user_interface.commandDefinitions.addButtonDefinition(
+            EDIT_END_COMMAND_ID,
+            "Edit End Members",
+            "Add or replace connection profiles.",
+            ADD_WIRES_RESOURCE_FOLDER,
+        )
+        if end_definition is None:
+            raise RuntimeError("Fusion could not create the end-member command.")
+        end_handler = _EditEndCreatedHandler()
+        if not end_definition.commandCreated.add(end_handler):
+            raise RuntimeError("Fusion could not register the end-member command.")
+        _handlers.append(end_handler)
+
         wire_command_definition = user_interface.commandDefinitions.addButtonDefinition(
             ADD_WIRES_COMMAND_ID,
             ADD_WIRES_COMMAND_NAME,
-            "Assign ordered source and destination profiles to an existing pathway.",
+            "Assign ordered End A and End B profiles to an existing pathway.",
             ADD_WIRES_RESOURCE_FOLDER,
         )
         if wire_command_definition is None:
@@ -662,7 +949,8 @@ def stop(_context: object) -> None:
     Args:
         _context: Context object supplied by Fusion.
     """
-    global _pending_pathway_harness_id, _pending_wire_harness_id
+    global _pending_append_gate_ids, _pending_pathway_harness_id, _pending_end_edit
+    global _pending_wire_harness_id, _pending_wire_pathway_id
 
     try:
         application = adsk.core.Application.get()
@@ -671,8 +959,11 @@ def stop(_context: object) -> None:
             clear_route_previews(design)
         _remove_user_interface(application.userInterface)
         _handlers.clear()
+        _pending_append_gate_ids = None
+        _pending_end_edit = None
         _pending_pathway_harness_id = None
         _pending_wire_harness_id = None
+        _pending_wire_pathway_id = None
     except Exception:
         _report_failure("stop")
         raise
@@ -694,18 +985,17 @@ def _remove_user_interface(user_interface: adsk.core.UserInterface) -> None:
                 if control is not None:
                     control.deleteMe()
 
-    command_definition = user_interface.commandDefinitions.itemById(COMMAND_ID)
-    if command_definition:
-        command_definition.deleteMe()
-    create_command_definition = user_interface.commandDefinitions.itemById(CREATE_COMMAND_ID)
-    if create_command_definition:
-        create_command_definition.deleteMe()
-    pathway_command_definition = user_interface.commandDefinitions.itemById(ADD_PATHWAY_COMMAND_ID)
-    if pathway_command_definition:
-        pathway_command_definition.deleteMe()
-    wire_command_definition = user_interface.commandDefinitions.itemById(ADD_WIRES_COMMAND_ID)
-    if wire_command_definition:
-        wire_command_definition.deleteMe()
+    for command_id in (
+        COMMAND_ID,
+        CREATE_COMMAND_ID,
+        ADD_PATHWAY_COMMAND_ID,
+        APPEND_GATES_COMMAND_ID,
+        EDIT_END_COMMAND_ID,
+        ADD_WIRES_COMMAND_ID,
+    ):
+        command_definition = user_interface.commandDefinitions.itemById(command_id)
+        if command_definition:
+            command_definition.deleteMe()
     palette = user_interface.palettes.itemById(PALETTE_ID)
     if palette:
         palette.deleteMe()
@@ -749,6 +1039,20 @@ def _show_palette(application: adsk.core.Application) -> None:
     else:
         palette.isVisible = True
     _send_palette_state(application)
+
+
+def _refresh_active_preview(application: adsk.core.Application, harness_id: UUID) -> str:
+    """
+    Refresh an already displayed harness preview after its edit has been saved.
+
+    Preview failures are notices, not failures of the persisted edit itself.
+    """
+    design = _require_active_design(application)
+    definition = loads(_create_harness_gateway(application).read_harness_definition(harness_id))
+    warnings = refresh_route_previews(design, definition)
+    for warning in warnings:
+        _log_to_fusion(warning)
+    return " ".join(warnings)
 
 
 def _send_palette_state(
@@ -815,9 +1119,18 @@ def _serialize_palette_state(
                     {
                         "connectionId": str(connection.connection_id),
                         "name": connection.name,
-                        "hasLinkedGeometry": gateway.is_entity_token_resolvable(
-                            connection.entity_token
+                        "hasLinkedGeometry": all(
+                            gateway.is_entity_token_resolvable(token)
+                            for token in connection.member_tokens
                         ),
+                        "members": [
+                            {
+                                "index": index,
+                                "memberId": str(connection.member_identities[index]),
+                                "hasLinkedGeometry": gateway.is_entity_token_resolvable(token),
+                            }
+                            for index, token in enumerate(connection.member_tokens)
+                        ],
                     }
                     for connection in definition.connections
                 ],
@@ -836,6 +1149,8 @@ def _serialize_palette_state(
                     {
                         "pathwayId": str(pathway.pathway_id),
                         "name": pathway.name,
+                        "startName": pathway.start_name,
+                        "endName": pathway.end_name,
                         "routingMode": _ROUTING_MODE_LABELS[pathway.routing_mode],
                         "orderedControlIds": [
                             str(control_id) for control_id in pathway.ordered_control_ids
@@ -847,8 +1162,11 @@ def _serialize_palette_state(
                     {
                         "wireId": str(wire.wire_id),
                         "wireNumber": wire.wire_number,
+                        "displayName": wire.display_name,
                         "startConnectionId": str(wire.start_connection_id),
                         "endConnectionId": str(wire.end_connection_id),
+                        "startEndName": wire.start_end_name,
+                        "endEndName": wire.end_end_name,
                         "profileId": str(wire.profile_id),
                         "orderedPathwayIds": [
                             str(pathway_id) for pathway_id in wire.ordered_pathway_ids
@@ -932,6 +1250,90 @@ def _open_add_pathway_command(application: adsk.core.Application, serialized_dat
         raise
 
 
+def _open_end_member_edit(application: adsk.core.Application, serialized_data: str) -> None:
+    """
+    Open the native member picker for a validated palette request.
+    """
+    global _pending_end_edit
+    payload = _read_palette_payload(serialized_data)
+    if payload.get("editAction") not in {"add", "replace"}:
+        raise ValueError("Unsupported profile selection action.")
+    command = application.userInterface.commandDefinitions.itemById(EDIT_END_COMMAND_ID)
+    if command is None:
+        raise RuntimeError("End-member selection is unavailable.")
+    _pending_end_edit = payload
+    try:
+        if not command.execute():
+            raise RuntimeError("Fusion could not open profile selection.")
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        _pending_end_edit = None
+        raise
+
+
+def _apply_end_member_edit(
+    application: adsk.core.Application,
+    payload: dict[str, object],
+    tokens: tuple[str, ...] = (),
+) -> None:
+    """
+    Validate member indices and persist a connection edit through its gateway.
+    """
+    endpoint = payload.get("endpoint")
+    action = payload.get("editAction")
+    index = payload.get("memberIndex", 0)
+    count = payload.get("expectedMembers")
+    target = payload.get("targetIndex", 0)
+    if not isinstance(endpoint, str) or not isinstance(action, str):
+        raise ValueError("End edit requires an endpoint and action.")
+    if (
+        isinstance(index, bool)
+        or not isinstance(index, int)
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or isinstance(target, bool)
+        or not isinstance(target, int)
+    ):
+        raise ValueError("End edit requires integer member indices and counts.")
+    edit_end_members(
+        _read_payload_uuid(payload, "harnessId", "harness"),
+        _read_payload_uuid(payload, "wireId", "wire"),
+        endpoint,
+        action,
+        _create_harness_gateway(application),
+        tokens,
+        index,
+        count,
+        target,
+    )
+
+
+def _open_append_gates_command(application: adsk.core.Application, serialized_data: str) -> None:
+    """
+    Open native profile selection for the palette-selected pathway.
+
+    Args:
+        application: Active Fusion application.
+        serialized_data: Palette JSON containing harness and pathway identities.
+    """
+    global _pending_append_gate_ids
+
+    payload = _read_palette_payload(serialized_data)
+    harness_id = _read_payload_uuid(payload, "harnessId", "harness")
+    pathway_id = _read_payload_uuid(payload, "pathwayId", "pathway")
+    command_definition = application.userInterface.commandDefinitions.itemById(
+        APPEND_GATES_COMMAND_ID
+    )
+    if command_definition is None:
+        raise RuntimeError("Fusion Add Gates command is unavailable.")
+    _pending_append_gate_ids = (harness_id, pathway_id)
+    try:
+        if not command_definition.execute():
+            raise RuntimeError("Fusion did not open the Add Gates command.")
+    except Exception:
+        _pending_append_gate_ids = None
+        raise
+
+
 def _open_add_wires_command(application: adsk.core.Application, serialized_data: str) -> None:
     """
     Open the native wire-assignment command for the selected harness.
@@ -944,7 +1346,7 @@ def _open_add_wires_command(application: adsk.core.Application, serialized_data:
         RuntimeError: If Fusion cannot open the command.
         ValueError: If the palette payload is malformed.
     """
-    global _pending_wire_harness_id
+    global _pending_wire_harness_id, _pending_wire_pathway_id
 
     payload = json.loads(serialized_data)
     if not isinstance(payload, dict):
@@ -953,17 +1355,289 @@ def _open_add_wires_command(application: adsk.core.Application, serialized_data:
     if not isinstance(raw_harness_id, str):
         raise ValueError("Add Wires request is missing a harness identity.")
     harness_id = UUID(raw_harness_id)
+    raw_pathway_id = payload.get("pathwayId")
+    if raw_pathway_id is not None and not isinstance(raw_pathway_id, str):
+        raise ValueError("Add Wires request has an invalid pathway identity.")
+    pathway_id = UUID(raw_pathway_id) if raw_pathway_id else None
     command_definition = application.userInterface.commandDefinitions.itemById(ADD_WIRES_COMMAND_ID)
     if command_definition is None:
         raise RuntimeError("Fusion Add Wires command is unavailable.")
 
     _pending_wire_harness_id = harness_id
+    _pending_wire_pathway_id = pathway_id
     try:
         if not command_definition.execute():
             raise RuntimeError("Fusion did not open the Add Wires command.")
     except Exception:
         _pending_wire_harness_id = None
+        _pending_wire_pathway_id = None
         raise
+
+
+def _apply_palette_edit(
+    application: adsk.core.Application,
+    action: str,
+    serialized_data: str,
+) -> str:
+    """
+    Apply one ordered palette edit and return its success notice.
+
+    Args:
+        application: Active Fusion application.
+        action: Supported edit action name.
+        serialized_data: JSON payload containing stable member identities.
+
+    Returns:
+        Concise user-facing success notice.
+    """
+    payload = _read_palette_payload(serialized_data)
+    harness_id = _read_payload_uuid(payload, "harnessId", "harness")
+    gateway = _create_harness_gateway(application)
+    if action == "remove_end_member":
+        _apply_end_member_edit(application, {**payload, "editAction": "remove"})
+        return "Removed end member."
+    if action == "move_end_member":
+        _apply_end_member_edit(application, {**payload, "editAction": "reorder"})
+        return "Reordered end member."
+    if action == "move_pathway_gate":
+        move_pathway_gate(
+            harness_id,
+            _read_payload_uuid(payload, "pathwayId", "pathway"),
+            _read_payload_uuid(payload, "controlId", "gate"),
+            _read_payload_offset(payload),
+            gateway,
+        )
+        return "Reordered pathway gate."
+    if action == "remove_pathway_gate":
+        remove_pathway_gate(
+            harness_id,
+            _read_payload_uuid(payload, "pathwayId", "pathway"),
+            _read_payload_uuid(payload, "controlId", "gate"),
+            gateway,
+        )
+        return "Removed pathway gate."
+    if action == "set_wire_diameter":
+        diameter = payload.get("diameterMm")
+        if isinstance(diameter, bool) or not isinstance(diameter, (int, float)):
+            raise ValueError("Wire diameter must be a number in millimeters.")
+        set_wire_diameter(
+            harness_id, _read_payload_uuid(payload, "wireId", "wire"), diameter, gateway
+        )
+        return "Saved wire diameter."
+    if action in {"rename_pathway", "rename_wire"}:
+        name = payload.get("name")
+        if not isinstance(name, str):
+            raise ValueError("Rename request requires a text name.")
+        if action == "rename_wire":
+            rename_wire(harness_id, _read_payload_uuid(payload, "wireId", "wire"), name, gateway)
+        else:
+            field = payload.get("field")
+            if not isinstance(field, str):
+                raise ValueError("Pathway rename request requires a field.")
+            rename_pathway(
+                harness_id,
+                _read_payload_uuid(payload, "pathwayId", "pathway"),
+                field,
+                name,
+                gateway,
+            )
+        return "Saved name."
+    if action == "rename_route_end":
+        endpoint = payload.get("endpoint")
+        name = payload.get("name")
+        if not isinstance(endpoint, str) or not isinstance(name, str):
+            raise ValueError("End name request requires an endpoint and a text name.")
+        rename_route_end(
+            harness_id,
+            _read_payload_uuid(payload, "wireId", "wire"),
+            endpoint,
+            name,
+            gateway,
+        )
+        return "Saved end name."
+    if action == "move_wire_endpoint":
+        endpoint = payload.get("endpoint")
+        if not isinstance(endpoint, str):
+            raise ValueError("Wire endpoint request is missing an endpoint sequence.")
+        move_wire_endpoint(
+            harness_id,
+            _read_payload_uuid(payload, "wireId", "wire"),
+            endpoint,
+            _read_payload_offset(payload),
+            gateway,
+        )
+        return f"Reordered {endpoint} connection sequence."
+    if action == "remove_wire":
+        remove_wire(
+            harness_id,
+            _read_payload_uuid(payload, "wireId", "wire"),
+            gateway,
+        )
+        return "Removed wire pair."
+    raise ValueError(f"Unsupported harness edit: {action}")
+
+
+def _highlight_member(application: adsk.core.Application, serialized_data: str) -> int:
+    """
+    Select linked Fusion profiles for one palette member.
+
+    Args:
+        application: Active Fusion application.
+        serialized_data: JSON payload identifying the member to reveal.
+
+    Returns:
+        Number of profiles selected in the Fusion viewport.
+    """
+    payload = _read_palette_payload(serialized_data)
+    harness_id = _read_payload_uuid(payload, "harnessId", "harness")
+    member_type = payload.get("memberType")
+    if not isinstance(member_type, str):
+        raise ValueError("Highlight request is missing a member type.")
+    member_id = _read_payload_uuid(payload, "memberId", "member")
+    design = _require_active_design(application)
+    gateway = _create_harness_gateway(application)
+    definition = loads(gateway.read_harness_definition(harness_id))
+    if member_type in {"pathway", "pathway_gates", "pathway_wires"}:
+        pathway = next((item for item in definition.pathways if item.pathway_id == member_id), None)
+        if pathway is None:
+            raise ValueError("Selected pathway no longer exists.")
+        wire_ids = (
+            tuple(
+                wire.wire_id for wire in definition.wires if member_id in wire.ordered_pathway_ids
+            )
+            if member_type != "pathway_gates"
+            else ()
+        )
+        highlight_route_members(design, wire_ids)
+        control_ids = pathway.ordered_control_ids if member_type != "pathway_wires" else ()
+        controls = {control.control_id: control for control in definition.controls}
+        tokens = tuple(
+            controls[control_id].entity_token
+            for control_id in control_ids
+            if control_id in controls
+        )
+    elif member_type == "preview_wire":
+        if all(wire.wire_id != member_id for wire in definition.wires):
+            raise ValueError("Selected wire no longer exists.")
+        application.userInterface.activeSelections.clear()
+        count = highlight_route_preview(design, member_id)
+        application.activeViewport.refresh()
+        return count
+    else:
+        highlight_route_preview(design, None)
+        tokens = _member_entity_tokens(definition, member_type, member_id)
+        if member_type == "connection" and "memberIndex" in payload:
+            index = payload["memberIndex"]
+            if (
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or not 0 <= index < len(tokens)
+            ):
+                raise ValueError("Selected connection member no longer exists.")
+            tokens = (tokens[index],)
+    profiles: list[adsk.fusion.Profile] = []
+    for token in tokens:
+        entities = design.findEntityByToken(token)
+        profile = adsk.fusion.Profile.cast(entities[0] if entities else None)
+        if profile is None:
+            raise ValueError("The selected item no longer resolves to a sketch profile.")
+        profiles.append(profile)
+
+    selections = application.userInterface.activeSelections
+    if not selections.clear():
+        raise RuntimeError("Fusion could not clear the prior viewport selection.")
+    for profile in profiles:
+        if not selections.add(profile):
+            selections.clear()
+            raise RuntimeError("Fusion could not highlight the selected sketch profile.")
+    application.activeViewport.refresh()
+    return len(profiles)
+
+
+def _clear_highlight(application: adsk.core.Application) -> None:
+    """
+    Clear palette-driven viewport selection.
+
+    Args:
+        application: Active Fusion application.
+    """
+    highlight_route_preview(_require_active_design(application), None)
+    if not application.userInterface.activeSelections.clear():
+        raise RuntimeError("Fusion could not clear the viewport selection.")
+    application.activeViewport.refresh()
+
+
+def _member_entity_tokens(
+    definition: HarnessDefinition,
+    member_type: str,
+    member_id: UUID,
+) -> tuple[str, ...]:
+    """
+    Resolve a stable palette member identity to persisted entity tokens.
+
+    Args:
+        definition: Parsed harness definition.
+        member_type: ``control``, ``connection``, or ``wire``.
+        member_id: Stable member identity.
+
+    Returns:
+        One gate/connection token or both endpoint tokens for a wire.
+    """
+    if member_type == "control":
+        control = next(
+            (item for item in definition.controls if item.control_id == member_id),
+            None,
+        )
+        if control is None:
+            raise ValueError("Selected routing gate no longer exists.")
+        return (control.entity_token,)
+    connections = {item.connection_id: item for item in definition.connections}
+    if member_type == "connection":
+        connection = connections.get(member_id)
+        if connection is None:
+            raise ValueError("Selected connection no longer exists.")
+        return connection.member_tokens
+    if member_type == "wire":
+        wire = next((item for item in definition.wires if item.wire_id == member_id), None)
+        if wire is None:
+            raise ValueError("Selected wire no longer exists.")
+        start_connection = connections.get(wire.start_connection_id)
+        end_connection = connections.get(wire.end_connection_id)
+        if start_connection is None or end_connection is None:
+            raise ValueError("Selected wire has a missing connection reference.")
+        tokens = (*start_connection.member_tokens, *end_connection.member_tokens)
+        return tokens
+    raise ValueError(f"Unsupported highlight member type: {member_type}")
+
+
+def _read_palette_payload(serialized_data: str) -> dict[str, object]:
+    """
+    Parse a palette payload and require a JSON object.
+    """
+    payload = json.loads(serialized_data)
+    if not isinstance(payload, dict):
+        raise ValueError("Harness Builder request must be a JSON object.")
+    return payload
+
+
+def _read_payload_uuid(payload: dict[str, object], key: str, label: str) -> UUID:
+    """
+    Read one required stable identity from a palette payload.
+    """
+    value = payload.get(key)
+    if not isinstance(value, str):
+        raise ValueError(f"Harness Builder request is missing a {label} identity.")
+    return UUID(value)
+
+
+def _read_payload_offset(payload: dict[str, object]) -> int:
+    """
+    Read a required single-position movement from a palette payload.
+    """
+    value = payload.get("offset")
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError("Harness Builder move request is missing an integer offset.")
+    return value
 
 
 def _preview_routes(application: adsk.core.Application, serialized_data: str) -> int:

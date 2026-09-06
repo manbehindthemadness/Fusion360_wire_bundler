@@ -327,7 +327,7 @@ def _validate_wires(
                 ValidationIssue(
                     "identical_wire_endpoints",
                     f"{path}.end_connection_id",
-                    "Start and destination connections must differ.",
+                    "End A and End B connections must differ.",
                 )
             )
         if not wire.ordered_control_ids:

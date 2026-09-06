@@ -110,3 +110,44 @@ def test_rejects_invalid_solver_inputs(
     """
     with pytest.raises(ValueError, match=message):
         solve_parallel_routes((_wire(1),), gates, clearance)
+
+
+def test_end_stacks_guide_path_between_terminals_and_pathway() -> None:
+    """
+    Follow both local end stacks outward from their terminals, reversing B in traversal.
+    """
+    wire = WireRouteInput(
+        UUID(int=1),
+        "001",
+        Vector3(0, 0, 0),
+        Vector3(0, 0, 40),
+        1.5,
+        start_guides=(Vector3(1, 0, 2), Vector3(2, 0, 4)),
+        end_guides=(Vector3(1, 0, 38), Vector3(2, 0, 36)),
+    )
+    route = solve_parallel_routes((wire,), (_gate(1), _gate(2)))[0]
+    assert route.points == (
+        wire.start,
+        *wire.start_guides,
+        _gate(1).origin,
+        _gate(2).origin,
+        *reversed(wire.end_guides),
+        wire.end,
+    )
+
+
+def test_end_order_is_not_inferred_from_distance_to_pathway() -> None:
+    """
+    Keep deliberately non-monotonic stack order even when the terminal is nearest the gate.
+    """
+    wire = WireRouteInput(
+        UUID(int=1),
+        "001",
+        Vector3(0, 0, 9),
+        Vector3(0, 0, 11),
+        1.5,
+        start_guides=(Vector3(0, 0, 1), Vector3(0, 0, 5)),
+        end_guides=(Vector3(0, 0, 19), Vector3(0, 0, 15)),
+    )
+    route = solve_parallel_routes((wire,), (_gate(1),))[0]
+    assert [point.z for point in route.points] == [9, 1, 5, 10, 15, 19, 11]

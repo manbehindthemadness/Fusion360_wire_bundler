@@ -2,6 +2,14 @@
 
 The Fusion 360 add-in should create each harness as a **self-contained child assembly** within the currently active design hierarchy. Every completed wire should exist as its own child component and contain one finished wire body together with its editable routing path, sweep or loft features, connection profiles, guide geometry, and associated metadata. This structure preserves each wire as a complete, independently editable object while allowing the harness itself to be nested inside any existing Fusion assembly. Because harness assemblies may themselves contain additional child harnesses, the same workflow can be re-run inside an existing harness to construct branching Y-, H-, or other multi-leg connection structures. The add-in UI should expose the engineering relationships that define the harness — connection mapping, wire profiles, terminators, routing gates, profile gates, ordering, dimensions, and clearances — while procedurally generating the underlying Fusion geometry and maintaining an interactive preview before final creation.
 
+## End terminology
+
+User-facing workflows treat both sides of a conductor symmetrically as **End A** and
+**End B**. Do not label them source and destination: either side may be selected
+first, extended, branched, or used to traverse a route in reverse. Legacy
+`start_connection_id` and `end_connection_id` fields remain internal persistence
+details until a deliberate schema migration replaces them.
+
 ## Assembly Hierarchy
 
 A generated harness should be created as a child of the currently selected parent assembly or component.
@@ -144,6 +152,57 @@ harness_id   = a7132e...
 This prevents geometry changes or renaming from breaking wire identity.
 
 ## Connection Identity and Naming
+
+Each wire's End A Ordering and End B Ordering editor begins with an optional
+End A Name or End B Name text field and shows only that connection's ordered profile members.
+These labels replace the generated connection designation in its end nodes and
+occupancy description; clearing a label restores the generated designation.
+Names are independent even when wires share a pathway. New pairs start unnamed.
+
+Pathways support renaming plus optional Start Name and End Name fields above and
+below the Gates · Traversal Order list. Route nodes can read
+`End A: Data input → lower fuse box path from O2-sensor to CAN_BUS-ctrl → End B: Data output`.
+Unnamed traversal ends fall back to A and B. The wire display follows stored order;
+there is no reverse-direction control. Clearing a pathway name chooses
+an available generated designation. Name collisions receive deterministic suffixes.
+
+The wire header collapses/expands its details on click and emphasizes its existing preview centerline on hover. Its pen control temporarily replaces the header with an inline
+name input (Enter or blur saves; Escape cancels), with no permanent Wire Name field.
+The editable name replaces the default Wire #xxx display designation;
+clearing it restores that designation. Internal wire numbers and UUIDs remain
+unchanged. All optional names default to blank in older definitions and do not
+affect geometry. Future automatic naming may use this metadata.
+
+Endpoint sequence members display a stable shortened UUID, with the full identity
+in the row tooltip. IDs follow members through reorder and replacement; legacy
+definitions derive deterministic IDs until an edit saves them explicitly. The wire-profile node
+opens a Wire Options popup, currently editing the finished circular diameter in
+millimeters. Saving applies across that wire and copies any shared profile first,
+so other wires retain their sizes. Invalid diameters are rejected; Cancel discards
+the popup edit. Diameter changes refresh affected routing groups in an active preview.
+
+End sequences provide per-member Add, Replace, and Remove controls. Dragging a row
+onto another reorders it within the same end, with a visible drop indicator. Add
+uses a per-row control. Reordering uses captured pointer movement and commits on
+release at the blue insertion line; release outside the stack cancels. Add
+and Replace open Fusion's native profile picker; Replace keeps the member's list
+position. Removing the last member warns that the end sequence will be deleted.
+The wire and its other end are preserved, validation reports the missing connection,
+and an Add End A/B control restores the end. Hovering an end highlights all members;
+hovering a numbered member highlights only that profile. Member order persists in
+connection metadata. Both stacks run from terminal toward pathway: the centerline
+follows all A members in order, pathway crossings, then B members in reverse.
+Additional members guide the same wire rather than creating branches.
+
+An active preview automatically refreshes after member, wire, gate, or diameter
+edits. Only routing groups with changed inputs are recalculated, and only changed
+centerlines are redrawn. Unaffected paths retain their graphics objects and colors.
+All connection-member edits and reorderings invalidate affected routing inputs;
+display labels do not trigger routing work.
+Incomplete wires have no preview until repaired. A failed group loses its stale
+paths and reports a warning while unrelated groups remain visible. Clear Preview
+disables automatic refresh until Preview Routes is invoked again. This applies to
+edits made through Harness Builder; arbitrary external sketch edits are not watched.
 
 Every physical, derived-exit, junction, and termination connection must have a
 stable internal UUID independent of its user-facing name. Names must be readable,
@@ -894,6 +953,20 @@ validation milestones:
   versus per-face appearance support, and whether tip extensions contribute to
   reported conductor or cut length.
 
+* **Fusion Electrical design integration**
+  Investigate late-stage interoperability with Fusion Electrical designs. If the
+  supported Fusion APIs expose stable markers for connectors, pins, nets, signal
+  names, or other electrical intent, those markers may seed connection identity,
+  propose wire-to-wire mappings, and drive an assisted auto-wiring workflow through
+  the mechanical pathway graph. Electrical metadata must be treated as imported
+  intent rather than generated geometry: mappings remain previewable, editable,
+  validated, and explicitly accepted before harness creation. The integration must
+  tolerate incomplete, duplicated, renamed, or unavailable markers and must not
+  become a runtime requirement for manually defined harnesses. Exact API access,
+  marker semantics, synchronization direction, and change-detection behavior remain
+  research questions; do not infer them until verified against the then-current
+  Fusion Electrical API and representative designs.
+
 Generated coverings, tips, material assignments, and twist settings should remain
 optional, regenerable, and separable from the underlying connection mapping and
 pathway definition.
@@ -988,3 +1061,26 @@ Harness Assembly
 The overall design objective is therefore:
 
 > **Provide a constraint-driven Fusion 360 harness-design environment in which users define physical connections, routing controls, and conductor properties while the add-in procedurally creates a fully editable, nested assembly of uniquely identified wire components.**
+
+### Hover targeting
+
+Wire Routes and its wire rows default to collapsed and retain saved expansion.
+End-node ordering menus also retain their open/closed state across member edits,
+palette refreshes, and palette reloads. Selecting the opposite end explicitly
+switches the open ordering menu.
+Each end-member row has + (insert after), replace, and × controls and supports
+drag-and-drop reordering within its own stack. All edits refresh active preview
+state, and every member center contributes to the piecewise-linear route.
+Gate traversal rows use the same captured-pointer reordering and insertion marker.
+Both stacks have a far-left position column numbered from one; position numbers
+describe the current slots while stable names and IDs move with their members.
+Gate drops insert across any number of rows, synchronize dependent wire-control
+order, and refresh affected active previews.
+Hovering a wire header or occupancy member emphasizes its existing preview. A
+pathway node within a wire route highlights only its gates. A pathway heading in
+Pathways & Occupancy highlights its gates and all occupying wire previews; its
+Gates heading highlights all gates, and its Wire Occupancy heading highlights all
+occupying previews. Individual gate and endpoint members highlight only their own
+profiles. Mouse-out clears both sketch selection and preview emphasis. End nodes
+highlight their connection profiles. Intersection slice highlighting remains a
+future extension once intersection geometry exists.

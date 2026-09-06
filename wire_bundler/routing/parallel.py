@@ -75,6 +75,8 @@ class WireRouteInput:
         start: Source-profile center in millimeters.
         end: Destination-profile center in millimeters.
         diameter_mm: Finished wire diameter.
+        start_guides: Additional end-A centers, ordered from terminal toward pathway.
+        end_guides: Additional end-B centers, ordered from terminal toward pathway.
     """
 
     wire_id: UUID
@@ -82,6 +84,8 @@ class WireRouteInput:
     start: Vector3
     end: Vector3
     diameter_mm: float
+    start_guides: tuple[Vector3, ...] = ()
+    end_guides: tuple[Vector3, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -162,7 +166,9 @@ def solve_parallel_routes(
             wire_number=wire.wire_number,
             points=(
                 wire.start,
+                *wire.start_guides,
                 *(crossings[index] for crossings in gate_crossings),
+                *reversed(wire.end_guides),
                 wire.end,
             ),
         )

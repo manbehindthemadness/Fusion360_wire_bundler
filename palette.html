@@ -20,7 +20,19 @@
       --success: #287d28;
     }
     * { box-sizing: border-box; }
-    body { margin: 0; background: var(--surface-subtle); color: var(--text); }
+    body {
+      margin: 0;
+      border: 4px solid var(--surface-subtle);
+      min-height: 100vh;
+      background: var(--surface-subtle);
+      color: var(--text);
+    }
+    .wire-details { display: grid; gap: 8px; }
+    .wire-options { border: 1px solid var(--border); border-radius: 6px; width: 320px; max-width: 90vw; }
+    .wire-options::backdrop { background: #0005; }
+    .wire-options form { display: grid; gap: 12px; }
+    .wire-options label { display: grid; gap: 8px; }
+    .wire-options .actions { display: flex; justify-content: flex-end; gap: 8px; }
     button, input { font: inherit; }
     button { color: inherit; cursor: pointer; }
     button:focus-visible, input:focus-visible, summary:focus-visible {
@@ -130,9 +142,9 @@
       background: var(--surface);
     }
     summary {
-      display: flex;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto 1ch;
       align-items: center;
-      justify-content: space-between;
       gap: 10px;
       padding: 10px 11px;
       font-weight: 700;
@@ -142,21 +154,95 @@
     summary::-webkit-details-marker { display: none; }
     summary::after { content: "▸"; color: var(--muted); }
     details[open] summary::after { content: "▾"; }
-    .count { color: var(--muted); font-size: 11px; font-weight: 500; }
+    summary > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+    .count { color: var(--muted); font-size: 11px; font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
     .section-content { display: grid; gap: 8px; padding: 0 11px 11px; }
-    .item {
-      display: grid;
-      gap: 3px;
-      padding-top: 8px;
-      border-top: 1px solid #e5e8eb;
-    }
-    .item:first-child { padding-top: 0; border-top: 0; }
-    .item-main { display: flex; justify-content: space-between; gap: 10px; }
-    .item-main strong { overflow-wrap: anywhere; }
-    .item-meta, .route { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-    .route { line-height: 1.5; }
+    .item-meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
     .wire-filter { margin-bottom: 2px; }
-    .wire-rows { display: grid; gap: 8px; }
+    .nested-details { margin-top: 0; background: var(--surface-subtle); }
+    .nested-details + .nested-details { margin-top: 6px; }
+    .nested-details > summary { padding: 8px 9px; font-size: 12px; }
+    .nested-details > .section-content { padding: 0 9px 9px; }
+    .sequence { display: grid; gap: 4px; }
+    .member-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 6px;
+      min-height: 30px;
+      border: 1px solid #e1e4e7;
+      border-radius: 4px;
+      padding: 3px 4px 3px 7px;
+      background: var(--surface);
+    }
+    .member-row.missing { border-color: var(--danger); background: #fff8f8; }
+    .sequence-position { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; min-width: 3ch; }
+    .member-row[data-reorder] { grid-template-columns: auto minmax(0, 1fr) auto; cursor: grab; position: relative; touch-action: none; user-select: none; }
+    .member-row[data-dragging="true"] { opacity: 0.45; cursor: grabbing; }
+    .member-row[data-drop]::after {
+      content: ""; position: absolute; left: 0; right: 0; height: 4px;
+      background: var(--accent); border-radius: 2px; pointer-events: none; z-index: 2;
+    }
+    .member-row[data-drop="before"]::after { top: -5px; }
+    .member-row[data-drop="after"]::after { bottom: -5px; }
+    .member-reference {
+      min-width: 0;
+      border: 0;
+      padding: 3px 0;
+      background: transparent;
+      color: inherit;
+      overflow: hidden;
+      text-align: left;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .member-reference:hover { color: var(--accent); }
+    .member-actions { display: flex; gap: 3px; }
+    .icon-button {
+      min-width: 25px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 2px 5px;
+      background: var(--surface);
+    }
+    .icon-button:hover { border-color: var(--accent); }
+    .icon-button.danger { color: var(--danger); }
+    .wire-route {
+      display: grid;
+      gap: 8px;
+      border: 1px solid #dde1e5;
+      border-radius: 5px;
+      padding: 9px;
+      background: var(--surface-subtle);
+    }
+    .wire-route + .wire-route { margin-top: 8px; }
+    .route-flow { display: flex; align-items: center; gap: 5px; overflow-x: auto; padding-bottom: 2px; }
+    .route-node {
+      flex: 0 0 auto;
+      max-width: 170px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 5px 8px;
+      background: var(--surface);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    button.route-node:hover { border-color: var(--accent); color: var(--accent); }
+    button.route-node[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+    .route-node.pathway { max-width: none; border-color: #9ebed8; background: #edf6fd; }
+    .route-node.missing { border-color: var(--danger); background: #fff8f8; color: var(--danger); }
+    .route-arrow { flex: 0 0 auto; color: var(--muted); }
+    .end-editor {
+      display: grid;
+      gap: 7px;
+      border: 1px solid #b9cddd;
+      border-radius: 5px;
+      padding: 8px;
+      background: #f5faff;
+    }
+    .end-editor-heading { display: flex; justify-content: space-between; gap: 8px; }
+    .occupancy { display: grid; gap: 4px; }
     .validation-list { margin: 0; padding-left: 20px; }
     .validation-list li + li { margin-top: 6px; }
     .validation-list.errors { color: var(--danger); }
@@ -193,7 +279,7 @@
       <div class="editor-nav">
         <button id="back" class="button compact" type="button">← All Harnesses</button>
         <button id="add-pathway" class="button compact primary" type="button">Add Pathway</button>
-        <button id="add-wires" class="button compact primary" type="button">Add Wires</button>
+        <button id="add-wires" class="button compact primary" type="button">Add Wire Pairs</button>
         <button id="preview-routes" class="button compact primary" type="button">Preview Routes</button>
         <button id="clear-preview" class="button compact" type="button">Clear Preview</button>
         <button id="create-from-editor" class="button compact" type="button">New Harness</button>
@@ -236,7 +322,7 @@
 
     let currentState = { harnesses: [], notice: "" };
     let selectedHarnessKey = readSession("wireBundler.selectedHarness") || "";
-    const wireFilters = new Map();
+    const routeFilters = new Map();
     const storedExpandedSections = readSession("wireBundler.expandedSections");
     let hasStoredExpansionState = storedExpandedSections !== null;
     let expandedSectionIds = [];
@@ -299,38 +385,6 @@
       });
     }
 
-    function definitionList(items, renderItem, emptyText) {
-      const container = document.createElement("div");
-      container.className = "section-content";
-      if (!items.length) {
-        container.append(emptyMessage(emptyText));
-        return container;
-      }
-      items.forEach((item) => container.append(renderItem(item)));
-      return container;
-    }
-
-    function itemRow(title, meta, route = "") {
-      const row = document.createElement("div");
-      const main = document.createElement("div");
-      const heading = document.createElement("strong");
-      const metadata = document.createElement("span");
-      row.className = "item";
-      main.className = "item-main";
-      heading.textContent = title;
-      metadata.className = "item-meta";
-      metadata.textContent = meta;
-      main.append(heading, metadata);
-      row.append(main);
-      if (route) {
-        const routeText = document.createElement("div");
-        routeText.className = "route";
-        routeText.textContent = route;
-        row.append(routeText);
-      }
-      return row;
-    }
-
     function editorSection(id, title, count, content, openByDefault = false) {
       const section = document.createElement("details");
       const summary = document.createElement("summary");
@@ -355,84 +409,587 @@
       return section;
     }
 
-    function renderWires(harness) {
-      const key = harnessKey(harness);
-      const connections = new Map(
-        harness.connections.map((connection) => [connection.connectionId, connection.name]),
-      );
-      const profiles = new Map(
-        harness.profiles.map((profile) => [profile.profileId, profile.name]),
-      );
-      const controls = new Map(
-        harness.controls.map((control) => [control.controlId, control.name]),
-      );
-      const pathways = new Map(
-        harness.pathways.map((pathway) => [pathway.pathwayId, pathway.name]),
-      );
-      const container = document.createElement("div");
-      const filter = document.createElement("input");
-      const rows = document.createElement("div");
-      container.className = "section-content";
-      filter.className = "filter wire-filter";
-      filter.type = "search";
-      filter.placeholder = "Filter wires…";
-      filter.setAttribute("aria-label", "Filter wires");
-      filter.value = wireFilters.get(key) || "";
-      filter.autocomplete = "off";
-      rows.className = "wire-rows";
-      const renderRows = () => {
-        const wireFilter = filter.value.trim().toLocaleLowerCase();
-        wireFilters.set(key, wireFilter);
-        const wires = harness.wires.filter((wire) => {
-          const searchable = [
-            wire.wireNumber,
-            connections.get(wire.startConnectionId),
-            connections.get(wire.endConnectionId),
-            profiles.get(wire.profileId),
-          ].join(" ").toLocaleLowerCase();
-          return searchable.includes(wireFilter);
-        });
-        rows.replaceChildren();
-        if (!wires.length) {
-          const text = harness.wires.length
-            ? "No wires match this filter."
-            : "No wires defined yet.";
-          rows.append(emptyMessage(text));
-          return;
-        }
-        wires.forEach((wire) => {
-          const start = connections.get(wire.startConnectionId) || "Missing start";
-          const end = connections.get(wire.endConnectionId) || "Missing destination";
-          const profile = profiles.get(wire.profileId) || "Missing profile";
-          const route = wire.orderedControlIds.length
-            ? `Path: ${wire.orderedPathwayIds.map((id) => pathways.get(id) || "Missing pathway").join(" → ")} · Gates: ${wire.orderedControlIds.map((id) => controls.get(id) || "Missing control").join(" → ")}`
-            : "Route: direct / not configured";
-          rows.append(itemRow(`#${wire.wireNumber}  ${start} → ${end}`, profile, route));
-        });
-      };
-      filter.addEventListener("input", renderRows);
-      container.append(filter, rows);
-      renderRows();
-      return container;
+    function nestedSection(id, title, count, content, onHover) {
+      const section = editorSection(id, title, count, content);
+      section.className = "nested-details";
+      if (onHover) hoverHighlight(section.children[0], onHover);
+      return section;
+    }
+
+    function actionButton(label, title, handler, disabled = false, danger = false) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `icon-button${danger ? " danger" : ""}`;
+      button.textContent = label;
+      button.title = title;
+      button.setAttribute("aria-label", title);
+      button.disabled = disabled;
+      button.addEventListener("click", handler);
+      return button;
+    }
+
+    function hoverHighlight(node, onHover) {
+      node.addEventListener("mouseenter", onHover);
+      node.addEventListener("mouseleave", () => send("clear_highlight").catch(() => {}));
+    }
+
+    function memberRow(label, onReveal, actions = [], missing = false, clickToActivate = false) {
+      const row = document.createElement("div");
+      const reference = document.createElement("button");
+      const actionContainer = document.createElement("div");
+      row.className = `member-row${missing ? " missing" : ""}`;
+      reference.type = "button";
+      reference.className = "member-reference";
+      reference.textContent = missing ? `${label} (geometry missing)` : label;
+      reference.title = "Show linked sketch profile in Fusion";
+      if (clickToActivate) reference.addEventListener("click", onReveal);
+      else hoverHighlight(row, onReveal);
+      actionContainer.className = "member-actions";
+      actionContainer.append(...actions);
+      row.append(reference, actionContainer);
+      return row;
+    }
+
+    function nameField(label, value, action, payload, placeholder = "Optional name") {
+      const field = document.createElement("label");
+      const input = document.createElement("input");
+      field.textContent = label;
+      input.type = "text";
+      input.className = "filter";
+      input.value = value || "";
+      input.placeholder = placeholder;
+      input.addEventListener("change", () => mutate(
+        action, { ...payload, name: input.value }, "Saving name…",
+      ));
+      field.append(input);
+      return field;
+    }
+
+    function wireLabel(wire) {
+      return wire.displayName || `Wire #${wire.wireNumber}`;
+    }
+
+    function pathwayDirection(pathway) {
+      const start = pathway?.startName || "A";
+      const end = pathway?.endName || "B";
+      return `${start} → ${end}`;
+    }
+
+    function pathwayRouteLabel(pathway) {
+      if (!pathway) return "Missing pathway";
+      const start = pathway.startName || "A";
+      const end = pathway.endName || "B";
+      return `${pathway.name} from ${start} to ${end}`;
     }
 
     function renderPathways(harness) {
+      const container = document.createElement("div");
       const controls = new Map(
         harness.controls.map((control) => [control.controlId, control]),
       );
-      return definitionList(
-        harness.pathways,
-        (pathway) => {
-          const route = pathway.orderedControlIds.length
-            ? pathway.orderedControlIds.map((id) => {
-              const control = controls.get(id);
-              return control ? control.name : "Missing gate";
-            }).join(" → ")
-            : "No gates";
-          return itemRow(pathway.name, pathway.routingMode, route);
-        },
-        "No pathways defined yet.",
+      const connections = new Map(
+        harness.connections.map((connection) => [connection.connectionId, connection]),
       );
+      const pathways = new Map(
+        harness.pathways.map((pathway) => [pathway.pathwayId, pathway]),
+      );
+      container.className = "section-content";
+      if (!harness.pathways.length) {
+        container.append(emptyMessage("No pathways defined yet."));
+        return container;
+      }
+      harness.pathways.forEach((pathway) => {
+        const pathwayContent = document.createElement("div");
+        const gateContent = document.createElement("div");
+        const sequence = document.createElement("div");
+        const occupancyContent = document.createElement("div");
+        const occupancy = document.createElement("div");
+        const addGates = document.createElement("button");
+        const addWiresButton = document.createElement("button");
+        const members = harness.wires.filter(
+          (wire) => wire.orderedPathwayIds.includes(pathway.pathwayId),
+        );
+        pathwayContent.className = "section-content";
+        gateContent.className = "section-content";
+        sequence.className = "sequence";
+        const gateRows = [];
+        pathway.orderedControlIds.forEach((controlId, index) => {
+          const control = controls.get(controlId);
+          const movePayload = { harnessId: harness.harnessId, pathwayId: pathway.pathwayId, controlId };
+          const row = memberRow(
+            `${control?.name || "Missing gate"} #${controlId.slice(0, 8)}`,
+            () => highlightMember(harness, "control", controlId),
+            [
+              actionButton("×", "Remove gate", () => removeGate(
+                harness, pathway, controlId, control?.name || "this gate",
+              ), pathway.orderedControlIds.length === 1, true),
+            ],
+            !control || !control.hasLinkedGeometry,
+          );
+          row.title = `Drag to reorder ${control?.name || "gate"} (${controlId})`;
+          enableSequenceDrag(sequence, gateRows, row, index, (target) => mutate(
+            "move_pathway_gate", { ...movePayload, offset: target - index }, "Reordering gate…",
+          ));
+          sequence.append(row);
+        });
+        occupancyContent.className = "section-content";
+        occupancy.className = "occupancy";
+        if (!members.length) {
+          occupancy.append(emptyMessage("No wires occupy this pathway."));
+        }
+        members.forEach((wire) => {
+          const pathwayIndex = wire.orderedPathwayIds.indexOf(pathway.pathwayId);
+          const previousPathway = pathways.get(wire.orderedPathwayIds[pathwayIndex - 1]);
+          const nextPathway = pathways.get(wire.orderedPathwayIds[pathwayIndex + 1]);
+          const startConnection = connections.get(wire.startConnectionId);
+          const endConnection = connections.get(wire.endConnectionId);
+          const entry = pathwayIndex === 0
+            ? `End A: ${wire.startEndName || startConnection?.name || "Missing connection"}`
+            : `From ${previousPathway?.name || "missing pathway"}`;
+          const exit = pathwayIndex === wire.orderedPathwayIds.length - 1
+            ? `End B: ${wire.endEndName || endConnection?.name || "Missing connection"}`
+            : `Continue to ${nextPathway?.name || "missing pathway"}`;
+          const hasMissingGeometry = (pathwayIndex === 0 && !startConnection?.hasLinkedGeometry)
+            || (pathwayIndex === wire.orderedPathwayIds.length - 1
+              && !endConnection?.hasLinkedGeometry);
+          occupancy.append(memberRow(
+            `${wireLabel(wire)} · ${entry} → ${exit}`,
+            () => highlightMember(harness, "preview_wire", wire.wireId),
+            [],
+            hasMissingGeometry,
+          ));
+        });
+        addGates.type = "button";
+        addGates.className = "button compact";
+        addGates.textContent = "+ Add Gates";
+        addGates.addEventListener("click", () => appendPathwayGates(harness, pathway));
+        addWiresButton.type = "button";
+        addWiresButton.className = "button compact";
+        addWiresButton.textContent = "+ Add Wire Pairs";
+        addWiresButton.addEventListener("click", () => addWires(pathway.pathwayId));
+        const namePayload = { harnessId: harness.harnessId, pathwayId: pathway.pathwayId };
+        gateContent.append(
+          nameField("Start Name", pathway.startName, "rename_pathway", {
+            ...namePayload, field: "start_name",
+          }),
+          sequence,
+          nameField("End Name", pathway.endName, "rename_pathway", {
+            ...namePayload, field: "end_name",
+          }),
+          addGates,
+        );
+        occupancyContent.append(occupancy, addWiresButton);
+        pathwayContent.append(
+          nameField("Pathway Name", pathway.name, "rename_pathway", {
+            ...namePayload, field: "name",
+          }),
+          nestedSection(
+            `pathway:${pathway.pathwayId}:gates`,
+            "Gates · Traversal Order",
+            `${pathway.orderedControlIds.length}`,
+            gateContent,
+            () => highlightMember(harness, "pathway_gates", pathway.pathwayId),
+          ),
+          nestedSection(
+            `pathway:${pathway.pathwayId}:occupancy`,
+            "Wire Occupancy",
+            `${members.length}`,
+            occupancyContent,
+            () => highlightMember(harness, "pathway_wires", pathway.pathwayId),
+          ),
+        );
+        container.append(nestedSection(
+          `pathway:${pathway.pathwayId}`,
+          pathway.name,
+          `${pathwayDirection(pathway)} · ${members.length} wires`,
+          pathwayContent,
+          () => highlightMember(harness, "pathway", pathway.pathwayId),
+        ));
+      });
+      return container;
+    }
+
+    function enableSequenceDrag(sequence, memberRows, row, memberIndex, onMove) {
+      const position = document.createElement("span");
+      position.className = "sequence-position";
+      position.textContent = `${memberIndex + 1}`;
+      position.setAttribute("aria-label", `Position ${memberIndex + 1}`);
+      row.insertBefore(position, row.children[0]);
+      row.dataset.reorder = "true";
+      let drag = null;
+      const clearDrag = () => {
+        drag = null;
+        delete row.dataset.dragging;
+        memberRows.forEach((item) => { delete item.dataset.drop; });
+      };
+      row.addEventListener("dragstart", (event) => event.preventDefault());
+      row.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || event.target.closest(".icon-button")) return;
+        drag = { x: event.clientX, y: event.clientY, active: false, target: memberIndex };
+        row.setPointerCapture(event.pointerId);
+      });
+      row.addEventListener("pointermove", (event) => {
+        if (!drag) return;
+        if (!drag.active && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 5) return;
+        event.preventDefault();
+        drag.active = true;
+        row.dataset.dragging = "true";
+        memberRows.forEach((item) => { delete item.dataset.drop; });
+        const bounds = sequence.getBoundingClientRect();
+        if (event.clientX < bounds.left || event.clientX > bounds.right ||
+            event.clientY < bounds.top - 12 || event.clientY > bounds.bottom + 12) {
+          drag.target = null;
+          return;
+        }
+        const others = memberRows.filter((item) => item !== row);
+        const next = others.findIndex((item) => {
+          const rect = item.getBoundingClientRect();
+          return event.clientY < rect.top + rect.height / 2;
+        });
+        drag.target = next < 0 ? others.length : next;
+        if (others.length) {
+          const marker = next < 0 ? others[others.length - 1] : others[next];
+          marker.dataset.drop = next < 0 ? "after" : "before";
+        }
+      });
+      row.addEventListener("pointerup", (event) => {
+        if (!drag) return;
+        const target = drag.target;
+        const moved = drag.active && target !== null && target !== memberIndex;
+        clearDrag();
+        if (row.hasPointerCapture(event.pointerId)) row.releasePointerCapture(event.pointerId);
+        if (moved) onMove(target);
+      });
+      row.addEventListener("pointercancel", clearDrag);
+      row.addEventListener("lostpointercapture", clearDrag);
+      memberRows.push(row);
+    }
+
+    function renderEndpointSequence(harness, wires, connections, endpoint) {
+      const sequence = document.createElement("div");
+      sequence.className = "sequence";
+      wires.forEach((wire) => {
+        const connectionId = endpoint === "start" ? wire.startConnectionId : wire.endConnectionId;
+        const connection = connections.get(connectionId);
+        const members = connection?.members || (connection ? [{ index: 0, hasLinkedGeometry: connection.hasLinkedGeometry }] : []);
+        const payload = { harnessId: harness.harnessId, wireId: wire.wireId, endpoint, expectedMembers: members.length };
+        const memberRows = [];
+        members.forEach((member, memberIndex) => {
+          const row = memberRow(
+            member.memberId ? `#${member.memberId.slice(0, 8)}` : `${memberIndex + 1}`,
+            () => highlightMember(harness, "connection", connectionId, { memberIndex }),
+            [
+              actionButton("+", "Add member after this member", () => mutate(
+                "edit_end_members", { ...payload, memberIndex, editAction: "add" }, "Select connection profiles…",
+              )),
+              actionButton("⇄", "Replace member", () => mutate(
+                "edit_end_members", { ...payload, memberIndex, editAction: "replace" }, "Select replacement profile…",
+              )),
+              actionButton("×", "Remove member", () => {
+                if (members.length === 1 && !window.confirm(
+                  "Removing the last member will delete this end sequence. The wire will remain incomplete until you add an end again. Continue?",
+                )) return;
+                mutate("remove_end_member", { ...payload, memberIndex }, "Removing end member…");
+              }, false, true),
+            ],
+            !member.hasLinkedGeometry,
+          );
+          row.title = `Drag to reorder this end member${member.memberId ? ` (${member.memberId})` : ""}`;
+          enableSequenceDrag(sequence, memberRows, row, memberIndex, (target) => mutate(
+            "move_end_member", { ...payload, memberIndex, targetIndex: target }, "Reordering end member…",
+          ));
+          sequence.append(row);
+        });
+      });
+      return sequence;
+    }
+
+    function routeNode(label, className = "") {
+      const node = document.createElement("span");
+      node.className = `route-node${className ? ` ${className}` : ""}`;
+      node.textContent = label;
+      node.title = label;
+      return node;
+    }
+
+    function endRouteNode(label, connection, editor, otherEditor, name, onHover, onAdd) {
+      const node = document.createElement("button");
+      node.type = "button";
+      node.className = `route-node${connection?.hasLinkedGeometry ? "" : " missing"}`;
+      node.textContent = connection ? `${label}: ${name || connection.name}` : `+ Add ${label}`;
+      node.title = `Open ${label} ordering`;
+      node.setAttribute("aria-expanded", `${!editor.hidden}`);
+      node.setAttribute("aria-controls", editor.id);
+      node.addEventListener("click", () => {
+        if (!connection) { onAdd(); return; }
+        const willOpen = editor.hidden;
+        editor.hidden = !willOpen;
+        otherEditor.hidden = true;
+        if (willOpen) expandedSections.add(editor.dataset.stateKey);
+        else expandedSections.delete(editor.dataset.stateKey);
+        expandedSections.delete(otherEditor.dataset.stateKey);
+        writeSession("wireBundler.expandedSections", JSON.stringify([...expandedSections]));
+        node.setAttribute("aria-expanded", `${willOpen}`);
+        const otherNode = node.parentElement.querySelector(
+          `.route-node[data-editor-id="${otherEditor.id}"]`,
+        );
+        if (otherNode) otherNode.setAttribute("aria-expanded", "false");
+      });
+      node.dataset.editorId = editor.id;
+      if (connection) hoverHighlight(node, onHover);
+      return node;
+    }
+
+    function renderEndEditor(harness, wires, connections, endpoint, id) {
+      const editor = document.createElement("div");
+      const heading = document.createElement("div");
+      const label = document.createElement("strong");
+      const metadata = document.createElement("span");
+      const endLabel = endpoint === "start" ? "End A" : "End B";
+      editor.id = id;
+      editor.dataset.stateKey = `end:${harness.harnessId}:${wires[0].wireId}:${endpoint}`;
+      editor.className = "end-editor";
+      editor.hidden = !expandedSections.has(editor.dataset.stateKey);
+      heading.className = "end-editor-heading";
+      label.textContent = `${endLabel} Ordering`;
+      metadata.className = "item-meta";
+      metadata.textContent = wireLabel(wires[0]);
+      heading.append(label, metadata);
+      const nameLabel = document.createElement("label");
+      const nameInput = document.createElement("input");
+      nameLabel.textContent = `${endLabel} Name`;
+      nameInput.type = "text";
+      nameInput.className = "filter";
+      nameInput.value = wires[0][endpoint === "start" ? "startEndName" : "endEndName"] || "";
+      nameInput.placeholder = "Optional name";
+      nameInput.addEventListener("change", () => mutate("rename_route_end", {
+        harnessId: harness.harnessId,
+        wireId: wires[0].wireId,
+        endpoint,
+        name: nameInput.value,
+      }, "Saving end name…"));
+      nameLabel.append(nameInput);
+      editor.append(heading, nameLabel, renderEndpointSequence(harness, wires, connections, endpoint));
+      return editor;
+    }
+
+    function wireHeader(harness, wire, details, missing) {
+      const row = memberRow(wireLabel(wire), () => {
+        details.hidden = !details.hidden;
+        const stateKey = `wire:${harness.harnessId}:${wire.wireId}`;
+        if (details.hidden) expandedSections.delete(stateKey);
+        else expandedSections.add(stateKey);
+        writeSession("wireBundler.expandedSections", JSON.stringify([...expandedSections]));
+        label.setAttribute("aria-expanded", `${!details.hidden}`);
+      }, [], missing, true);
+      const label = row.children[0];
+      const actions = row.children[1];
+      label.title = "Expand or collapse wire";
+      label.setAttribute("aria-expanded", `${!details.hidden}`);
+      label.setAttribute("aria-controls", details.id);
+      hoverHighlight(row, () => highlightMember(harness, "preview_wire", wire.wireId));
+      const rename = actionButton("✎", "Rename wire", () => {
+        if (row.querySelector("input")) return;
+        const input = document.createElement("input");
+        input.className = "filter";
+        input.value = wire.displayName || "";
+        input.placeholder = wireLabel(wire);
+        input.setAttribute("aria-label", "Wire name");
+        label.hidden = true;
+        row.insertBefore(input, actions);
+        let finished = false;
+        const finish = (save) => {
+          if (finished) return;
+          finished = true;
+          input.remove();
+          label.hidden = false;
+          if (save) mutate("rename_wire", {
+            harnessId: harness.harnessId, wireId: wire.wireId, name: input.value,
+          }, "Saving wire name…");
+        };
+        input.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" || event.key === "Escape") {
+            event.preventDefault();
+            finish(event.key === "Enter");
+          }
+        });
+        input.addEventListener("blur", () => finish(true));
+        input.focus();
+        input.select();
+      });
+      actions.append(rename, actionButton(
+        "×", `Remove ${wireLabel(wire)}`, () => removeWirePair(harness, wire), false, true,
+      ));
+      return row;
+    }
+
+    function openWireOptions(harness, wire, profile) {
+      const dialog = document.createElement("dialog");
+      const form = document.createElement("form");
+      const heading = document.createElement("h2");
+      const label = document.createElement("label");
+      const diameter = document.createElement("input");
+      const error = document.createElement("p");
+      const actions = document.createElement("div");
+      const cancel = document.createElement("button");
+      const save = document.createElement("button");
+      dialog.className = "wire-options";
+      dialog.setAttribute("aria-label", `Wire options: ${wireLabel(wire)}`);
+      heading.textContent = `Wire options · ${wireLabel(wire)}`;
+      label.textContent = "Wire diameter (mm)";
+      diameter.type = "number";
+      diameter.className = "filter";
+      diameter.step = "any";
+      diameter.required = true;
+      diameter.value = `${profile.diameterMm}`;
+      label.append(diameter);
+      error.setAttribute("role", "alert");
+      error.style.color = "var(--danger)";
+      actions.className = "actions";
+      cancel.type = "button";
+      cancel.className = "button";
+      cancel.textContent = "Cancel";
+      cancel.addEventListener("click", () => dialog.close());
+      save.type = "submit";
+      save.className = "button primary";
+      save.textContent = "Save";
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const value = Number(diameter.value);
+        if (!Number.isFinite(value) || value <= 0) {
+          error.textContent = "Enter a positive diameter in millimeters.";
+          return;
+        }
+        save.disabled = true;
+        try {
+          const response = await send("set_wire_diameter", {
+            harnessId: harness.harnessId, wireId: wire.wireId, diameterMm: value,
+          });
+          if (response.ok) dialog.close();
+          else error.textContent = response.error || "Could not save wire diameter.";
+        } catch (failure) {
+          error.textContent = failure.message;
+        } finally {
+          save.disabled = false;
+        }
+      });
+      dialog.addEventListener("close", () => dialog.remove());
+      actions.append(cancel, save);
+      form.append(heading, label, error, actions);
+      dialog.append(form);
+      document.body.append(dialog);
+      dialog.showModal();
+    }
+
+    function renderWireRoutes(harness) {
+      const key = harnessKey(harness);
+      const connections = new Map(
+        harness.connections.map((connection) => [connection.connectionId, connection]),
+      );
+      const profiles = new Map(
+        harness.profiles.map((profile) => [profile.profileId, profile]),
+      );
+      const pathways = new Map(
+        harness.pathways.map((pathway) => [pathway.pathwayId, pathway]),
+      );
+      const container = document.createElement("div");
+      const filter = document.createElement("input");
+      const routes = document.createElement("div");
+      container.className = "section-content";
+      filter.className = "filter wire-filter";
+      filter.type = "search";
+      filter.placeholder = "Filter wire routes…";
+      filter.setAttribute("aria-label", "Filter wire routes");
+      filter.value = routeFilters.get(key) || "";
+      filter.autocomplete = "off";
+      const renderRoutes = () => {
+        const query = filter.value.trim().toLocaleLowerCase();
+        routeFilters.set(key, query);
+        routes.replaceChildren();
+        const visibleWires = harness.wires.filter((wire) => {
+          const start = wire.startEndName || connections.get(wire.startConnectionId)?.name || "Missing End A";
+          const end = wire.endEndName || connections.get(wire.endConnectionId)?.name || "Missing End B";
+          const path = wire.orderedPathwayIds
+            .map((id) => `${pathways.get(id)?.name || "Missing pathway"} ${pathwayDirection(pathways.get(id))}`)
+            .join(" ");
+          return `${wire.wireNumber} ${wireLabel(wire)} ${start} ${end} ${path}`
+            .toLocaleLowerCase()
+            .includes(query);
+        });
+        if (!visibleWires.length) {
+          routes.append(emptyMessage(
+            harness.wires.length ? "No wire routes match this filter." : "No wires defined yet.",
+          ));
+          return;
+        }
+        visibleWires.forEach((wire) => {
+          const card = document.createElement("div");
+          const flow = document.createElement("div");
+          const profile = profiles.get(wire.profileId);
+          const start = connections.get(wire.startConnectionId);
+          const end = connections.get(wire.endConnectionId);
+          const endAEditor = renderEndEditor(
+            harness, [wire], connections, "start", `end-a-${wire.wireId}`,
+          );
+          const endBEditor = renderEndEditor(
+            harness, [wire], connections, "end", `end-b-${wire.wireId}`,
+          );
+          card.className = "wire-route";
+          flow.className = "route-flow";
+          flow.append(endRouteNode(
+            "End A", start, endAEditor, endBEditor, wire.startEndName,
+            () => highlightMember(harness, "connection", wire.startConnectionId),
+            () => mutate("edit_end_members", {
+              harnessId: harness.harnessId, wireId: wire.wireId, endpoint: "start",
+              editAction: "add", expectedMembers: 0,
+            }, "Select End A profiles…"),
+          ));
+          wire.orderedPathwayIds.forEach((pathwayId) => {
+            const arrow = document.createElement("span");
+            const pathway = pathways.get(pathwayId);
+            arrow.className = "route-arrow";
+            arrow.textContent = "→";
+            const pathwayNode = routeNode(
+                pathwayRouteLabel(pathway),
+                pathway ? "pathway" : "missing",
+            );
+            hoverHighlight(pathwayNode, () => highlightMember(harness, "pathway_gates", pathwayId));
+            flow.append(arrow, pathwayNode);
+          });
+          const finalArrow = document.createElement("span");
+          finalArrow.className = "route-arrow";
+          finalArrow.textContent = "→";
+          flow.append(finalArrow, endRouteNode(
+            "End B", end, endBEditor, endAEditor, wire.endEndName,
+            () => highlightMember(harness, "connection", wire.endConnectionId),
+            () => mutate("edit_end_members", {
+              harnessId: harness.harnessId, wireId: wire.wireId, endpoint: "end",
+              editAction: "add", expectedMembers: 0,
+            }, "Select End B profiles…"),
+          ));
+          const details = document.createElement("div");
+          details.className = "wire-details";
+          details.id = `wire-details-${wire.wireId}`;
+          details.hidden = !expandedSections.has(`wire:${harness.harnessId}:${wire.wireId}`);
+          const profileNode = document.createElement("button");
+          profileNode.type = "button";
+          profileNode.className = `route-node${profile ? "" : " missing"}`;
+          profileNode.textContent = profile
+            ? `${profile.name} · ${profile.diameterMm} mm` : "Missing wire specification";
+          profileNode.title = "Edit wire-wide options";
+          profileNode.disabled = !profile;
+          profileNode.addEventListener("click", () => openWireOptions(harness, wire, profile));
+          details.append(flow, profileNode, endAEditor, endBEditor);
+          card.append(wireHeader(
+            harness, wire, details, !start?.hasLinkedGeometry || !end?.hasLinkedGeometry,
+          ), details);
+          routes.append(card);
+        });
+      };
+      filter.addEventListener("input", renderRoutes);
+      container.append(filter, routes);
+      renderRoutes();
+      return container;
     }
 
     function renderEditor(harness) {
@@ -475,23 +1032,6 @@
       });
       ui.editor.append(overview);
 
-      const connections = definitionList(
-        harness.connections,
-        (connection) => itemRow(
-          connection.name,
-          connection.hasLinkedGeometry ? "Geometry linked" : "Geometry missing",
-        ),
-        "No connections defined yet.",
-      );
-      const routing = definitionList(
-        harness.controls,
-        (control) => itemRow(
-          control.name,
-          control.kind.replaceAll("_", " "),
-          control.hasLinkedGeometry ? "Geometry linked" : "Geometry missing",
-        ),
-        "No routing controls defined yet.",
-      );
       const validation = document.createElement("div");
       validation.className = "section-content";
       if (harness.validationMessages.length) {
@@ -509,15 +1049,19 @@
 
       ui.editor.append(
         editorSection(
+          "wire-routes",
+          "Wire Routes",
+          `${harness.wires.length}`,
+          renderWireRoutes(harness),
+          false,
+        ),
+        editorSection(
           "pathways",
-          "Pathways",
+          "Pathways & Occupancy",
           `${harness.pathways.length}`,
           renderPathways(harness),
-          harness.pathways.length > 0,
+          false,
         ),
-        editorSection("wires", "Wires", `${harness.wires.length}`, renderWires(harness), true),
-        editorSection("connections", "Connections", `${harness.connections.length}`, connections),
-        editorSection("routing", "Routing", `${harness.controls.length}`, routing),
         editorSection(
           "validation",
           "Validation",
@@ -540,6 +1084,7 @@
     }
 
     function closeEditor() {
+      send("clear_highlight").catch(() => {});
       selectedHarnessKey = "";
       removeSession("wireBundler.selectedHarness");
       ui.editorView.hidden = true;
@@ -619,6 +1164,76 @@
       }
     }
 
+    async function mutate(action, payload, progress) {
+      ui.notice.style.color = "";
+      ui.notice.textContent = progress;
+      try {
+        const response = await send(action, payload);
+        if (!response.ok) {
+          ui.notice.textContent = response.error || "The harness edit could not be completed.";
+          ui.notice.style.color = "var(--danger)";
+        }
+      } catch (error) {
+        ui.notice.textContent = error.message;
+        ui.notice.style.color = "var(--danger)";
+      }
+    }
+
+    async function highlightMember(harness, memberType, memberId, extra = {}) {
+      ui.notice.style.color = "";
+      try {
+        const response = await send("highlight_member", {
+          harnessId: harness.harnessId,
+          memberType,
+          memberId,
+          ...extra,
+        });
+        if (!response.ok) {
+          ui.notice.textContent = response.error || "Linked geometry could not be highlighted.";
+          ui.notice.style.color = "var(--danger)";
+        }
+      } catch (error) {
+        ui.notice.textContent = error.message;
+        ui.notice.style.color = "var(--danger)";
+      }
+    }
+
+    async function appendPathwayGates(harness, pathway) {
+      ui.notice.style.color = "";
+      ui.notice.textContent = `Selecting additional gates for ${pathway.name}…`;
+      try {
+        const response = await send("append_pathway_gates", {
+          harnessId: harness.harnessId,
+          pathwayId: pathway.pathwayId,
+        });
+        if (!response.ok) {
+          ui.notice.textContent = response.error || "Add Gates could not be opened.";
+          ui.notice.style.color = "var(--danger)";
+        }
+      } catch (error) {
+        ui.notice.textContent = error.message;
+        ui.notice.style.color = "var(--danger)";
+      }
+    }
+
+    function removeGate(harness, pathway, controlId, name) {
+      if (!window.confirm(`Remove ${name} from ${pathway.name}?`)) return;
+      mutate(
+        "remove_pathway_gate",
+        { harnessId: harness.harnessId, pathwayId: pathway.pathwayId, controlId },
+        "Removing gate…",
+      );
+    }
+
+    function removeWirePair(harness, wire) {
+      if (!window.confirm(`Remove wire #${wire.wireNumber} and both connection assignments?`)) return;
+      mutate(
+        "remove_wire",
+        { harnessId: harness.harnessId, wireId: wire.wireId },
+        `Removing wire #${wire.wireNumber}…`,
+      );
+    }
+
     async function addPathway() {
       const harness = currentState.harnesses.find(
         (candidate) => harnessKey(candidate) === selectedHarnessKey,
@@ -638,7 +1253,7 @@
       }
     }
 
-    async function addWires() {
+    async function addWires(pathwayId = null) {
       const harness = currentState.harnesses.find(
         (candidate) => harnessKey(candidate) === selectedHarnessKey,
       );
@@ -646,7 +1261,7 @@
       ui.notice.style.color = "";
       ui.notice.textContent = "Opening Add Wires…";
       try {
-        const response = await send("add_wires", { harnessId: harness.harnessId });
+        const response = await send("add_wires", { harnessId: harness.harnessId, pathwayId });
         if (!response.ok) {
           ui.notice.textContent = response.error || "Add Wires could not be opened.";
           ui.notice.style.color = "var(--danger)";
@@ -691,7 +1306,7 @@
     }
 
     ui.addPathway.addEventListener("click", addPathway);
-    ui.addWires.addEventListener("click", addWires);
+    ui.addWires.addEventListener("click", () => addWires());
     ui.previewRoutes.addEventListener("click", previewRoutes);
     ui.clearPreview.addEventListener("click", clearPreview);
     ui.back.addEventListener("click", closeEditor);

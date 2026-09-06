@@ -8,14 +8,16 @@ import importlib
 import json
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from types import ModuleType, SimpleNamespace
 from typing import Protocol, cast
 from unittest.mock import Mock
+from uuid import UUID
 
 import pytest
 
 from wire_bundler.application import HarnessLoadResult
-from wire_bundler.domain import HarnessDefinition
+from wire_bundler.domain import HarnessDefinition, dumps
 
 
 class _PaletteLifecycleModule(Protocol):
@@ -31,6 +33,10 @@ class _PaletteLifecycleModule(Protocol):
     _serialize_palette_state: Callable[[object, str], str]
     _preview_routes: Callable[[object, str], int]
     _log_to_fusion: Callable[[str], None]
+    _member_entity_tokens: Callable[[HarnessDefinition, str, UUID], tuple[str, ...]]
+    _highlight_member: Callable[[object, str], int]
+    _require_active_design: Callable[[object], object]
+    highlight_route_preview: Callable[[object, object], int]
     load_harnesses: Callable[[object], tuple[HarnessLoadResult, ...]]
 
 
@@ -96,6 +102,11 @@ def test_palette_state_contains_complete_editor_definition(
     gateway = SimpleNamespace(
         is_entity_token_resolvable=lambda entity_token: entity_token == "fusion-gate-token"
     )
+    valid_harness = replace(
+        valid_harness,
+        pathways=(replace(valid_harness.pathways[0], start_name="Sensor", end_name="Controller"),),
+        wires=(replace(valid_harness.wires[0], display_name="Signal", start_end_name="O2"),),
+    )
     result = HarnessLoadResult(
         component_name="Harness_001",
         definition=valid_harness,
@@ -116,6 +127,10 @@ def test_palette_state_contains_complete_editor_definition(
     assert harness["controls"][0]["hasLinkedGeometry"]
     assert not harness["connections"][0]["hasLinkedGeometry"]
     assert harness["pathways"][0]["name"] == "Main Pathway"
+    assert harness["pathways"][0]["startName"] == "Sensor"
+    assert harness["pathways"][0]["endName"] == "Controller"
+    assert harness["wires"][0]["displayName"] == "Signal"
+    assert harness["wires"][0]["startEndName"] == "O2"
     assert harness["pathways"][0]["orderedControlIds"] == [
         str(valid_harness.controls[0].control_id)
     ]
@@ -151,3 +166,125 @@ def test_route_capacity_error_is_returned_to_palette(
         "error": "Gate 4 cannot fit 3 wires.",
     }
     assert logged_messages == ["Harness route preview rejected: Gate 4 cannot fit 3 wires."]
+
+
+@pytest.mark.parametrize(
+    ("member_type", "identity_attribute", "expected_tokens"),
+    [
+        ("control", "control_id", ("fusion-gate-token",)),
+        ("connection", "connection_id", ("fusion-start-token",)),
+        ("wire", "wire_id", ("fusion-start-token", "fusion-end-token")),
+    ],
+)
+def test_resolves_palette_members_to_linked_geometry_tokens(
+    addin_module: _PaletteLifecycleModule,
+    valid_harness: HarnessDefinition,
+    member_type: str,
+    identity_attribute: str,
+    expected_tokens: tuple[str, ...],
+) -> None:
+    """
+    Resolve stable UI identities without exposing opaque Fusion tokens to HTML.
+    """
+    collections = {
+        "control": valid_harness.controls,
+        "connection": valid_harness.connections,
+        "wire": valid_harness.wires,
+    }
+    member_id = getattr(collections[member_type][0], identity_attribute)
+
+    tokens = addin_module._member_entity_tokens(valid_harness, member_type, member_id)
+
+    assert tokens == expected_tokens
+
+
+def test_highlights_both_wire_endpoint_profiles(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Replace the active Fusion selection with both profiles linked to a wire.
+    """
+    start_profile = object()
+    end_profile = object()
+    profiles_by_token = {
+        "fusion-start-token": [start_profile],
+        "fusion-end-token": [end_profile],
+    }
+    design = SimpleNamespace(
+        findEntityByToken=profiles_by_token.get,
+        rootComponent=SimpleNamespace(customGraphicsGroups=SimpleNamespace(count=0)),
+    )
+    selections = SimpleNamespace(clear=Mock(return_value=True), add=Mock(return_value=True))
+    viewport = SimpleNamespace(refresh=Mock())
+    application = SimpleNamespace(
+        userInterface=SimpleNamespace(activeSelections=selections),
+        activeViewport=viewport,
+    )
+    gateway = SimpleNamespace(
+        read_harness_definition=lambda _harness_id: dumps(valid_harness),
+    )
+    fusion_module = sys.modules["adsk.fusion"]
+    fusion_module.Profile = SimpleNamespace(cast=lambda entity: entity)  # type: ignore[attr-defined]
+    monkeypatch.setattr(addin_module, "_require_active_design", lambda _application: design)
+    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
+    payload = json.dumps(
+        {
+            "harnessId": str(valid_harness.harness_id),
+            "memberType": "wire",
+            "memberId": str(valid_harness.wires[0].wire_id),
+        }
+    )
+
+    count = addin_module._highlight_member(application, payload)
+
+    assert count == 2
+    selections.clear.assert_called_once_with()
+    assert [call.args[0] for call in selections.add.call_args_list] == [
+        start_profile,
+        end_profile,
+    ]
+    viewport.refresh.assert_called_once_with()
+
+
+def test_preview_hover_emphasizes_only_matching_centerline(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Emphasize an existing wire preview and clear it without selecting sketch profiles.
+    """
+    from wire_bundler.fusion import route_preview
+
+    monkeypatch.setitem(vars(route_preview), "adsk", sys.modules["adsk"])
+    fusion_module = sys.modules["adsk.fusion"]
+    monkeypatch.setitem(
+        vars(fusion_module), "CustomGraphicsGroup", SimpleNamespace(cast=lambda item: item)
+    )
+    monkeypatch.setitem(
+        vars(fusion_module), "CustomGraphicsLines", SimpleNamespace(cast=lambda item: item)
+    )
+    selected = SimpleNamespace(weight=1.0)
+    other = SimpleNamespace(weight=1.0)
+    child_groups = [
+        SimpleNamespace(id=str(valid_harness.wires[0].wire_id), count=1, item=lambda _i: selected),
+        SimpleNamespace(id="other-wire", count=1, item=lambda _i: other),
+    ]
+    group = SimpleNamespace(
+        id=route_preview.PREVIEW_GROUP_ID, count=2, item=child_groups.__getitem__
+    )
+    design = SimpleNamespace(
+        rootComponent=SimpleNamespace(
+            customGraphicsGroups=SimpleNamespace(count=1, item=lambda _i: group)
+        )
+    )
+    count = addin_module.highlight_route_preview(design, valid_harness.wires[0].wire_id)
+    assert count == 1
+    assert selected.weight == 5.0
+    assert other.weight == 1.0
+    assert addin_module.highlight_route_preview(design, None) == 0
+    assert selected.weight == 1.0
+    design.rootComponent.customGraphicsGroups.count = 0
+    assert addin_module.highlight_route_preview(design, valid_harness.wires[0].wire_id) == 0

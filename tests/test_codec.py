@@ -32,6 +32,48 @@ def test_serialization_is_deterministic(valid_harness: HarnessDefinition) -> Non
     assert first == second
 
 
+def test_missing_end_names_default_to_blank(valid_harness: HarnessDefinition) -> None:
+    """
+    Read stored definitions created before organizational end names were added.
+    """
+    payload = json.loads(dumps(valid_harness))
+    for wire in payload["wires"]:
+        del wire["start_end_name"]
+        del wire["end_end_name"]
+        del wire["display_name"]
+    for pathway in payload["pathways"]:
+        del pathway["start_name"]
+        del pathway["end_name"]
+    for connection in payload["connections"]:
+        del connection["additional_entity_tokens"]
+    assert loads(json.dumps(payload)) == valid_harness
+
+
+@pytest.mark.parametrize("value", [None, 42, [], {}])
+def test_malformed_end_name_is_rejected(valid_harness: HarnessDefinition, value: object) -> None:
+    """
+    Reject malformed optional metadata instead of silently dropping it.
+    """
+    payload = json.loads(dumps(valid_harness))
+    payload["wires"][0]["start_end_name"] = value
+    with pytest.raises(DefinitionParseError):
+        loads(json.dumps(payload))
+
+
+@pytest.mark.parametrize("members", [None, "token", [None], [""]])
+def test_malformed_connection_members_rejected(
+    valid_harness: HarnessDefinition,
+    members: object,
+) -> None:
+    """
+    Reject malformed connection collections before exposing member controls.
+    """
+    payload = json.loads(dumps(valid_harness))
+    payload["connections"][0]["additional_entity_tokens"] = members
+    with pytest.raises(DefinitionParseError):
+        loads(json.dumps(payload))
+
+
 def test_rejects_unknown_schema_version(valid_harness: HarnessDefinition) -> None:
     """
     Refuse definitions that require an unsupported schema migration.
@@ -94,3 +136,18 @@ def test_rejects_malformed_external_data(serialized: str, expected_path: str) ->
         loads(serialized)
 
     assert error_info.value.path == expected_path
+
+
+@pytest.mark.parametrize(
+    "identities", [[], ["bad-id"], ["00000000-0000-0000-0000-000000000001"] * 2]
+)
+def test_rejects_malformed_member_identities(
+    valid_harness: HarnessDefinition, identities: list[str]
+) -> None:
+    """
+    Require valid, unique member identifiers matching the profile count.
+    """
+    payload = json.loads(dumps(valid_harness))
+    payload["connections"][0]["member_ids"] = identities
+    with pytest.raises(DefinitionParseError):
+        loads(json.dumps(payload))

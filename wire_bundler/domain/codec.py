@@ -152,6 +152,12 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
                 "connection_id": str(connection.connection_id),
                 "name": connection.name,
                 "entity_token": connection.entity_token,
+                "additional_entity_tokens": list(connection.additional_entity_tokens),
+                **(
+                    {"member_ids": [str(identity) for identity in connection.member_ids]}
+                    if connection.member_ids
+                    else {}
+                ),
             }
             for connection in definition.connections
         ],
@@ -168,6 +174,8 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
             {
                 "pathway_id": str(pathway.pathway_id),
                 "name": pathway.name,
+                "start_name": pathway.start_name,
+                "end_name": pathway.end_name,
                 "routing_mode": pathway.routing_mode.value,
                 "ordered_control_ids": [
                     str(control_id) for control_id in pathway.ordered_control_ids
@@ -179,6 +187,9 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
             {
                 "wire_id": str(wire.wire_id),
                 "wire_number": wire.wire_number,
+                "display_name": wire.display_name,
+                "start_end_name": wire.start_end_name,
+                "end_end_name": wire.end_end_name,
                 "start_connection_id": str(wire.start_connection_id),
                 "end_connection_id": str(wire.end_connection_id),
                 "profile_id": str(wire.profile_id),
@@ -223,10 +234,34 @@ def _parse_connection(raw_value: object, path: str) -> Connection:
         Parsed physical connection.
     """
     value = _require_mapping(raw_value, path)
+    raw_members = _require_list(
+        {"additional_entity_tokens": [], **value},
+        "additional_entity_tokens",
+        f"{path}.additional_entity_tokens",
+    )
+    members: list[str] = []
+    for token in raw_members:
+        if not isinstance(token, str) or not token.strip():
+            raise DefinitionParseError(
+                f"{path}.additional_entity_tokens", "expected non-empty strings"
+            )
+        members.append(token)
+    identities = tuple(
+        _parse_uuid(identity, f"{path}.member_ids[{index}]")
+        for index, identity in enumerate(
+            _require_list({"member_ids": [], **value}, "member_ids", f"{path}.member_ids")
+        )
+    )
+    if "member_ids" in value and (
+        len(identities) != len(members) + 1 or len(set(identities)) != len(identities)
+    ):
+        raise DefinitionParseError(f"{path}.member_ids", "expected one unique ID per member")
     connection = Connection(
         connection_id=_require_uuid(value, "connection_id", f"{path}.connection_id"),
         name=_require_str(value, "name", f"{path}.name"),
         entity_token=_require_str(value, "entity_token", f"{path}.entity_token"),
+        additional_entity_tokens=tuple(members),
+        member_ids=identities,
     )
     return connection
 
@@ -276,6 +311,8 @@ def _parse_pathway(raw_value: object, path: str) -> PathwayDefinition:
     pathway = PathwayDefinition(
         pathway_id=_require_uuid(value, "pathway_id", f"{path}.pathway_id"),
         name=_require_str(value, "name", f"{path}.name"),
+        start_name=_require_str({"start_name": "", **value}, "start_name", f"{path}.start_name"),
+        end_name=_require_str({"end_name": "", **value}, "end_name", f"{path}.end_name"),
         routing_mode=_require_enum(
             RoutingMode,
             value,
@@ -333,6 +370,9 @@ def _parse_wire(
     wire = WireDefinition(
         wire_id=_require_uuid(value, "wire_id", f"{path}.wire_id"),
         wire_number=_require_str(value, "wire_number", f"{path}.wire_number"),
+        display_name=_require_str(
+            {"display_name": "", **value}, "display_name", f"{path}.display_name"
+        ),
         start_connection_id=_require_uuid(
             value,
             "start_connection_id",
@@ -346,6 +386,12 @@ def _parse_wire(
         profile_id=_require_uuid(value, "profile_id", f"{path}.profile_id"),
         ordered_pathway_ids=pathway_ids,
         ordered_control_ids=control_ids,
+        start_end_name=_require_str(
+            {"start_end_name": "", **value}, "start_end_name", f"{path}.start_end_name"
+        ),
+        end_end_name=_require_str(
+            {"end_end_name": "", **value}, "end_end_name", f"{path}.end_end_name"
+        ),
     )
     return wire
 

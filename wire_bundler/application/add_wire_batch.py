@@ -1,5 +1,5 @@
 """
-Add ordered source-to-destination wire assignments to an existing pathway.
+Add ordered End A-to-End B wire assignments to an existing pathway.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ class WireBatchResult:
 
     Args:
         profile: Shared circular profile assigned to the new wires.
-        connections: Source connections followed by destination connections.
+        connections: End A connections followed by End B connections.
         wires: New wire mappings in user selection order.
     """
 
@@ -74,8 +74,8 @@ def add_wire_batch(
     Args:
         harness_id: Harness that will own the new wires.
         pathway_id: Existing reusable pathway traversed by every new wire.
-        source_entity_tokens: Source profile tokens in pairing order.
-        destination_entity_tokens: Destination profile tokens in pairing order.
+        source_entity_tokens: End A profile tokens in pairing order.
+        destination_entity_tokens: End B profile tokens in pairing order.
         diameter_mm: Finished circular wire diameter in millimeters.
         gateway: Persistence boundary for the owning harness.
         id_factory: UUID factory, injectable for deterministic tests.
@@ -87,10 +87,10 @@ def add_wire_batch(
         ValueError: If selections, diameter, or pathway identity are invalid.
         WireBatchUpdateError: If persistence fails and rollback also fails.
     """
-    normalized_sources = _normalize_tokens(source_entity_tokens, "source")
-    normalized_destinations = _normalize_tokens(destination_entity_tokens, "destination")
+    normalized_sources = _normalize_tokens(source_entity_tokens, "End A")
+    normalized_destinations = _normalize_tokens(destination_entity_tokens, "End B")
     if len(normalized_sources) != len(normalized_destinations):
-        raise ValueError("Source and destination profile counts must match.")
+        raise ValueError("End A and End B profile counts must match.")
     if not math.isfinite(diameter_mm) or diameter_mm <= 0.0:
         raise ValueError("Wire diameter must be a finite positive value.")
 
@@ -117,12 +117,12 @@ def add_wire_batch(
         zip(normalized_sources, normalized_destinations)
     ):
         source_name = next_available_name(
-            f"Source {index + 1:03d}",
+            f"End A {index + 1:03d}",
             (*existing_connection_names, *(item.name for item in sources)),
         )
         source = Connection(id_factory(), source_name, source_token)
         destination_name = next_available_name(
-            f"Destination {index + 1:03d}",
+            f"End B {index + 1:03d}",
             (
                 *existing_connection_names,
                 *(item.name for item in sources),
@@ -181,7 +181,7 @@ def _normalize_tokens(tokens: tuple[str, ...], role: str) -> tuple[str, ...]:
         Stripped, non-empty tokens.
     """
     if not tokens:
-        raise ValueError("Select at least one source and destination profile.")
+        raise ValueError("Select at least one End A and End B profile.")
     normalized = tuple(token.strip() for token in tokens)
     if any(not token for token in normalized):
         raise ValueError(f"Every {role} profile must reference Fusion geometry.")
