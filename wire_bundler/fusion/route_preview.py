@@ -42,6 +42,59 @@ class _PreviewState:
 
 
 _preview_states: dict[str, _PreviewState] = {}
+_preview_history: dict[tuple[str, HarnessDefinition], _PreviewState] = {}
+
+
+def _remember_preview(group_id: str, state: _PreviewState) -> None:
+    """
+    Preserve a cache snapshot for graphics restored by Fusion Undo/Redo.
+    """
+    _preview_history[group_id, state.definition] = replace(
+        state, routes=dict(state.routes), color_indices=dict(state.color_indices)
+    )
+
+
+def reset_preview_history() -> None:
+    """
+    Release session-only snapshots when the add-in stops.
+    """
+    _preview_states.clear()
+    _preview_history.clear()
+
+
+def reconcile_preview_history(
+    design: adsk.fusion.Design, definitions: tuple[HarnessDefinition, ...]
+) -> None:
+    """
+    Adopt caches matching restored graphics without any Fusion model writes.
+
+    Fusion restores graphics in the edit transaction. Recreating them here would
+    create a new edit and risk clearing Redo. Unknown states force a fresh solve
+    on the next explicit edit instead.
+    """
+    by_id = {definition.harness_id: definition for definition in definitions}
+    groups = design.rootComponent.customGraphicsGroups
+    for index in range(groups.count):
+        group = groups.item(index)
+        if group is None or not _is_preview_group(group):
+            continue
+        candidates = [
+            state for (identity, _), state in _preview_history.items() if identity == group.id
+        ]
+        if not candidates:
+            continue
+        latest = candidates[-1]
+        definition = by_id.get(latest.definition.harness_id)
+        if definition is None:
+            _preview_states.pop(group.id, None)
+            continue
+        saved = _preview_history.get((group.id, definition))
+        _preview_states[group.id] = replace(
+            saved or latest,
+            definition=definition,
+            routes=dict(saved.routes) if saved else {},
+            color_indices=dict((saved or latest).color_indices),
+        )
 
 
 def _is_preview_group(group: adsk.fusion.CustomGraphicsGroup) -> bool:
@@ -91,6 +144,7 @@ def show_route_previews(
         {route.wire_id: index for index, route in enumerate(routes)},
         clearance_mm,
     )
+    _remember_preview(preview_group.id, _preview_states[preview_group.id])
     return routes
 
 
@@ -105,6 +159,8 @@ def clear_route_previews(design: adsk.fusion.Design) -> None:
     for index in range(groups.count - 1, -1, -1):
         group = groups.item(index)
         if group is not None and _is_preview_group(group):
+            if group.id in _preview_states:
+                _remember_preview(group.id, _preview_states[group.id])
             _preview_states.pop(group.id, None)
             group.deleteMe()
 
@@ -165,6 +221,7 @@ def refresh_route_previews(
         state = _preview_states.get(group.id)
         if state is None or state.definition.harness_id != definition.harness_id:
             continue
+        _remember_preview(group.id, state)
         old_wires = {wire.wire_id: wire for wire in state.definition.wires}
         new_wires = {wire.wire_id: wire for wire in definition.wires}
         relocated_ids = {
@@ -236,6 +293,7 @@ def refresh_route_previews(
                     child.deleteMe()
                 state.routes[wire_id] = route
         state.definition = definition
+        _remember_preview(group.id, state)
     return tuple(warnings)
 
 

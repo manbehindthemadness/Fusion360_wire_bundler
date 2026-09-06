@@ -28,6 +28,7 @@ class _PreviewModule(Protocol):
     _add_route_graphics: Callable[..., None]
     refresh_route_previews: Callable[[object, HarnessDefinition], tuple[str, ...]]
     clear_route_previews: Callable[[object], None]
+    reconcile_preview_history: Callable[[object, tuple[HarnessDefinition, ...]], None]
 
 
 class _Group:
@@ -98,6 +99,7 @@ def scenario(monkeypatch: pytest.MonkeyPatch, valid_harness: HarnessDefinition) 
     imported = importlib.import_module("wire_bundler.fusion.route_preview")
     monkeypatch.setitem(vars(imported), "adsk", adsk)
     monkeypatch.setitem(vars(imported), "_preview_states", {})
+    monkeypatch.setitem(vars(imported), "_preview_history", {})
     module = cast(_PreviewModule, cast(object, imported))
     first = valid_harness.wires[0]
     second = replace(first, wire_id=UUID(int=9002), wire_number="002")
@@ -349,3 +351,39 @@ def test_promoting_end_member_refreshes_preview(scenario: _Scenario) -> None:
     assert scenario.module.refresh_route_previews(scenario.design, updated) == ()
     assert scenario.solves
     assert scenario.draws == [first.wire_id]
+
+
+def test_history_reconciliation_restores_cache_without_graphics_writes(scenario: _Scenario) -> None:
+    """
+    Let Fusion own geometry restoration while Python adopts matching undo/redo caches.
+    """
+    original = scenario.definition
+    updated = replace(
+        original, wires=tuple(replace(wire, display_name="Renamed") for wire in original.wires)
+    )
+    scenario.module.refresh_route_previews(scenario.design, updated)
+    children = tuple(scenario.group.children)
+    scenario.module.reconcile_preview_history(scenario.design, (original,))
+    scenario.module.refresh_route_previews(scenario.design, original)
+    assert scenario.solves == []
+    assert scenario.draws == []
+    assert tuple(scenario.group.children) == children
+    scenario.module.reconcile_preview_history(scenario.design, (updated,))
+    scenario.module.refresh_route_previews(scenario.design, updated)
+    assert scenario.solves == []
+    assert scenario.draws == []
+
+
+def test_undo_clear_preview_recovers_cache(scenario: _Scenario) -> None:
+    """
+    Recover a cleared preview cache when Fusion restores its graphics group.
+    """
+    root = scenario.group.parent
+    assert root is not None
+    scenario.module.clear_route_previews(scenario.design)
+    root.children.append(scenario.group)
+    scenario.group.deleted = False
+    scenario.module.reconcile_preview_history(scenario.design, (scenario.definition,))
+    scenario.module.refresh_route_previews(scenario.design, scenario.definition)
+    assert scenario.solves == []
+    assert scenario.draws == []

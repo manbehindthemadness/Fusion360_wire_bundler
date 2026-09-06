@@ -41,7 +41,12 @@ from .fusion import (
     highlight_route_preview,
     show_route_previews,
 )
-from .fusion.route_preview import highlight_route_members, refresh_route_previews
+from .fusion.route_preview import (
+    highlight_route_members,
+    reconcile_preview_history,
+    refresh_route_previews,
+    reset_preview_history,
+)
 
 COMMAND_ID = "kev0_wire_bundler_harness_builder"
 CREATE_COMMAND_ID = "kev0_wire_bundler_create_harness"
@@ -85,6 +90,154 @@ _pending_append_gate_ids: Optional[tuple[UUID, UUID]] = None
 _pending_end_edit: Optional[dict[str, object]] = None
 _pending_wire_harness_id: Optional[UUID] = None
 _pending_wire_pathway_id: Optional[UUID] = None
+_pending_palette_edit: Optional[tuple[str, str, object]] = None
+_history_handler: Optional[_HistoryChangedHandler] = None
+_PALETTE_EDIT_NAMES = {
+    "move_pathway_gate": "Reorder Pathway Gates",
+    "remove_pathway_gate": "Remove Pathway Gate",
+    "move_wire_endpoint": "Reorder Wire Ends",
+    "remove_wire": "Delete Wire",
+    "rename_route_end": "Rename Wire End",
+    "rename_pathway": "Rename Pathway",
+    "rename_wire": "Rename Wire",
+    "set_wire_diameter": "Change Wire Diameter",
+    "remove_end_member": "Remove End Member",
+    "move_end_member": "Reorder End Members",
+    "preview_routes": "Preview Wire Routes",
+    "clear_preview": "Clear Wire Preview",
+}
+
+
+class _PaletteEditExecuteHandler(adsk.core.CommandEventHandler):
+    """
+    Apply a palette edit and its preview inside one Fusion command transaction.
+    """
+
+    def __init__(self, request: tuple[str, str, object]) -> None:
+        """
+        Capture the immutable request and its originating document.
+        """
+        super().__init__()
+        self.request = request
+
+    def notify(self, args: adsk.core.CommandEventArgs) -> None:
+        """
+        Execute against the original document or fail the command without editing.
+        """
+        action, data, document = self.request
+        application = adsk.core.Application.get()
+        try:
+            if application.activeDocument != document:
+                raise ValueError(
+                    "The active document changed; retry the edit in its original document."
+                )
+            if action == "preview_routes":
+                _preview_routes(application, data)
+                return
+            if action == "clear_preview":
+                clear_route_previews(_require_active_design(application))
+                _send_palette_state(application, "Cleared route preview.")
+                return
+            notice = _apply_palette_edit(application, action, data)
+            warning = _refresh_active_preview(
+                application, _read_payload_uuid(_read_palette_payload(data), "harnessId", "harness")
+            )
+            application.activeViewport.refresh()
+            _send_palette_state(application, f"{notice} {warning}".strip())
+        except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+            args.executeFailed = True
+            args.executeFailedMessage = str(error)
+            _log_to_fusion(f"Harness command failed: {error}")
+
+
+class _PaletteEditCreatedHandler(adsk.core.CommandCreatedEventHandler):
+    """
+    Attach execution to a dialog-free command without editing during creation.
+    """
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
+        """
+        Consume the queued request once and let Fusion auto-execute the command.
+        """
+        global _pending_palette_edit
+        request = _pending_palette_edit
+        _pending_palette_edit = None
+        if request is None:
+            return
+        handler = _PaletteEditExecuteHandler(request)
+        if not args.command.execute.add(handler):
+            raise RuntimeError("Fusion could not attach the palette edit handler.")
+        cleanup = _PaletteEditDestroyedHandler(handler)
+        if not args.command.destroy.add(cleanup):
+            args.command.execute.remove(handler)
+            raise RuntimeError("Fusion could not attach edit cleanup.")
+        _handlers.extend((handler, cleanup))
+
+
+class _PaletteEditDestroyedHandler(adsk.core.CommandEventHandler):
+    """
+    Release per-edit handlers when a short-lived palette command ends.
+    """
+
+    def __init__(self, execute_handler: _PaletteEditExecuteHandler) -> None:
+        """
+        Keep the paired execution handler alive until command destruction.
+        """
+        super().__init__()
+        self.execute_handler = execute_handler
+
+    def notify(self, _args: adsk.core.CommandEventArgs) -> None:
+        """
+        Avoid accumulating command handlers after repeated drags or renames.
+        """
+        for handler in (self.execute_handler, self):
+            if handler in _handlers:
+                _handlers.remove(handler)
+
+
+class _HistoryChangedHandler(adsk.core.ApplicationCommandEventHandler):
+    """
+    Re-read restored state after commands, including native Undo and Redo.
+    """
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, _args: adsk.core.ApplicationCommandEventArgs) -> None:
+        """
+        Synchronize only UI and Python caches so Redo history remains intact.
+        """
+        application = adsk.core.Application.get()
+        try:
+            design = adsk.fusion.Design.cast(application.activeProduct)
+            if design is None:
+                return
+            results = load_harnesses(_create_harness_gateway(application))
+            definitions = tuple(
+                result.definition for result in results if result.definition is not None
+            )
+            reconcile_preview_history(design, definitions)
+            _send_palette_state(application)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+            _log_to_fusion(f"Could not synchronize harness history: {error}")
+
+
+def _open_palette_edit(application: adsk.core.Application, action: str, data: str) -> None:
+    """
+    Queue one palette request for a named, dialog-free Fusion command.
+    """
+    global _pending_palette_edit
+    if _pending_palette_edit is not None:
+        raise RuntimeError("Another harness edit is starting; retry after it completes.")
+    definition = application.userInterface.commandDefinitions.itemById(f"{COMMAND_ID}_{action}")
+    if definition is None:
+        raise RuntimeError("The harness edit command is unavailable; restart the add-in.")
+    _pending_palette_edit = (action, data, application.activeDocument)
+    try:
+        if not definition.execute():
+            raise RuntimeError("Fusion could not execute the harness edit command.")
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        _pending_palette_edit = None
+        raise
 
 
 class _HarnessBuilderExecuteHandler(adsk.core.CommandEventHandler):
@@ -735,32 +888,8 @@ class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
                 _open_add_wires_command(application, html_args.data)
                 html_args.returnData = json.dumps({"ok": True})
                 return
-            if html_args.action in {
-                "move_pathway_gate",
-                "remove_pathway_gate",
-                "move_wire_endpoint",
-                "remove_wire",
-                "rename_route_end",
-                "rename_pathway",
-                "rename_wire",
-                "set_wire_diameter",
-                "remove_end_member",
-                "move_end_member",
-            }:
-                try:
-                    notice = _apply_palette_edit(application, html_args.action, html_args.data)
-                except (RuntimeError, TypeError, ValueError) as error:
-                    html_args.returnData = json.dumps({"ok": False, "error": str(error)})
-                    _log_to_fusion(f"Harness edit rejected: {error}")
-                    return
-                warning = _refresh_active_preview(
-                    application,
-                    _read_payload_uuid(
-                        _read_palette_payload(html_args.data), "harnessId", "harness"
-                    ),
-                )
-                application.activeViewport.refresh()
-                _send_palette_state(application, f"{notice} {warning}".strip())
+            if html_args.action in _PALETTE_EDIT_NAMES:
+                _open_palette_edit(application, html_args.action, html_args.data)
                 html_args.returnData = json.dumps({"ok": True})
                 return
             if html_args.action == "highlight_member":
@@ -779,22 +908,6 @@ class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
                 return
             if html_args.action == "clear_highlight":
                 _clear_highlight(application)
-                html_args.returnData = json.dumps({"ok": True})
-                return
-            if html_args.action == "preview_routes":
-                try:
-                    route_count = _preview_routes(application, html_args.data)
-                except (RuntimeError, ValueError) as error:
-                    html_args.returnData = json.dumps({"ok": False, "error": str(error)})
-                    _log_to_fusion(f"Harness route preview rejected: {error}")
-                    return
-                html_args.returnData = json.dumps({"ok": True, "routeCount": route_count})
-                return
-            if html_args.action == "clear_preview":
-                design = _require_active_design(application)
-                clear_route_previews(design)
-                application.activeViewport.refresh()
-                _send_palette_state(application, "Cleared route preview.")
                 html_args.returnData = json.dumps({"ok": True})
                 return
             html_args.returnData = json.dumps(
@@ -837,10 +950,22 @@ def start(_context: object) -> None:
     Args:
         _context: Context object supplied by Fusion.
     """
+    global _history_handler
     try:
         application = adsk.core.Application.get()
         user_interface = application.userInterface
         _remove_user_interface(user_interface)
+        for action, name in _PALETTE_EDIT_NAMES.items():
+            edit_definition = user_interface.commandDefinitions.addButtonDefinition(
+                f"{COMMAND_ID}_{action}", name, name, COMMAND_RESOURCE_FOLDER
+            )
+            created = _PaletteEditCreatedHandler()
+            if edit_definition is None or not edit_definition.commandCreated.add(created):
+                raise RuntimeError(f"Fusion could not register {name}.")
+            _handlers.append(created)
+        _history_handler = _HistoryChangedHandler()
+        if not user_interface.commandTerminated.add(_history_handler):
+            raise RuntimeError("Fusion could not register history synchronization.")
 
         workspace = user_interface.workspaces.itemById(WORKSPACE_ID)
         if workspace is None:
@@ -950,7 +1075,7 @@ def stop(_context: object) -> None:
         _context: Context object supplied by Fusion.
     """
     global _pending_append_gate_ids, _pending_pathway_harness_id, _pending_end_edit
-    global _pending_wire_harness_id, _pending_wire_pathway_id
+    global _pending_wire_harness_id, _pending_wire_pathway_id, _pending_palette_edit
 
     try:
         application = adsk.core.Application.get()
@@ -959,6 +1084,8 @@ def stop(_context: object) -> None:
             clear_route_previews(design)
         _remove_user_interface(application.userInterface)
         _handlers.clear()
+        reset_preview_history()
+        _pending_palette_edit = None
         _pending_append_gate_ids = None
         _pending_end_edit = None
         _pending_pathway_harness_id = None
@@ -976,6 +1103,10 @@ def _remove_user_interface(user_interface: adsk.core.UserInterface) -> None:
     Args:
         user_interface: Active Fusion user interface.
     """
+    global _history_handler
+    if _history_handler is not None:
+        user_interface.commandTerminated.remove(_history_handler)
+        _history_handler = None
     workspace = user_interface.workspaces.itemById(WORKSPACE_ID)
     if workspace is not None:
         for panel_id in PANEL_IDS:
@@ -986,6 +1117,7 @@ def _remove_user_interface(user_interface: adsk.core.UserInterface) -> None:
                     control.deleteMe()
 
     for command_id in (
+        *(f"{COMMAND_ID}_{action}" for action in _PALETTE_EDIT_NAMES),
         COMMAND_ID,
         CREATE_COMMAND_ID,
         ADD_PATHWAY_COMMAND_ID,

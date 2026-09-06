@@ -24,6 +24,7 @@ Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, an
 - Drag a member row to a blue insertion line and release to reorder. Releasing outside its stack cancels the move.
 - Gate traversal uses the same drag-and-drop interaction. Both stacks show a separate far-left position number; stable gate names/IDs and end-member IDs follow their members.
 - Section counts align at the right, immediately before the disclosure arrow, independently of heading length.
+- Palette edits and Preview/Clear Preview execute as named Fusion commands, grouping definition and graphics changes into one undo transaction. Command completion reloads the palette and reconciles saved preview caches without creating a new edit. Live Fusion Undo/Redo verification is still required.
 - End-member rows drag and drop within their own stack and provide add-after, replace, and remove controls. Every profile center guides the preview; both stacks are ordered from terminal toward pathway. Edits refresh the active preview as needed.
 - Synchronized end-to-end wire-route and pathway-occupancy representations
 - Click-to-highlight Fusion profiles for gates, connections, and wire endpoint pairs
@@ -121,3 +122,13 @@ F360WireGenerator/               Unrelated third-party example repository
 ## Domain boundary
 
 `wire_bundler/domain/`, `wire_bundler/application/`, and `wire_bundler/routing/` have no Fusion dependency. They define and transactionally persist harness drafts and solve deterministic parallel-wire crossings independently of the host. `wire_bundler/fusion/` owns Fusion persistence, profile/frame translation, linked-geometry health checks, viewport selection, and transient centerline graphics. Current routing supports circular routing gates, zero additional clearance by default, and piecewise-linear previews. Ordered gate and endpoint-pairing edits update the versioned definition transactionally and invalidate stale previews. Spline fairing, configurable clearance, profile-gate/ribbon routing, connection renaming, final swept bodies, terminators, and full span collision analysis remain future milestones.
+
+Undo/Redo host verification (pending): with an active preview, rename a wire,
+drag an end member, reorder gates, change diameter, and remove a wire. For each,
+confirm Fusion lists one named undo action, Undo restores definition/order/IDs
+and preview geometry, and Redo restores the edit. Repeat with Preview/Clear
+Preview, several consecutive Undos/Redos, and an edit after Undo. Confirm the
+palette expansion stays intact and hovering does not invalidate Redo. Verify a
+failed edit leaves no partial definition or graphics, and stop/start removes and
+re-registers the command-completion handler. Use an unsaved test design; the local
+Fusion MCP endpoint was unavailable during automated verification.

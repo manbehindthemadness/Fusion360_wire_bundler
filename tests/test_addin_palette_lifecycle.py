@@ -27,6 +27,15 @@ class _PaletteLifecycleModule(Protocol):
 
     _handlers: list[object]
     _PaletteIncomingHandler: type
+    _PaletteEditExecuteHandler: type
+    _PaletteEditCreatedHandler: type
+    _HistoryChangedHandler: type
+    _pending_palette_edit: object
+    _open_palette_edit: Callable[[object, str, str], None]
+    _apply_palette_edit: Callable[[object, str, str], str]
+    _refresh_active_preview: Callable[[object, UUID], str]
+    _send_palette_state: Callable[[object, str], None]
+    reconcile_preview_history: Callable[[object, tuple[HarnessDefinition, ...]], None]
     _ShowPaletteCreatedHandler: type
     _show_palette: Callable[[object], None]
     _create_harness_gateway: Callable[[object], object]
@@ -50,6 +59,7 @@ def addin_module(monkeypatch: pytest.MonkeyPatch) -> _PaletteLifecycleModule:
     fusion_module = ModuleType("adsk.fusion")
     handler_names = (
         "CommandEventHandler",
+        "ApplicationCommandEventHandler",
         "ValidateInputsEventHandler",
         "CommandCreatedEventHandler",
         "HTMLEventHandler",
@@ -139,33 +149,29 @@ def test_palette_state_contains_complete_editor_definition(
     assert harness["wires"][0]["orderedControlIds"] == [str(valid_harness.controls[0].control_id)]
 
 
-def test_route_capacity_error_is_returned_to_palette(
+def test_route_capacity_error_fails_preview_command(
     addin_module: _PaletteLifecycleModule,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
-    Keep expected preview rejection actionable without a generic failure dialog.
+    Keep expected preview rejection actionable through Fusion's command failure.
     """
-    application = object()
+    document = object()
+    application = SimpleNamespace(activeDocument=document)
     logged_messages: list[str] = []
     core_module = sys.modules["adsk.core"]
     core_module.Application = SimpleNamespace(get=lambda: application)  # type: ignore[attr-defined]
-    core_module.HTMLEventArgs = SimpleNamespace(cast=lambda args: args)  # type: ignore[attr-defined]
     monkeypatch.setattr(
         addin_module,
         "_preview_routes",
         Mock(side_effect=ValueError("Gate 4 cannot fit 3 wires.")),
     )
     monkeypatch.setattr(addin_module, "_log_to_fusion", logged_messages.append)
-    html_args = SimpleNamespace(action="preview_routes", data="{}", returnData="")
-
-    addin_module._PaletteIncomingHandler().notify(html_args)
-
-    assert json.loads(html_args.returnData) == {
-        "ok": False,
-        "error": "Gate 4 cannot fit 3 wires.",
-    }
-    assert logged_messages == ["Harness route preview rejected: Gate 4 cannot fit 3 wires."]
+    args = SimpleNamespace(executeFailed=False, executeFailedMessage="")
+    addin_module._PaletteEditExecuteHandler(("preview_routes", "{}", document)).notify(args)
+    assert args.executeFailed
+    assert args.executeFailedMessage == "Gate 4 cannot fit 3 wires."
+    assert logged_messages == ["Harness command failed: Gate 4 cannot fit 3 wires."]
 
 
 @pytest.mark.parametrize(
@@ -288,3 +294,119 @@ def test_preview_hover_emphasizes_only_matching_centerline(
     assert selected.weight == 1.0
     design.rootComponent.customGraphicsGroups.count = 0
     assert addin_module.highlight_route_preview(design, valid_harness.wires[0].wire_id) == 0
+
+
+def test_palette_edit_waits_for_execute_and_releases_handlers(
+    addin_module: _PaletteLifecycleModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Queue without changing data, then group persistence and preview in execute.
+    """
+    document = object()
+    definition = Mock(execute=Mock(return_value=True))
+    application = SimpleNamespace(
+        activeDocument=document,
+        activeViewport=Mock(),
+        userInterface=SimpleNamespace(
+            commandDefinitions=Mock(itemById=Mock(return_value=definition))
+        ),
+    )
+    core_module = sys.modules["adsk.core"]
+    core_module.Application = SimpleNamespace(get=lambda: application)  # type: ignore[attr-defined]
+    applied = Mock(return_value="Renamed wire.")
+    refreshed = Mock(return_value="")
+    sent = Mock()
+    monkeypatch.setattr(addin_module, "_apply_palette_edit", applied)
+    monkeypatch.setattr(addin_module, "_refresh_active_preview", refreshed)
+    monkeypatch.setattr(addin_module, "_send_palette_state", sent)
+    payload = json.dumps({"harnessId": str(UUID(int=1))})
+    addin_module._open_palette_edit(application, "rename_wire", payload)
+    applied.assert_not_called()
+    handlers: list[object] = []
+    cleanup: list[object] = []
+    command = SimpleNamespace(
+        execute=Mock(add=Mock(side_effect=lambda handler: handlers.append(handler) or True)),
+        destroy=Mock(add=Mock(side_effect=lambda handler: cleanup.append(handler) or True)),
+    )
+    addin_module._PaletteEditCreatedHandler().notify(SimpleNamespace(command=command))
+    applied.assert_not_called()
+    args = SimpleNamespace(executeFailed=False)
+    cast(Mock, handlers[0]).notify(args)
+    applied.assert_called_once_with(application, "rename_wire", payload)
+    refreshed.assert_called_once_with(application, UUID(int=1))
+    assert not args.executeFailed
+    cast(Mock, cleanup[0]).notify(SimpleNamespace())
+    assert handlers[0] not in addin_module._handlers
+    assert cleanup[0] not in addin_module._handlers
+
+
+def test_palette_edit_rejects_document_switch(
+    addin_module: _PaletteLifecycleModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Do not apply delayed palette requests to a different active document.
+    """
+    application = SimpleNamespace(activeDocument=object())
+    core_module = sys.modules["adsk.core"]
+    core_module.Application = SimpleNamespace(get=lambda: application)  # type: ignore[attr-defined]
+    applied = Mock()
+    monkeypatch.setattr(addin_module, "_apply_palette_edit", applied)
+    monkeypatch.setattr(addin_module, "_log_to_fusion", Mock())
+    args = SimpleNamespace(executeFailed=False, executeFailedMessage="")
+    addin_module._PaletteEditExecuteHandler(("remove_wire", "{}", object())).notify(args)
+    assert args.executeFailed
+    assert "document changed" in args.executeFailedMessage
+    applied.assert_not_called()
+
+
+def test_history_sync_does_not_edit_model_or_redraw(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Reconcile restored caches and palette without starting an edit that clears Redo.
+    """
+    design = object()
+    application = SimpleNamespace(activeProduct=design)
+    core_module = sys.modules["adsk.core"]
+    core_module.Application = SimpleNamespace(get=lambda: application)  # type: ignore[attr-defined]
+    fusion_module = sys.modules["adsk.fusion"]
+    fusion_module.Design = SimpleNamespace(cast=lambda value: value)  # type: ignore[attr-defined]
+    gateway = Mock()
+    reconcile = Mock()
+    sent = Mock()
+    refreshed = Mock()
+    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
+    monkeypatch.setattr(
+        addin_module,
+        "load_harnesses",
+        Mock(return_value=(SimpleNamespace(definition=valid_harness),)),
+    )
+    monkeypatch.setattr(addin_module, "reconcile_preview_history", reconcile)
+    monkeypatch.setattr(addin_module, "_send_palette_state", sent)
+    monkeypatch.setattr(addin_module, "_refresh_active_preview", refreshed)
+    addin_module._HistoryChangedHandler().notify(SimpleNamespace(commandId="UndoCommand"))
+    reconcile.assert_called_once_with(design, (valid_harness,))
+    sent.assert_called_once_with(application)
+    refreshed.assert_not_called()
+    assert gateway.mock_calls == []
+
+
+def test_palette_command_launch_failure_releases_request(
+    addin_module: _PaletteLifecycleModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Allow a retry after Fusion declines to launch a queued edit.
+    """
+    definition = Mock(execute=Mock(return_value=False))
+    application = SimpleNamespace(
+        activeDocument=object(),
+        userInterface=SimpleNamespace(
+            commandDefinitions=Mock(itemById=Mock(return_value=definition))
+        ),
+    )
+    monkeypatch.setattr(addin_module, "_pending_palette_edit", None)
+    with pytest.raises(RuntimeError, match="could not execute"):
+        addin_module._open_palette_edit(application, "rename_wire", "{}")
+    assert addin_module._pending_palette_edit is None

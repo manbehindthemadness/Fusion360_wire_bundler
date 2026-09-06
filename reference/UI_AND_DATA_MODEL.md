@@ -204,6 +204,18 @@ paths and reports a warning while unrelated groups remain visible. Clear Preview
 disables automatic refresh until Preview Routes is invoked again. This applies to
 edits made through Harness Builder; arbitrary external sketch edits are not watched.
 
+Palette mutations and Preview/Clear Preview execute through named, input-free
+Fusion commands. Definition changes and associated preview graphics belong to
+the same command transaction. Command completion, including Undo/Redo, reloads
+the persisted definition and adopts the cache for graphics restored by Fusion.
+History synchronization must not write document data or recreate graphics: a
+new edit could invalidate Redo. Session preview snapshots are released on stop.
+
+Deletion uses one concise confirmation describing the affected scope. Harness
+deletion does not require a second dialog, checkbox, or typed name. The planned
+cascade must be one undoable operation and preserve original sketch/shape
+geometry. Full end/pathway/harness deletion cascades remain future implementation.
+
 Every physical, derived-exit, junction, and termination connection must have a
 stable internal UUID independent of its user-facing name. Names must be readable,
 unique within their configured scope, and generated consistently from a

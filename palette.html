@@ -687,7 +687,7 @@
               )),
               actionButton("×", "Remove member", () => {
                 if (members.length === 1 && !window.confirm(
-                  "Removing the last member will delete this end sequence. The wire will remain incomplete until you add an end again. Continue?",
+                  "Delete this end sequence? The wire will have a missing end.",
                 )) return;
                 mutate("remove_end_member", { ...payload, memberIndex }, "Removing end member…");
               }, false, true),
