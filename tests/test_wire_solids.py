@@ -32,6 +32,7 @@ class _SolidsModule(Protocol):
     """
 
     generate_wire_solids: Callable[..., int]
+    generated_wire_bodies: Callable[..., tuple[object, ...]]
     clear_wire_solids: Callable[..., int]
     solve_route_centerlines: Callable[..., tuple[RoutePreview, ...]]
     build_wire_sweep: Callable[..., None]
@@ -397,3 +398,50 @@ def test_applies_saved_materials_to_existing_generated_body(
     assert stored["main_color"] == "#235EBE"
     assert stored["insulation_material"] == "ETFE"
     assert stored["part_number"] == "WB-001"
+
+
+def test_resolves_generated_bodies_by_persistent_wire_identity(
+    solids: _SolidsModule,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Return every body owned by the requested generated wire components.
+    """
+    selected_wire = valid_harness.wires[0]
+    selected_body = object()
+    other_body = object()
+
+    def occurrence(
+        wire_id: UUID,
+        body: object,
+    ) -> tuple[SimpleNamespace, SimpleNamespace]:
+        """
+        Build one marked generated occurrence with identity metadata.
+        """
+        attribute = SimpleNamespace(value=json.dumps({"wire_id": str(wire_id)}))
+        component = SimpleNamespace(
+            attributes=SimpleNamespace(itemByName=lambda *_args: attribute),
+        )
+        root_occurrence = SimpleNamespace(
+            bRepBodies=SimpleNamespace(count=1, item=lambda _index: body)
+        )
+        return SimpleNamespace(component=component), root_occurrence
+
+    other_wire_id = UUID(int=999)
+    selected_native, selected_root = occurrence(selected_wire.wire_id, selected_body)
+    other_native, other_root = occurrence(other_wire_id, other_body)
+    harness = SimpleNamespace(
+        occurrences=(selected_native, other_native),
+    )
+    root_occurrences = {
+        id(selected_native.component): selected_root,
+        id(other_native.component): other_root,
+    }
+    root = SimpleNamespace(
+        allOccurrencesByComponent=lambda component: SimpleNamespace(
+            count=1,
+            item=lambda _index: root_occurrences[id(component)],
+        )
+    )
+
+    assert solids.generated_wire_bodies(root, harness, (selected_wire.wire_id,)) == (selected_body,)

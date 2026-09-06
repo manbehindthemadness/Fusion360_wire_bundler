@@ -28,6 +28,7 @@ class _PaletteLifecycleModule(Protocol):
     _handlers: list[object]
     _PaletteIncomingHandler: type
     _PaletteEditExecuteHandler: type
+    _PaletteEditDestroyedHandler: type
     _PaletteEditCreatedHandler: type
     _HistoryChangedHandler: type
     _DocumentSavingHandler: type
@@ -48,11 +49,13 @@ class _PaletteLifecycleModule(Protocol):
     _appearance_libraries_payload: Callable[[object], list[dict[str, str]]]
     _library_appearances_payload: Callable[[object, str], list[dict[str, str]]]
     _preview_routes: Callable[[object, str], int]
+    _generate_solids: Callable[[object, str], int]
     _clear_preview: Callable[[object], int]
     _clear_highlight: Callable[[object], None]
     _clear_solids: Callable[[object, str], int]
     clear_route_previews: Callable[[object], int]
     clear_wire_solids: Callable[[object], int]
+    generated_wire_bodies: Callable[..., tuple[object, ...]]
     has_route_previews: Callable[[object], bool]
     show_route_previews: Callable[..., tuple[object, ...]]
     refresh_route_previews: Callable[..., tuple[str, ...]]
@@ -299,7 +302,7 @@ def test_highlights_both_wire_endpoint_profiles(
     valid_harness: HarnessDefinition,
 ) -> None:
     """
-    Replace the active Fusion selection with both profiles linked to a wire.
+    Highlight a wire's generated body together with both endpoint profiles.
     """
     start_profile = object()
     end_profile = object()
@@ -313,17 +316,22 @@ def test_highlights_both_wire_endpoint_profiles(
     )
     selections = SimpleNamespace(clear=Mock(return_value=True), add=Mock(return_value=True))
     viewport = SimpleNamespace(refresh=Mock())
+    generated_body = object()
+    harness_component = object()
     application = SimpleNamespace(
         userInterface=SimpleNamespace(activeSelections=selections),
         activeViewport=viewport,
     )
     gateway = SimpleNamespace(
         read_harness_definition=lambda _harness_id: dumps(valid_harness),
+        harness_component=Mock(return_value=harness_component),
     )
     fusion_module = sys.modules["adsk.fusion"]
     fusion_module.Profile = SimpleNamespace(cast=lambda entity: entity)  # type: ignore[attr-defined]
     monkeypatch.setattr(addin_module, "_require_active_design", lambda _application: design)
     monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
+    generated_bodies = Mock(return_value=(generated_body,))
+    monkeypatch.setattr(addin_module, "generated_wire_bodies", generated_bodies)
     payload = json.dumps(
         {
             "harnessId": str(valid_harness.harness_id),
@@ -334,12 +342,18 @@ def test_highlights_both_wire_endpoint_profiles(
 
     count = addin_module._highlight_member(application, payload)
 
-    assert count == 2
+    assert count == 3
     selections.clear.assert_called_once_with()
     assert [call.args[0] for call in selections.add.call_args_list] == [
         start_profile,
         end_profile,
+        generated_body,
     ]
+    generated_bodies.assert_called_once_with(
+        design.rootComponent,
+        harness_component,
+        (valid_harness.wires[0].wire_id,),
+    )
     viewport.refresh.assert_called_once_with()
 
 
@@ -635,9 +649,38 @@ def test_solid_generation_fails_native_transaction_on_kernel_error(
     )
     monkeypatch.setattr(addin_module, "_log_to_fusion", Mock())
     args = SimpleNamespace(executeFailed=False)
-    addin_module._PaletteEditExecuteHandler(("generate_solids", "{}", document)).notify(args)
+    handler = addin_module._PaletteEditExecuteHandler(("generate_solids", "{}", document))
+    handler.notify(args)
     assert args.executeFailed
     assert args.executeFailedMessage == "Wire 002 failed"
+    assert not handler.clear_preview_after_destroy
+
+
+def test_successful_solid_generation_clears_preview_after_command_destroy(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Remove transient graphics only after Fusion closes the successful transaction.
+    """
+    document = object()
+    application = SimpleNamespace(activeDocument=document)
+    core_module = sys.modules["adsk.core"]
+    vars(core_module)["Application"] = SimpleNamespace(get=lambda: application)
+    generate = Mock(return_value=3)
+    clear = Mock(return_value=1)
+    monkeypatch.setattr(addin_module, "_generate_solids", generate)
+    monkeypatch.setattr(addin_module, "_clear_preview", clear)
+    execute = addin_module._PaletteEditExecuteHandler(("generate_solids", "{}", document))
+    destroyed = addin_module._PaletteEditDestroyedHandler(execute)
+    args = SimpleNamespace(executeFailed=False)
+
+    execute.notify(args)
+
+    assert execute.clear_preview_after_destroy
+    clear.assert_not_called()
+    destroyed.notify(SimpleNamespace())
+    clear.assert_called_once_with(application)
 
 
 def test_clear_preview_deletes_graphics_outside_edit_transaction(

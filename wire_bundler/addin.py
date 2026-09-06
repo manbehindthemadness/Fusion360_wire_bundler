@@ -63,7 +63,12 @@ from .fusion.route_preview import (
     refresh_route_previews,
     reset_preview_history,
 )
-from .fusion.wire_solids import apply_wire_materials, clear_wire_solids, generate_wire_solids
+from .fusion.wire_solids import (
+    apply_wire_materials,
+    clear_wire_solids,
+    generate_wire_solids,
+    generated_wire_bodies,
+)
 
 COMMAND_ID = "kev0_wire_bundler_harness_builder"
 CREATE_COMMAND_ID = "kev0_wire_bundler_create_harness"
@@ -145,6 +150,7 @@ class _PaletteEditExecuteHandler(adsk.core.CommandEventHandler):
         """
         super().__init__()
         self.request = request
+        self.clear_preview_after_destroy = False
 
     def notify(self, args: adsk.core.CommandEventArgs) -> None:
         """
@@ -164,6 +170,7 @@ class _PaletteEditExecuteHandler(adsk.core.CommandEventHandler):
                 return
             if action == "generate_solids":
                 _generate_solids(application, data)
+                self.clear_preview_after_destroy = True
                 return
             if action == "clear_solids":
                 _clear_solids(application, data)
@@ -226,8 +233,16 @@ class _PaletteEditDestroyedHandler(adsk.core.CommandEventHandler):
 
     def notify(self, _args: adsk.core.CommandEventArgs) -> None:
         """
-        Avoid accumulating command handlers after repeated drags or renames.
+        Clear a completed solid preview, then release the short-lived handlers.
         """
+        if self.execute_handler.clear_preview_after_destroy:
+            application = adsk.core.Application.get()
+            _action, _data, document = self.execute_handler.request
+            if application.activeDocument == document:
+                try:
+                    _clear_preview(application)
+                except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+                    _log_to_fusion(f"Generated solids, but preview cleanup failed: {error}")
         for handler in (self.execute_handler, self):
             if handler in _handlers:
                 _handlers.remove(handler)
@@ -1985,14 +2000,14 @@ def _apply_palette_edit(
 
 def _highlight_member(application: adsk.core.Application, serialized_data: str) -> int:
     """
-    Select linked Fusion profiles for one palette member.
+    Emphasize linked profiles, route previews, and generated wire bodies.
 
     Args:
         application: Active Fusion application.
         serialized_data: JSON payload identifying the member to reveal.
 
     Returns:
-        Number of profiles selected in the Fusion viewport.
+        Number of preview lines, profiles, and bodies emphasized.
     """
     payload = _read_palette_payload(serialized_data)
     harness_id = _read_payload_uuid(payload, "harnessId", "harness")
@@ -2003,6 +2018,7 @@ def _highlight_member(application: adsk.core.Application, serialized_data: str) 
     design = _require_active_design(application)
     gateway = _create_harness_gateway(application)
     definition = loads(gateway.read_harness_definition(harness_id))
+    wire_ids: tuple[UUID, ...] = ()
     if member_type in {"pathway", "pathway_gates", "pathway_wires"}:
         pathway = next((item for item in definition.pathways if item.pathway_id == member_id), None)
         if pathway is None:
@@ -2014,7 +2030,6 @@ def _highlight_member(application: adsk.core.Application, serialized_data: str) 
             if member_type != "pathway_gates"
             else ()
         )
-        highlight_route_members(design, wire_ids)
         control_ids = pathway.ordered_control_ids if member_type != "pathway_wires" else ()
         controls = {control.control_id: control for control in definition.controls}
         tokens = tuple(
@@ -2025,13 +2040,22 @@ def _highlight_member(application: adsk.core.Application, serialized_data: str) 
     elif member_type == "preview_wire":
         if all(wire.wire_id != member_id for wire in definition.wires):
             raise ValueError("Selected wire no longer exists.")
-        application.userInterface.activeSelections.clear()
-        count = highlight_route_preview(design, member_id)
-        application.activeViewport.refresh()
-        return count
+        wire_ids = (member_id,)
+        tokens = ()
     else:
-        highlight_route_preview(design, None)
         tokens = _member_entity_tokens(definition, member_type, member_id)
+        if member_type == "wire":
+            wire_ids = (member_id,)
+        elif member_type == "connection":
+            wire_ids = tuple(
+                wire.wire_id
+                for wire in definition.wires
+                if member_id in {wire.start_connection_id, wire.end_connection_id}
+            )
+        elif member_type == "control":
+            wire_ids = tuple(
+                wire.wire_id for wire in definition.wires if member_id in wire.ordered_control_ids
+            )
         if member_type == "connection" and "memberIndex" in payload:
             index = payload["memberIndex"]
             if (
@@ -2041,6 +2065,7 @@ def _highlight_member(application: adsk.core.Application, serialized_data: str) 
             ):
                 raise ValueError("Selected connection member no longer exists.")
             tokens = (tokens[index],)
+    preview_count = highlight_route_members(design, wire_ids)
     profiles: list[adsk.fusion.Profile] = []
     for token in tokens:
         entities = design.findEntityByToken(token)
@@ -2052,12 +2077,18 @@ def _highlight_member(application: adsk.core.Application, serialized_data: str) 
     selections = application.userInterface.activeSelections
     if not selections.clear():
         raise RuntimeError("Fusion could not clear the prior viewport selection.")
-    for profile in profiles:
-        if not selections.add(profile):
+    bodies = generated_wire_bodies(
+        design.rootComponent,
+        gateway.harness_component(harness_id),
+        wire_ids,
+    )
+    for entity in (*profiles, *bodies):
+        if not selections.add(entity):
             selections.clear()
-            raise RuntimeError("Fusion could not highlight the selected sketch profile.")
+            highlight_route_preview(design, None)
+            raise RuntimeError("Fusion could not highlight the selected harness geometry.")
     application.activeViewport.refresh()
-    return len(profiles)
+    return preview_count + len(profiles) + len(bodies)
 
 
 def _clear_highlight(application: adsk.core.Application) -> None:

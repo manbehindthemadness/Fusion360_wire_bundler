@@ -1228,6 +1228,11 @@ transaction, leaving original sketches and unrelated components untouched. Solid
 geometry persists independently of preview visibility and add-in state. The upper
 palette status area retains informational and failure events in a vertically
 scrollable console using the same surface and text colors as the rest of the palette.
+After successful solid generation, the short-lived command's destroy event clears
+the transient route preview outside the completed modeling transaction. Failed
+generation retains the preview for inspection. Palette hover targets emphasize
+generated wire bodies by persistent wire identity in addition to their linked
+profiles and any active preview centerlines; leaving the target clears all emphasis.
 Clear Preview runs synchronously from the palette outside the model-edit command
 transaction. It hides each preview, explicitly deletes nested wire graphics, deletes
 the parent group, scans Custom Graphics collections on the root and every design

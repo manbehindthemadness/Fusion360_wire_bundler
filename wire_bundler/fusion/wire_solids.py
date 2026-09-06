@@ -119,6 +119,43 @@ def generated_wire_occurrences(
     )
 
 
+def generated_wire_bodies(
+    root: adsk.fusion.Component,
+    harness: adsk.fusion.Component,
+    wire_ids: tuple[UUID, ...],
+) -> tuple[adsk.fusion.BRepBody, ...]:
+    """
+    Resolve root-context body proxies for persistent wire identities.
+
+    Malformed generated metadata is ignored here so viewport hover remains a
+    harmless best-effort operation; generation and material updates validate it
+    through their stricter paths.
+    """
+    selected_ids = {str(wire_id) for wire_id in wire_ids}
+    bodies: list[adsk.fusion.BRepBody] = []
+    for occurrence in generated_wire_occurrences(harness):
+        component = occurrence.component
+        attribute = component.attributes.itemByName(ATTRIBUTE_GROUP, GENERATED_WIRE_ATTRIBUTE)
+        if attribute is None:
+            continue
+        try:
+            wire_id = json.loads(attribute.value).get("wire_id")
+        except (AttributeError, TypeError, json.JSONDecodeError):
+            continue
+        if wire_id not in selected_ids:
+            continue
+        root_occurrences = root.allOccurrencesByComponent(component)
+        for occurrence_index in range(root_occurrences.count):
+            root_occurrence = root_occurrences.item(occurrence_index)
+            if root_occurrence is None:
+                continue
+            for body_index in range(root_occurrence.bRepBodies.count):
+                body = root_occurrence.bRepBodies.item(body_index)
+                if body is not None:
+                    bodies.append(body)
+    return tuple(bodies)
+
+
 def clear_wire_solids(harness: adsk.fusion.Component) -> int:
     """
     Delete direct child components marked as generated wire output.

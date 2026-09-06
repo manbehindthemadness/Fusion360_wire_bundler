@@ -161,7 +161,10 @@ Stop/run the add-in, open a complete harness, and select **Generate/Rebuild Soli
 Confirm one child component per wire appears beneath the harness, each containing
 one solid body, Wire Centerline and Wire Diameter sketches, and a Wire Sweep.
 Unnamed wires use their stable number and measured centerline length in the
-component name. Generated geometry remains after Clear Preview and add-in stop.
+component name. Successful generation clears the transient route preview after
+the modeling command closes. Hovering related palette items selects generated
+wire bodies along with their linked profiles and preview centerlines. Generated
+geometry remains after Clear Preview and add-in stop.
 
 Edits continue to refresh lightweight previews; solids update only when explicitly
 rebuilt. Rebuild replaces all marked wire components, including manual edits inside
