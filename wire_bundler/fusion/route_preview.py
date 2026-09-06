@@ -19,10 +19,12 @@ from ..domain import ControlKind, ControlStructure, HarnessDefinition, WireDefin
 from ..routing import (
     GateFrame,
     RoutePreview,
+    TransitionAdjustment,
     TransitionLengths,
     Vector3,
     WireRouteInput,
     fair_route,
+    minimum_circular_bend_radius,
     sample_centerline,
     solve_parallel_routes,
 )
@@ -109,15 +111,39 @@ def reconcile_preview_history(
 
 def _is_preview_group(group: adsk.fusion.CustomGraphicsGroup) -> bool:
     """
-    Recognize both current uniquely identified groups and older preview groups.
+    Recognize cached, named, and explicitly identified Wire Bundler previews.
+
+    Fusion may retain a host-assigned group ID, so the live cache and the name
+    assigned during creation are authoritative fallbacks.
     """
-    return group.id == PREVIEW_GROUP_ID or group.id.startswith(f"{PREVIEW_GROUP_ID}:")
+    return (
+        group.id in _preview_states
+        or group.id == PREVIEW_GROUP_ID
+        or group.id.startswith(f"{PREVIEW_GROUP_ID}:")
+        or group.name.endswith(" Route Preview")
+        or _has_wire_preview_children(group)
+    )
+
+
+def _has_wire_preview_children(group: adsk.fusion.CustomGraphicsGroup) -> bool:
+    """
+    Recognize an orphaned preview by the wire groups created beneath it.
+
+    This supports graphics left by an earlier add-in session whose Python cache
+    is gone and whose top-level ID or name was not retained by Fusion.
+    """
+    for index in range(group.count):
+        child = adsk.fusion.CustomGraphicsGroup.cast(group.item(index))
+        if child is not None and child.name.startswith("Wire ") and child.name.endswith(" Preview"):
+            return True
+    return False
 
 
 def show_route_previews(
     design: adsk.fusion.Design,
     definition: HarnessDefinition,
     clearance_mm: float = 0.0,
+    notices: Optional[list[str]] = None,
 ) -> tuple[RoutePreview, ...]:
     """
     Solve and display transient parallel-wire centerlines for one harness.
@@ -126,6 +152,7 @@ def show_route_previews(
         design: Active Fusion design used to resolve stored profile tokens.
         definition: Harness whose wire routes will be previewed.
         clearance_mm: Additional edge-to-edge separation between wires.
+        notices: Optional collector for successful dynamic transition adjustments.
 
     Returns:
         Solved route previews in definition wire order.
@@ -134,7 +161,7 @@ def show_route_previews(
         RuntimeError: If referenced geometry is unavailable or unsupported.
         ValueError: If route inputs or gate capacity are invalid.
     """
-    routes = _solve_definition_routes(design, definition, clearance_mm)
+    routes = _solve_definition_routes(design, definition, clearance_mm, notices)
     root_component = design.rootComponent
     clear_route_previews(design)
     preview_group = root_component.customGraphicsGroups.add()
@@ -158,21 +185,82 @@ def show_route_previews(
     return routes
 
 
-def clear_route_previews(design: adsk.fusion.Design) -> None:
+def clear_route_previews(design: adsk.fusion.Design) -> int:
     """
     Delete Wire Bundler route-preview graphics from the active design.
 
     Args:
         design: Fusion design whose transient previews should be removed.
+
+    Returns:
+        Number of deleted top-level preview graphics groups.
     """
-    groups = design.rootComponent.customGraphicsGroups
-    for index in range(groups.count - 1, -1, -1):
-        group = groups.item(index)
-        if group is not None and _is_preview_group(group):
-            if group.id in _preview_states:
-                _remember_preview(group.id, _preview_states[group.id])
-            _preview_states.pop(group.id, None)
-            group.deleteMe()
+    deleted_count = 0
+    for groups in _design_graphics_collections(design):
+        for index in range(groups.count - 1, -1, -1):
+            group = groups.item(index)
+            if group is not None and _is_preview_group(group):
+                group_id = group.id
+                state = _preview_states.get(group_id)
+                if state is not None:
+                    _remember_preview(group_id, state)
+                _delete_graphics_group(group)
+                _preview_states.pop(group_id, None)
+                deleted_count += 1
+    return deleted_count
+
+
+def has_route_previews(design: adsk.fusion.Design) -> bool:
+    """
+    Report whether the live Fusion object model exposes a Wire Bundler preview.
+
+    Fusion can serialize Custom Graphics into its OGS scene cache while dropping
+    their API objects on reload. This check intentionally covers only graphics
+    that are still reachable and can therefore be protected before a save.
+    """
+    for groups in _design_graphics_collections(design):
+        for index in range(groups.count):
+            group = groups.item(index)
+            if group is not None and _is_preview_group(group):
+                return True
+    return False
+
+
+def _design_graphics_collections(
+    design: adsk.fusion.Design,
+) -> tuple[adsk.fusion.CustomGraphicsGroups, ...]:
+    """
+    Return Custom Graphics collections for every component in the design.
+
+    A preview restored with a document can belong to an assembly or external
+    component even though new previews are currently created on the design root.
+    """
+    root_groups = design.rootComponent.customGraphicsGroups
+    collections = [root_groups]
+    all_components = design.allComponents
+    for index in range(all_components.count):
+        component = all_components.item(index)
+        if component is None or component == design.rootComponent:
+            continue
+        collections.append(component.customGraphicsGroups)
+    return tuple(collections)
+
+
+def _delete_graphics_group(group: adsk.fusion.CustomGraphicsGroup) -> None:
+    """
+    Hide and explicitly empty a preview group before deleting its container.
+
+    Hiding removes the graphics from the viewport immediately. Explicit child
+    deletion avoids relying on Fusion to cascade nested groups after a palette
+    event has returned.
+    """
+    group.isVisible = False
+    for index in range(group.count - 1, -1, -1):
+        child = group.item(index)
+        if child is not None and child.deleteMe() is False:
+            raise RuntimeError("Fusion could not delete a route-preview graphics entity.")
+    if group.deleteMe() is False:
+        raise RuntimeError("Fusion could not delete a route-preview graphics group.")
 
 
 def _routing_signature(definition: HarnessDefinition, wire: WireDefinition) -> tuple[object, ...]:
@@ -276,7 +364,9 @@ def refresh_route_previews(
             try:
                 if eligible:
                     routes = _solve_definition_routes(
-                        design, replace(definition, wires=eligible), state.clearance_mm
+                        design,
+                        replace(definition, wires=eligible),
+                        state.clearance_mm,
                     )
                     solved = {route.wire_id: route for route in routes}
             except (AttributeError, RuntimeError, TypeError, ValueError) as error:
@@ -347,9 +437,14 @@ def _solve_definition_routes(
     design: adsk.fusion.Design,
     definition: HarnessDefinition,
     clearance_mm: float,
+    notices: Optional[list[str]] = None,
 ) -> tuple[RoutePreview, ...]:
     """
     Resolve definition references and solve each distinct pathway bundle.
+
+    End-member profiles and pathway controls all contribute oriented crossings
+    to diameter-aware fairing. Aperture packing applies only to the pathway
+    controls represented by ``GateFrame`` objects.
 
     Args:
         design: Fusion design used to resolve entity tokens.
@@ -422,14 +517,32 @@ def _solve_definition_routes(
                 )
             )
         routes = solve_parallel_routes(tuple(route_inputs), gates, clearance_mm)
-        solved_by_id.update(
-            (
-                route.wire_id,
-                fair_route(route, route_normals[route.wire_id], route_transitions[route.wire_id]),
+        for wire, route in zip(untyped_wires, routes):
+            adjustments: list[TransitionAdjustment] = []
+            solved_by_id[route.wire_id] = fair_route(
+                route,
+                route_normals[route.wire_id],
+                route_transitions[route.wire_id],
+                minimum_bend_radius_mm=minimum_circular_bend_radius(
+                    profiles[wire.profile_id].diameter_mm
+                ),
+                adjustments=adjustments,
             )
-            for route in routes
-        )
+            if notices is not None:
+                notices.extend(_adjustment_notice(item) for item in adjustments)
     return tuple(solved_by_id[wire.wire_id] for wire in definition.wires)
+
+
+def _adjustment_notice(adjustment: TransitionAdjustment) -> str:
+    """
+    Format a dynamic transition correction for the palette event console.
+    """
+    return (
+        f"Wire {adjustment.wire_number}: dynamically adjusted transitions between profiles "
+        f"{adjustment.start_profile} and {adjustment.end_profile} from "
+        f"{adjustment.required_mm:.3f} mm to {adjustment.applied_mm:.3f} mm; "
+        f"the {adjustment.minimum_bend_radius_mm:.3f} mm sweep radius is preserved."
+    )
 
 
 def _gate_frame(
@@ -438,7 +551,11 @@ def _gate_frame(
     control_id: UUID,
 ) -> GateFrame:
     """
-    Build a circular gate frame from one stored routing control.
+    Build a circular aperture frame from one stored pathway control.
+
+    Connection-owned end profiles are resolved separately as centroid/normal
+    frames. Their position and orientation guide fairing and the resulting sweep,
+    but they are not apertures against which the wire bundle is fit-tested.
 
     Args:
         design: Fusion design used to resolve the gate profile.
@@ -583,3 +700,22 @@ def _vector(vector: adsk.core.Vector3D) -> Vector3:
         Host-independent direction vector.
     """
     return Vector3(vector.x, vector.y, vector.z)
+
+
+def solve_route_centerlines(
+    design: adsk.fusion.Design,
+    definition: HarnessDefinition,
+    notices: Optional[list[str]] = None,
+) -> tuple[RoutePreview, ...]:
+    """
+    Resolve and fair current geometry without changing preview visibility or caches.
+
+    Args:
+        design: Active Fusion design used to resolve stored profile tokens.
+        definition: Harness whose wire routes will be solved.
+        notices: Optional collector for successful dynamic transition adjustments.
+
+    Returns:
+        Solved centerlines in definition wire order.
+    """
+    return _solve_definition_routes(design, definition, 0.0, notices)

@@ -93,6 +93,26 @@ def test_reports_gate_that_cannot_fit_bundle() -> None:
     assert error_info.value.gate_id == gate.gate_id
 
 
+def test_centers_partial_hex_ring_for_exact_two_wire_fit() -> None:
+    """
+    Fit two equal wires across the full aperture diameter without wasting a center slot.
+    """
+    wires = (_wire(1, 3.0), _wire(2, 3.0))
+
+    routes = solve_parallel_routes(wires, (_gate(1, 3.0),))
+
+    crossings = [route.points[1] for route in routes]
+    assert math.hypot(crossings[0].x, crossings[0].y) == pytest.approx(1.5)
+    assert math.hypot(crossings[1].x, crossings[1].y) == pytest.approx(1.5)
+    assert math.hypot(
+        crossings[0].x - crossings[1].x,
+        crossings[0].y - crossings[1].y,
+    ) == pytest.approx(3.0)
+
+    with pytest.raises(GateCapacityError):
+        solve_parallel_routes(wires, (_gate(1, 2.99),))
+
+
 @pytest.mark.parametrize(
     ("gates", "clearance", "message"),
     [

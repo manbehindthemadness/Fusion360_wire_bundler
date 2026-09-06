@@ -422,3 +422,44 @@ test('member popup can restore inheritance without changing other members', () =
   assert.equal(requests[0].payload.memberId, 'guide-002');
   assert.equal(requests[0].payload.useDefaults, true);
 });
+
+test('solid generation requires confirmation and targets the selected harness', () => {
+  const { context, calls } = palette();
+  runInNewContext('currentState = { harnesses: [definition] }; selectedHarnessKey = harnessKey(definition);',
+    Object.assign(context, { definition: harness() }));
+  context.window.confirm = () => false;
+  context.generateSolids();
+  assert.equal(calls.length, 0);
+  context.window.confirm = (message) => message.includes('manual edits');
+  context.generateSolids();
+  assert.equal(calls[0].action, 'generate_solids');
+  assert.equal(calls[0].payload.harnessId, 'h');
+  assert.equal(calls[0].payload.replaceExisting, true);
+});
+
+test('clear solids requires confirmation and targets the selected harness', () => {
+  const { context, calls } = palette();
+  runInNewContext('currentState = { harnesses: [definition] }; selectedHarnessKey = harnessKey(definition);',
+    Object.assign(context, { definition: harness() }));
+  context.window.confirm = () => false;
+  context.clearSolids();
+  assert.equal(calls.length, 0);
+  context.window.confirm = (message) => message.includes('manual edits');
+  context.clearSolids();
+  assert.equal(calls[0].action, 'clear_solids');
+  assert.equal(calls[0].payload.harnessId, 'h');
+});
+
+test('event console retains messages and marks failures', () => {
+  const { context } = palette();
+  context.appendNotice('Solving route preview…');
+  context.appendNotice('Wire 001: dynamically adjusted transitions.');
+  context.appendNotice('Wire 001: dynamically adjusted transitions.');
+  context.appendNotice('Sweep failed', true);
+  const entries = runInNewContext('ui.notice.children', context);
+  assert.deepEqual(
+    entries.map((entry) => entry.textContent),
+    ['Solving route preview…', 'Wire 001: dynamically adjusted transitions.', 'Sweep failed'],
+  );
+  assert.equal(entries[2].className, 'notice-entry error');
+});

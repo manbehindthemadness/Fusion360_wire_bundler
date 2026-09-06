@@ -15,7 +15,15 @@ import pytest
 
 from wire_bundler.domain import HarnessDefinition
 from wire_bundler.domain.model import InterpolationSettings
-from wire_bundler.routing import GateFrame, RoutePreview, Vector3, fair_route, sample_centerline
+from wire_bundler.routing import (
+    GateFrame,
+    RoutePreview,
+    TransitionAdjustment,
+    TransitionLengths,
+    Vector3,
+    fair_route,
+    sample_centerline,
+)
 from wire_bundler.routing.geometry import cross, magnitude, unit
 
 
@@ -30,8 +38,12 @@ class _PreviewModule(Protocol):
     _add_route_graphics: Callable[..., None]
     _gate_frame: Callable[..., GateFrame]
     _profile_frame: Callable[[object, str], tuple[Vector3, Vector3]]
+    fair_route: Callable[
+        [RoutePreview, tuple[Vector3, ...], tuple[TransitionLengths, ...], float], RoutePreview
+    ]
     refresh_route_previews: Callable[[object, HarnessDefinition], tuple[str, ...]]
-    clear_route_previews: Callable[[object], None]
+    clear_route_previews: Callable[[object], int]
+    has_route_previews: Callable[[object], bool]
     reconcile_preview_history: Callable[[object, tuple[HarnessDefinition, ...]], None]
 
 
@@ -45,9 +57,11 @@ class _Group:
         Create a group with no children and an optional owning group.
         """
         self.id = identity
+        self.name = ""
         self.children: list[_Group] = []
         self.parent = parent
         self.deleted = False
+        self.isVisible = True
 
     @property
     def count(self) -> int:
@@ -136,7 +150,10 @@ def scenario(monkeypatch: pytest.MonkeyPatch, valid_harness: HarnessDefinition) 
     state = _Scenario(
         module,
         definition,
-        SimpleNamespace(rootComponent=SimpleNamespace(customGraphicsGroups=root)),
+        SimpleNamespace(
+            rootComponent=SimpleNamespace(customGraphicsGroups=root),
+            allComponents=SimpleNamespace(count=0, item=lambda _index: None),
+        ),
         group,
         routes,
         [],
@@ -272,10 +289,70 @@ def test_clear_preview_disables_automatic_refresh(scenario: _Scenario) -> None:
     """
     Never recreate previews after the user explicitly clears them.
     """
-    scenario.module.clear_route_previews(scenario.design)
+    children = tuple(scenario.group.children)
+    assert scenario.module.clear_route_previews(scenario.design) == 1
+    assert not scenario.group.isVisible
+    assert all(child.deleted for child in children)
     scenario.module.refresh_route_previews(scenario.design, scenario.definition)
     assert scenario.module._preview_states == {}
     assert scenario.solves == []
+
+
+def test_reports_only_reachable_wire_bundler_previews(scenario: _Scenario) -> None:
+    """
+    Detect a live preview for save protection and stop reporting it after clear.
+    """
+    assert scenario.module.has_route_previews(scenario.design)
+    scenario.module.clear_route_previews(scenario.design)
+    assert not scenario.module.has_route_previews(scenario.design)
+
+
+def test_clear_preview_recognizes_host_assigned_group_id(scenario: _Scenario) -> None:
+    """
+    Delete a live preview even when Fusion retains an ID chosen by the host.
+    """
+    state = scenario.module._preview_states.pop(scenario.group.id)
+    scenario.group.id = "fusion-assigned-id"
+    scenario.module._preview_states[scenario.group.id] = state
+
+    assert scenario.module.clear_route_previews(scenario.design) == 1
+    assert scenario.group.deleted
+    assert scenario.module._preview_states == {}
+
+
+def test_clear_preview_recognizes_orphaned_wire_groups(scenario: _Scenario) -> None:
+    """
+    Remove graphics loaded without the earlier add-in session's Python cache.
+    """
+    scenario.module._preview_states.clear()
+    scenario.group.id = ""
+    scenario.group.name = "Custom Graphics"
+    scenario.group.children[0].name = "Wire 001 Preview"
+
+    assert scenario.module.clear_route_previews(scenario.design) == 1
+    assert scenario.group.deleted
+
+
+def test_clear_preview_scans_every_design_component(scenario: _Scenario) -> None:
+    """
+    Remove an orphan restored beneath a non-root harness component.
+    """
+    scenario.module.clear_route_previews(scenario.design)
+    component_groups = _Group("component-groups")
+    orphan = _Group("", component_groups)
+    orphan.name = "Custom Graphics"
+    wire_group = _Group("", orphan)
+    wire_group.name = "Wire 001 Preview"
+    orphan.children.append(wire_group)
+    component_groups.children.append(orphan)
+    harness_component = SimpleNamespace(customGraphicsGroups=component_groups)
+    scenario.design.allComponents = SimpleNamespace(
+        count=1,
+        item=lambda _index: harness_component,
+    )
+
+    assert scenario.module.clear_route_previews(scenario.design) == 1
+    assert orphan.deleted
 
 
 def test_missing_end_hides_only_its_wire_and_restores_after_repair(scenario: _Scenario) -> None:
@@ -406,7 +483,7 @@ def test_adapter_fairs_all_end_members_in_stored_order(
     explicit: bool,
 ) -> None:
     """
-    Translate every profile normal and retain reversed end-B traversal through fairing.
+    Apply diameter-aware fairing to every end profile without treating it as an aperture.
     """
     definition = replace(
         valid_harness,
@@ -422,15 +499,15 @@ def test_adapter_fairs_all_end_members_in_stored_order(
                 replace(
                     definition.connections[0],
                     member_interpolations=(
-                        InterpolationSettings(0.4, 0.8),
-                        InterpolationSettings(0.5, 0.9),
+                        InterpolationSettings(1.95, 1.95),
+                        InterpolationSettings(1.95, 1.95),
                     ),
                 ),
                 replace(
                     definition.connections[1],
                     member_interpolations=(
-                        InterpolationSettings(0.6, 1.2),
-                        InterpolationSettings(0.7, 1.3),
+                        InterpolationSettings(1.95, 1.95),
+                        InterpolationSettings(1.95, 1.95),
                     ),
                 ),
             ),
@@ -443,6 +520,7 @@ def test_adapter_fairs_all_end_members_in_stored_order(
         definition.connections[1].entity_token: (Vector3(0, 0, 20), Vector3(1, 0, 1)),
     }
     calls: list[str] = []
+    bend_radii: list[float] = []
 
     def profile_frame(_design: object, token: str) -> tuple[Vector3, Vector3]:
         """
@@ -454,15 +532,39 @@ def test_adapter_fairs_all_end_members_in_stored_order(
     gate = GateFrame(UUID(int=4), "Gate", Vector3(0, 0, 10), Vector3(1, 0, 0), Vector3(0, 1, 0), 10)
     monkeypatch.setattr(scenario.module, "_gate_frame", lambda *_args: gate)
     monkeypatch.setattr(scenario.module, "_profile_frame", profile_frame)
+
+    def capture_fairing(
+        candidate_route: RoutePreview,
+        normals: tuple[Vector3, ...],
+        transitions: tuple[TransitionLengths, ...],
+        minimum_bend_radius_mm: float,
+        adjustments: Optional[list[TransitionAdjustment]] = None,
+    ) -> RoutePreview:
+        """
+        Record the dynamic sweep constraint while retaining production fairing.
+        """
+        bend_radii.append(minimum_bend_radius_mm)
+        return fair_route(
+            candidate_route,
+            normals,
+            transitions,
+            minimum_bend_radius_mm,
+            adjustments,
+        )
+
+    monkeypatch.setattr(scenario.module, "fair_route", capture_fairing)
     route = scenario.solve_definition(scenario.design, definition, 0.0)[0]
     assert [point.z for point in route.points] == [0, 4, 10, 16, 20]
     assert set(calls) == set(frames)
     assert len(calls) == 4
+    assert bend_radii == pytest.approx([definition.profiles[0].diameter_mm * 0.5 * 1.05])
     assert len(route.curves) == 12
     if explicit:
-        assert [curve.end.z for curve in route.curves[::3]] == pytest.approx([0.8, 4.9, 12, 16.7])
+        assert [curve.end.z for curve in route.curves[::3]] == pytest.approx(
+            [1.95, 5.95, 12, 17.95]
+        )
         assert [curve.start.z for curve in route.curves[2::3]] == pytest.approx(
-            [3.5, 9, 14.7, 18.8]
+            [2.05, 9, 14.05, 18.05]
         )
     expected_normals = (Vector3(1, 0, 1), Vector3(0, 1, 1), Vector3(0, 0, 1), Vector3(0, 1, 1))
     for index, normal in enumerate(expected_normals):

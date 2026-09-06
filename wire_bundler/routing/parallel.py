@@ -167,7 +167,7 @@ def _pack_gate(
     _validate_gate(gate)
     largest_radius = max(wire.diameter_mm for wire in wires) / 2.0
     spacing = largest_radius * 2.0 + clearance_mm
-    offsets = _hexagonal_offsets(len(wires), spacing)
+    offsets = _center_offsets(_hexagonal_offsets(len(wires), spacing))
     crossings: list[Vector3] = []
     for wire, (u_offset, v_offset) in zip(wires, offsets):
         center_distance = math.hypot(u_offset, v_offset)
@@ -212,6 +212,104 @@ def _hexagonal_offsets(count: int, spacing: float) -> tuple[tuple[float, float],
         offsets.extend(ring_offsets)
         ring += 1
     return tuple(offsets[:count])
+
+
+def _center_offsets(
+    offsets: tuple[tuple[float, float], ...],
+) -> tuple[tuple[float, float], ...]:
+    """
+    Center a partial lattice ring by its smallest enclosing circle.
+
+    Centering preserves every wire-to-wire spacing while making the circular
+    aperture test depend on the occupied bundle radius instead of the arbitrary
+    center-first insertion origin.
+    """
+    center_u, center_v, _radius = _smallest_enclosing_circle(offsets)
+    return tuple((u_offset - center_u, v_offset - center_v) for u_offset, v_offset in offsets)
+
+
+def _smallest_enclosing_circle(
+    points: tuple[tuple[float, float], ...],
+) -> tuple[float, float, float]:
+    """
+    Return the deterministic minimum circle containing a small ordered point set.
+    """
+    circle = (0.0, 0.0, -1.0)
+    for point_index, point in enumerate(points):
+        if _circle_contains(circle, point):
+            continue
+        circle = (point[0], point[1], 0.0)
+        for second_index, second in enumerate(points[:point_index]):
+            if _circle_contains(circle, second):
+                continue
+            circle = _diameter_circle(point, second)
+            for third in points[:second_index]:
+                if _circle_contains(circle, third):
+                    continue
+                circle = _three_point_circle(point, second, third)
+    return circle
+
+
+def _diameter_circle(
+    first: tuple[float, float], second: tuple[float, float]
+) -> tuple[float, float, float]:
+    """
+    Return the circle whose diameter joins two points.
+    """
+    center_u = (first[0] + second[0]) / 2.0
+    center_v = (first[1] + second[1]) / 2.0
+    radius = math.hypot(first[0] - second[0], first[1] - second[1]) / 2.0
+    return center_u, center_v, radius
+
+
+def _three_point_circle(
+    first: tuple[float, float],
+    second: tuple[float, float],
+    third: tuple[float, float],
+) -> tuple[float, float, float]:
+    """
+    Return the circumcircle of three points, including collinear triples.
+    """
+    determinant = 2.0 * (
+        first[0] * (second[1] - third[1])
+        + second[0] * (third[1] - first[1])
+        + third[0] * (first[1] - second[1])
+    )
+    if abs(determinant) <= 1e-12:
+        candidates = (
+            _diameter_circle(first, second),
+            _diameter_circle(first, third),
+            _diameter_circle(second, third),
+        )
+        enclosing = (
+            candidate
+            for candidate in candidates
+            if all(_circle_contains(candidate, point) for point in (first, second, third))
+        )
+        return min(enclosing, key=lambda candidate: candidate[2])
+    first_norm = first[0] * first[0] + first[1] * first[1]
+    second_norm = second[0] * second[0] + second[1] * second[1]
+    third_norm = third[0] * third[0] + third[1] * third[1]
+    center_u = (
+        first_norm * (second[1] - third[1])
+        + second_norm * (third[1] - first[1])
+        + third_norm * (first[1] - second[1])
+    ) / determinant
+    center_v = (
+        first_norm * (third[0] - second[0])
+        + second_norm * (first[0] - third[0])
+        + third_norm * (second[0] - first[0])
+    ) / determinant
+    radius = math.hypot(center_u - first[0], center_v - first[1])
+    return center_u, center_v, radius
+
+
+def _circle_contains(circle: tuple[float, float, float], point: tuple[float, float]) -> bool:
+    """
+    Return whether a point lies inside a circle within numeric tolerance.
+    """
+    center_u, center_v, radius = circle
+    return radius >= 0.0 and math.hypot(point[0] - center_u, point[1] - center_v) <= radius + 1e-9
 
 
 def _validate_gate(gate: GateFrame) -> None:

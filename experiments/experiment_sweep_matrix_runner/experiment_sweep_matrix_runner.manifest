@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "id": "337E68E6-6BCA-49D3-9DA5-D2FFB87B4D74",
+  "author": "Fusion 360 Wire Bundler contributors",
+  "description": {
+    "": "Generate and verify the Wire Bundler circular Sweep scenario matrix."
+  },
+  "version": "0.1.0",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

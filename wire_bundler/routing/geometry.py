@@ -75,6 +75,29 @@ class CubicBezier:
         tangent = lerp(lerp(first, middle, parameter), lerp(middle, last, parameter), parameter)
         return Vector3(tangent.x * 3.0, tangent.y * 3.0, tangent.z * 3.0)
 
+    def second_derivative(self, parameter: float) -> Vector3:
+        """
+        Evaluate the curve acceleration used for spatial curvature.
+        """
+        if not math.isfinite(parameter) or not 0.0 <= parameter <= 1.0:
+            raise ValueError("Curve parameter must be between zero and one.")
+        first = Vector3(
+            self.control_b.x - 2.0 * self.control_a.x + self.start.x,
+            self.control_b.y - 2.0 * self.control_a.y + self.start.y,
+            self.control_b.z - 2.0 * self.control_a.z + self.start.z,
+        )
+        last = Vector3(
+            self.end.x - 2.0 * self.control_b.x + self.control_a.x,
+            self.end.y - 2.0 * self.control_b.y + self.control_a.y,
+            self.end.z - 2.0 * self.control_b.z + self.control_a.z,
+        )
+        acceleration = lerp(first, last, parameter)
+        return Vector3(
+            acceleration.x * 6.0,
+            acceleration.y * 6.0,
+            acceleration.z * 6.0,
+        )
+
 
 def difference(left: Vector3, right: Vector3) -> Vector3:
     """

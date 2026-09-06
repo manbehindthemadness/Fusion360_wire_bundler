@@ -11,10 +11,23 @@ from .parallel import (
     WireRouteInput,
     solve_parallel_routes,
 )
-from .smooth import TransitionLengths, fair_route, sample_centerline
+from .smooth import (
+    CIRCULAR_SWEEP_BEND_FACTOR,
+    BendRadius,
+    TransitionAdjustment,
+    TransitionLengths,
+    TransitionLimits,
+    fair_route,
+    minimum_circular_bend_radius,
+    sample_centerline,
+    tightest_bend,
+    transition_limits,
+)
 
 __all__ = [
     "CubicBezier",
+    "BendRadius",
+    "CIRCULAR_SWEEP_BEND_FACTOR",
     "GateCapacityError",
     "GateFrame",
     "RoutePreview",
@@ -22,6 +35,11 @@ __all__ = [
     "WireRouteInput",
     "solve_parallel_routes",
     "TransitionLengths",
+    "TransitionAdjustment",
+    "TransitionLimits",
     "fair_route",
+    "minimum_circular_bend_radius",
     "sample_centerline",
+    "tightest_bend",
+    "transition_limits",
 ]

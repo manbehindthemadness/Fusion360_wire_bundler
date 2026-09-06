@@ -10,11 +10,15 @@ from uuid import UUID
 import pytest
 
 from wire_bundler.routing import (
+    CubicBezier,
     RoutePreview,
+    TransitionAdjustment,
     TransitionLengths,
     Vector3,
     fair_route,
     sample_centerline,
+    tightest_bend,
+    transition_limits,
 )
 from wire_bundler.routing.geometry import cross, difference, dot, magnitude, unit
 
@@ -71,9 +75,9 @@ def test_default_transitions_leave_straight_middle_half() -> None:
         assert middle.point(parameter).y == 0.0
 
 
-def test_independent_transition_lengths_clamp_without_overlap() -> None:
+def test_overlapping_explicit_transition_lengths_clamp_proportionally() -> None:
     """
-    Fit asymmetric requested lengths into the span while retaining their ratio.
+    Project crowded explicit requests into the available span.
     """
     route = _route((Vector3(0, 0, 0), Vector3(0, 0, 12)))
     smooth = fair_route(
@@ -84,10 +88,69 @@ def test_independent_transition_lengths_clamp_without_overlap() -> None:
             TransitionLengths(approach_mm=16),
         ),
     )
-    assert len(smooth.curves) == 2
-    assert smooth.curves[0].end == Vector3(0, 0, 4)
-    assert smooth.curves[0].end == smooth.curves[1].start
-    _assert_parallel(smooth.curves[0].derivative(1.0), smooth.curves[1].derivative(0.0))
+    assert smooth.curves[0].end.z == pytest.approx(4.0)
+    assert smooth.curves[-1].start.z == pytest.approx(4.0)
+
+
+def test_automatic_distance_contracts_only_to_safe_bend_floor() -> None:
+    """
+    Yield straight-middle space while retaining the diameter-derived minimum.
+    """
+    route = _route((Vector3(0, 0, 0), Vector3(0, 0, 10)))
+    normals = (Vector3(1, 0, 1), Vector3(0, 0, 1))
+    unit_limit = transition_limits(route, normals, 1.0)[0].departure_mm
+    required_radius = 8.0 / unit_limit
+    limits = transition_limits(route, normals, required_radius)
+    smooth = fair_route(route, normals, minimum_bend_radius_mm=required_radius)
+    assert limits[0].departure_mm == pytest.approx(8.0)
+    assert smooth.curves[0].end.z == pytest.approx(8.0)
+    assert smooth.curves[-1].start.z == pytest.approx(8.0)
+    bend = tightest_bend(smooth, 1024)
+    assert bend is not None and bend.radius_mm >= required_radius - 1e-9
+
+
+def test_crowded_profile_span_uses_direct_dynamic_transition() -> None:
+    """
+    Fit the reported 1 mm wire case without splitting it at an artificial midpoint.
+    """
+    distance = 4.563
+    angle = math.radians(64)
+    normal = Vector3(math.sin(angle), 0, math.cos(angle))
+    route = _route((Vector3(0, 0, 0), Vector3(0, 0, distance)))
+    minimum_radius = 0.525
+    limits = transition_limits(route, (normal, normal), minimum_radius)
+    assert limits[0].departure_mm + limits[1].approach_mm == pytest.approx(5.062, abs=0.002)
+
+    adjustments: list[TransitionAdjustment] = []
+    smooth = fair_route(
+        route,
+        (normal, normal),
+        minimum_bend_radius_mm=minimum_radius,
+        adjustments=adjustments,
+    )
+
+    assert len(smooth.curves) == 1
+    assert len(adjustments) == 1
+    adjustment = adjustments[0]
+    assert adjustment.wire_number == "001"
+    assert (adjustment.start_profile, adjustment.end_profile) == (1, 2)
+    assert adjustment.required_mm == pytest.approx(5.062, abs=0.002)
+    assert adjustment.applied_mm == distance
+    assert adjustment.minimum_bend_radius_mm == 0.525
+    _assert_parallel(smooth.curves[0].derivative(0.0), normal)
+    _assert_parallel(smooth.curves[0].derivative(1.0), normal)
+    bend = tightest_bend(smooth, 1024)
+    assert bend is not None and bend.radius_mm >= minimum_radius - 1e-9
+
+
+def test_matching_profile_normals_still_respect_off_axis_curvature() -> None:
+    """
+    Require bend space when equal endpoint normals are not aligned with the span.
+    """
+    route = _route((Vector3(0, 0, 0), Vector3(0, 0, 20)))
+    limits = transition_limits(route, (Vector3(1, 0, 0), Vector3(1, 0, 0)), 1.0)
+    assert limits[0].departure_mm > 0.0
+    assert limits[1].approach_mm > 0.0
 
 
 def test_flipping_sketch_normal_does_not_flip_the_route() -> None:
@@ -175,3 +238,51 @@ def test_adaptive_sampling_bounds_display_error_and_keeps_crossings() -> None:
             point = curve.point(index / 100.0)
             error = min(_segment_distance(point, a, b) for a, b in zip(sampled, sampled[1:]))
             assert error <= tolerance
+
+
+def test_tightest_bend_reports_exact_cubic_curvature_location() -> None:
+    """
+    Locate a symmetric cubic's tightest sampled radius at its midpoint.
+    """
+    route = _route((Vector3(0, 0, 0), Vector3(1, 0, 0)))
+    route = RoutePreview(
+        route.wire_id,
+        route.wire_number,
+        route.points,
+        (
+            CubicBezier(
+                Vector3(0, 0, 0),
+                Vector3(0, 1, 0),
+                Vector3(1, 1, 0),
+                Vector3(1, 0, 0),
+            ),
+        ),
+    )
+    bend = tightest_bend(route)
+    assert bend is not None
+    assert bend.curve_index == 0
+    assert bend.parameter == pytest.approx(0.5)
+    assert bend.radius_mm == pytest.approx(0.375)
+
+
+def test_tightest_bend_handles_straight_curves_and_invalid_sampling() -> None:
+    """
+    Report infinite radius for a straight path and reject unusable sampling.
+    """
+    route = RoutePreview(
+        UUID(int=1),
+        "001",
+        (Vector3(0, 0, 0), Vector3(3, 0, 0)),
+        (
+            CubicBezier(
+                Vector3(0, 0, 0),
+                Vector3(1, 0, 0),
+                Vector3(2, 0, 0),
+                Vector3(3, 0, 0),
+            ),
+        ),
+    )
+    bend = tightest_bend(route)
+    assert bend is not None and math.isinf(bend.radius_mm)
+    with pytest.raises(ValueError, match="at least two"):
+        tightest_bend(route, 1)

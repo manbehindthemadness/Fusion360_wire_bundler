@@ -83,7 +83,9 @@ def add_pathway(
         harness_id: Harness that will own the new pathway.
         name: Preferred user-facing pathway name.
         routing_mode: Routing strategy for the selected gates.
-        gate_entity_tokens: Fusion profile tokens in traversal order.
+        gate_entity_tokens: Pathway-control profile tokens in traversal order.
+            Connection-owned end profiles are not pathway gates; they still
+            participate in downstream centerline fairing and solid sweeps.
         gateway: Persistence boundary for the owning harness.
         id_factory: UUID factory, injectable for deterministic tests.
 

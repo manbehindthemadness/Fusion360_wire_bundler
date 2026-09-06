@@ -627,6 +627,11 @@ harness after cancellation or failure. Concrete performance thresholds require
 measurement in Fusion and must not be invented before representative 100-plus
 connection experiments exist.
 
+When a reachable route preview exists at save time, the add-in temporarily disables
+Fusion's document graphics cache for that save and restores the user's preference
+afterward. This prevents transient Custom Graphics from becoming an OGS scene-cache
+artifact that remains visible after reload without a corresponding API object.
+
 ---
 
 # Preview Status
@@ -1101,14 +1106,23 @@ future extension once intersection geometry exists.
 
 Packing still determines the exact ordered crossings. A separate fairing stage
 uses each gate/profile plane normal as the local tangent and joins crossings
-with cubic transitions plus a straight middle span. The current default assigns
-one quarter of each span to each transition; the solver also supports independent
-approach/departure lengths, clamped proportionally to avoid overlap. Exact curves
+with cubic transitions plus a straight middle span. Auto initially assigns one
+quarter of each span to each transition, then expands to the diameter-derived bend
+minimum or contracts toward that minimum when the span is crowded. Independent
+explicit approach/departure lengths are preserved when feasible and clamped to the
+nearest proportional fit. When two localized bend-safe transitions cannot share a
+span, the fairer dynamically reduces that wire's effective transition to the full
+available span and uses one direct profile-to-profile cubic if that curve preserves
+the same sweep radius. The geometry-specific correction does not rewrite a shared
+gate or end-member setting. Preview and solid generation report the required
+distance, applied distance, and preserved radius as an informational event. Exact curves
 are retained while Custom Graphics uses adaptive sampling at 0.05 mm chord error.
 Normal signs follow the stored traversal; points are never sorted by proximity.
 Coincident consecutive profiles and unavoidable collinear reversals are rejected.
-Gate aperture packing is still validated, but minimum bend radius and whole-span
-collision/clearance validation remain pending, as does solid body generation.
+Aperture packing is validated only at pathway routing gates. Diameter-aware
+fairing and guarded local circular-wire bend radii apply across the complete
+route, including every connection-owned end profile. Whole-span
+collision/clearance, center drift, and ovalization remain pending.
 
 Deferred UI work: follow Fusion’s light/dark theme and automatic host theme changes.
 
@@ -1122,9 +1136,10 @@ controls, while interpolation belongs to the individual profiles in their stack.
 Gate distances follow approach/departure traversal order. End-member distances
 use terminal-side/pathway-side directions; the adapter swaps these for End B's
 reversed traversal. The terminal profile (first member) only uses its pathway-side
-value. Blank values mean Auto (25% of the adjacent span); explicit values are
-finite nonnegative millimeters. Overlap is proportionally clamped. Zero may be
-rejected where turning into the profile normal requires a positive transition.
+value. Blank values mean Auto; explicit values are finite nonnegative millimeters.
+Auto respects the bend-safe floor calculated for each wire and profile side.
+Explicit values below that floor expand to it. Combined values beyond the span
+contract proportionally without crossing either physical floor.
 
 Defaults supplies separate gate and end-member baselines. The checked-by-default
 “Update existing controls using defaults” option applies new baselines to current
@@ -1139,3 +1154,29 @@ settings (null entries inherit the section baseline). Legacy section settings
 remain a fallback for older definitions. Saves use one native Fusion transaction,
 refresh affected active previews, and preserve editor expansion state. Original
 sketch geometry is untouched.
+
+### Initial persistent solid generation
+
+Generate/Rebuild Solids is an explicit native Fusion command separate from
+transient previews. It creates one child component per conductor with editable
+cubic control-point splines and straight segments, a diameter-sized circular
+profile normal to the path, and one solid sweep. UUID, number, diameter, and
+measured centerline length are stored on the generated component. Component names
+use the wire label, or its number and centerline length when no label is supplied.
+
+This first slice rebuilds all wires after one confirmation that includes manual
+edits inside generated components. Every replacement is built before any previous
+marked component is deleted. Original sketches and unmarked components are not
+modified. Native command rollback covers failures during final replacement.
+Preview edits do not implicitly replace solid bodies; explicit rebuilding is
+required. Selective regeneration and automatic manual-edit detection are later
+work. Clear Solids deletes only marked generated wire components in a native
+transaction, leaving original sketches and unrelated components untouched. Solid
+geometry persists independently of preview visibility and add-in state. The upper
+palette status area retains informational and failure events in a vertically
+scrollable console using the same surface and text colors as the rest of the palette.
+Clear Preview runs synchronously from the palette outside the model-edit command
+transaction. It hides each preview, explicitly deletes nested wire graphics, deletes
+the parent group, scans Custom Graphics collections on the root and every design
+component, verifies each deletion, refreshes the viewport, and reports the number
+of removed groups.

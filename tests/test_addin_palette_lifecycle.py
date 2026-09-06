@@ -10,7 +10,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import replace
 from types import ModuleType, SimpleNamespace
-from typing import Protocol, cast
+from typing import Optional, Protocol, cast
 from unittest.mock import Mock
 from uuid import UUID
 
@@ -30,7 +30,11 @@ class _PaletteLifecycleModule(Protocol):
     _PaletteEditExecuteHandler: type
     _PaletteEditCreatedHandler: type
     _HistoryChangedHandler: type
+    _DocumentSavingHandler: type
+    _DocumentSavedHandler: type
     _pending_palette_edit: object
+    _graphics_cache_restore_value: Optional[bool]
+    _graphics_cache_save_document: Optional[object]
     _open_palette_edit: Callable[[object, str, str], None]
     _apply_palette_edit: Callable[[object, str, str], str]
     _refresh_active_preview: Callable[[object, UUID], str]
@@ -41,6 +45,13 @@ class _PaletteLifecycleModule(Protocol):
     _create_harness_gateway: Callable[[object], object]
     _serialize_palette_state: Callable[[object, str], str]
     _preview_routes: Callable[[object, str], int]
+    _clear_preview: Callable[[object], int]
+    _clear_highlight: Callable[[object], None]
+    _clear_solids: Callable[[object, str], int]
+    clear_route_previews: Callable[[object], int]
+    clear_wire_solids: Callable[[object], int]
+    has_route_previews: Callable[[object], bool]
+    show_route_previews: Callable[..., tuple[object, ...]]
     _log_to_fusion: Callable[[str], None]
     _member_entity_tokens: Callable[[HarnessDefinition, str, UUID], tuple[str, ...]]
     _highlight_member: Callable[[object, str], int]
@@ -60,6 +71,7 @@ def addin_module(monkeypatch: pytest.MonkeyPatch) -> _PaletteLifecycleModule:
     handler_names = (
         "CommandEventHandler",
         "ApplicationCommandEventHandler",
+        "DocumentEventHandler",
         "ValidateInputsEventHandler",
         "CommandCreatedEventHandler",
         "HTMLEventHandler",
@@ -76,6 +88,65 @@ def addin_module(monkeypatch: pytest.MonkeyPatch) -> _PaletteLifecycleModule:
 
     module = importlib.import_module("wire_bundler.addin")
     return cast(_PaletteLifecycleModule, cast(object, module))
+
+
+def _configure_save_test(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+    has_preview: bool,
+) -> tuple[SimpleNamespace, SimpleNamespace]:
+    """
+    Configure one document save with a controllable live-preview result.
+    """
+    preview_design = object()
+    document = SimpleNamespace(
+        products=SimpleNamespace(itemByProductType=lambda _product_type: preview_design)
+    )
+    compatibility = SimpleNamespace(isCacheGraphicsOnDocumentSave=True)
+    application = SimpleNamespace(
+        preferences=SimpleNamespace(compatibilityPreferences=compatibility)
+    )
+    core_module = sys.modules["adsk.core"]
+    fusion_module = sys.modules["adsk.fusion"]
+    core_module.Application = SimpleNamespace(get=lambda: application)  # type: ignore[attr-defined]
+    fusion_module.Design = SimpleNamespace(cast=lambda product: product)  # type: ignore[attr-defined]
+    monkeypatch.setattr(addin_module, "has_route_previews", lambda _design: has_preview)
+    monkeypatch.setitem(vars(addin_module), "_graphics_cache_restore_value", None)
+    monkeypatch.setitem(vars(addin_module), "_graphics_cache_save_document", None)
+    return document, compatibility
+
+
+def test_save_with_active_preview_temporarily_disables_graphics_cache(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Keep Custom Graphics out of the saved OGS cache and restore user settings.
+    """
+    document, compatibility = _configure_save_test(addin_module, monkeypatch, True)
+
+    args = SimpleNamespace(document=document)
+    addin_module._DocumentSavingHandler().notify(args)
+    assert not compatibility.isCacheGraphicsOnDocumentSave
+
+    addin_module._DocumentSavedHandler().notify(args)
+    assert compatibility.isCacheGraphicsOnDocumentSave
+    assert addin_module._graphics_cache_restore_value is None
+
+
+def test_save_without_active_preview_preserves_graphics_cache_setting(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Leave unrelated document saves and the user's cache preference untouched.
+    """
+    document, compatibility = _configure_save_test(addin_module, monkeypatch, False)
+
+    addin_module._DocumentSavingHandler().notify(SimpleNamespace(document=document))
+
+    assert compatibility.isCacheGraphicsOnDocumentSave
+    assert addin_module._graphics_cache_restore_value is None
 
 
 def test_palette_is_shown_during_command_creation(
@@ -133,6 +204,11 @@ def test_palette_state_contains_complete_editor_definition(
     assert harness["gateDefaults"] == {"approach_mm": None, "departure_mm": None}
     assert harness["connections"][0]["interpolation"] == harness["endDefaults"]
     assert harness["controls"][0]["interpolation"] == harness["gateDefaults"]
+    monkeypatch.setitem(
+        vars(addin_module), "_last_command_error", "Wire 001: create cross-section plane failed"
+    )
+    refreshed = json.loads(addin_module._serialize_palette_state(object(), ""))
+    assert refreshed["notice"] == "Wire 001: create cross-section plane failed"
     assert harness["schemaVersion"] == valid_harness.schema_version
     assert harness["profiles"][0]["name"] == "Primary wire"
     assert harness["connections"][0]["name"] == "J1 / Pin 1"
@@ -174,7 +250,9 @@ def test_route_capacity_error_fails_preview_command(
     addin_module._PaletteEditExecuteHandler(("preview_routes", "{}", document)).notify(args)
     assert args.executeFailed
     assert args.executeFailedMessage == "Gate 4 cannot fit 3 wires."
-    assert logged_messages == ["Harness command failed: Gate 4 cannot fit 3 wires."]
+    assert len(logged_messages) == 1
+    assert logged_messages[0].startswith("Harness command failed: Gate 4 cannot fit 3 wires.")
+    assert "Traceback (most recent call last)" in logged_messages[0]
 
 
 @pytest.mark.parametrize(
@@ -458,3 +536,140 @@ def test_interpolation_bridge_persists_selected_target(
         assert saved.end_defaults.departure_mm == 3
         assert saved.connections == valid_harness.connections
         assert saved.controls == valid_harness.controls
+
+
+def test_solid_generation_fails_native_transaction_on_kernel_error(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Abort the native command if solid generation fails, preserving Undo/Redo semantics.
+    """
+    document = object()
+    application = SimpleNamespace(activeDocument=document)
+    core_module = sys.modules["adsk.core"]
+    vars(core_module)["Application"] = SimpleNamespace(get=lambda: application)
+    monkeypatch.setitem(
+        vars(addin_module), "_generate_solids", Mock(side_effect=RuntimeError("Wire 002 failed"))
+    )
+    monkeypatch.setattr(addin_module, "_log_to_fusion", Mock())
+    args = SimpleNamespace(executeFailed=False)
+    addin_module._PaletteEditExecuteHandler(("generate_solids", "{}", document)).notify(args)
+    assert args.executeFailed
+    assert args.executeFailedMessage == "Wire 002 failed"
+
+
+def test_clear_preview_deletes_graphics_outside_edit_transaction(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Refresh Fusion after deleting transient graphics so they disappear immediately.
+    """
+    design = object()
+    viewport = Mock()
+    application = SimpleNamespace(activeViewport=viewport)
+    clear = Mock(return_value=1)
+    monkeypatch.setattr(addin_module, "_require_active_design", lambda _application: design)
+    monkeypatch.setattr(addin_module, "_clear_highlight", Mock())
+    monkeypatch.setattr(addin_module, "clear_route_previews", clear)
+
+    assert addin_module._clear_preview(application) == 1
+
+    clear.assert_called_once_with(design)
+    viewport.refresh.assert_called_once()
+
+
+def test_clear_preview_palette_event_bypasses_model_edit_command(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Complete transient cleanup synchronously before returning to the palette.
+    """
+    application = object()
+    core_module = sys.modules["adsk.core"]
+    vars(core_module)["Application"] = SimpleNamespace(get=lambda: application)
+    vars(core_module)["HTMLEventArgs"] = SimpleNamespace(cast=lambda value: value)
+    clear = Mock(return_value=2)
+    open_edit = Mock()
+    monkeypatch.setattr(addin_module, "_clear_preview", clear)
+    monkeypatch.setattr(addin_module, "_open_palette_edit", open_edit)
+    args = SimpleNamespace(action="clear_preview", data="{}", returnData="")
+
+    addin_module._PaletteIncomingHandler().notify(args)
+
+    clear.assert_called_once_with(application)
+    open_edit.assert_not_called()
+    assert json.loads(args.returnData) == {
+        "ok": True,
+        "notice": "Cleared 2 route-preview graphics groups.",
+    }
+
+
+def test_preview_reports_dynamic_transition_adjustment_as_information(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Continue preview creation and publish a crowded-span adjustment to the palette.
+    """
+    design = object()
+    viewport = Mock()
+    application = SimpleNamespace(activeViewport=viewport)
+    gateway = SimpleNamespace(read_harness_definition=Mock(return_value=dumps(valid_harness)))
+    send_state = Mock()
+
+    def show(
+        _design: object, _definition: HarnessDefinition, **kwargs: object
+    ) -> tuple[object, ...]:
+        """
+        Simulate a successful solve that dynamically corrects one transition.
+        """
+        notices = cast(list[str], kwargs["notices"])
+        notices.append(
+            "Wire 001: dynamically adjusted transitions between profiles 2 and 3 "
+            "from 5.063 mm to 4.563 mm; the 0.525 mm sweep radius is preserved."
+        )
+        return object(), object(), object()
+
+    monkeypatch.setattr(addin_module, "_require_active_design", lambda _application: design)
+    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
+    monkeypatch.setattr(addin_module, "show_route_previews", show)
+    monkeypatch.setattr(addin_module, "_send_palette_state", send_state)
+    payload = json.dumps({"harnessId": str(valid_harness.harness_id)})
+
+    assert addin_module._preview_routes(application, payload) == 3
+
+    viewport.refresh.assert_called_once()
+    notice = send_state.call_args.args[1]
+    assert notice.startswith("Previewing 3 wire routes.\nWire 001:")
+    assert "from 5.063 mm to 4.563 mm" in notice
+
+
+def test_clear_solids_targets_selected_harness_and_refreshes_viewport(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Delete marked output for one harness and report the affected wire count.
+    """
+    component = object()
+    viewport = Mock()
+    application = SimpleNamespace(activeViewport=viewport)
+    gateway = SimpleNamespace(harness_component=Mock(return_value=component))
+    clear = Mock(return_value=3)
+    send_state = Mock()
+    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
+    monkeypatch.setattr(addin_module, "clear_wire_solids", clear)
+    monkeypatch.setattr(addin_module, "_send_palette_state", send_state)
+    payload = json.dumps({"harnessId": str(valid_harness.harness_id)})
+
+    assert addin_module._clear_solids(application, payload) == 3
+
+    gateway.harness_component.assert_called_once_with(valid_harness.harness_id)
+    clear.assert_called_once_with(component)
+    viewport.refresh.assert_called_once()
+    send_state.assert_called_once_with(application, "Cleared 3 wire solids.")

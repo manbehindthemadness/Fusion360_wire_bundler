@@ -2,6 +2,10 @@
 
 This routing method uses a sequence of **profile gates** to procedurally define ribbon cables made from an array of closely spaced wire splines. Unlike closed routing gates, profile gates are **open-ended sketched curves** that define the local transverse shape of the ribbon at each control station. A profile gate may be straight, curved, C-shaped, S-shaped, or any other open sketch profile. Its position, 3D orientation, and curvature control the local position, bank, twist, curl, and cross-sectional deformation of the ribbon, while corresponding wire positions are interpolated between successive gates to create the final ribbon geometry.
 
+Round-wire center drift, diameter-driven ovalization, and closed-aperture packing
+do not define ribbon behavior. Ribbon geometry and validation use the profile-gate
+model in this document and are implemented after parallel-wire routing is complete.
+
 ## Core Concept
 
 A ribbon is treated as an ordered array of adjacent wire centerlines:

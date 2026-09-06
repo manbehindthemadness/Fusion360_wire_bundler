@@ -44,11 +44,13 @@ from .fusion import (
     show_route_previews,
 )
 from .fusion.route_preview import (
+    has_route_previews,
     highlight_route_members,
     reconcile_preview_history,
     refresh_route_previews,
     reset_preview_history,
 )
+from .fusion.wire_solids import clear_wire_solids, generate_wire_solids
 
 COMMAND_ID = "kev0_wire_bundler_harness_builder"
 CREATE_COMMAND_ID = "kev0_wire_bundler_create_harness"
@@ -93,7 +95,12 @@ _pending_end_edit: Optional[dict[str, object]] = None
 _pending_wire_harness_id: Optional[UUID] = None
 _pending_wire_pathway_id: Optional[UUID] = None
 _pending_palette_edit: Optional[tuple[str, str, object]] = None
+_last_command_error = ""
 _history_handler: Optional[_HistoryChangedHandler] = None
+_document_saving_handler: Optional[_DocumentSavingHandler] = None
+_document_saved_handler: Optional[_DocumentSavedHandler] = None
+_graphics_cache_restore_value: Optional[bool] = None
+_graphics_cache_save_document: Optional[object] = None
 _PALETTE_EDIT_NAMES = {
     "move_pathway_gate": "Reorder Pathway Gates",
     "remove_pathway_gate": "Remove Pathway Gate",
@@ -107,7 +114,8 @@ _PALETTE_EDIT_NAMES = {
     "remove_end_member": "Remove End Member",
     "move_end_member": "Reorder End Members",
     "preview_routes": "Preview Wire Routes",
-    "clear_preview": "Clear Wire Preview",
+    "generate_solids": "Generate Wire Solids",
+    "clear_solids": "Clear Wire Solids",
 }
 
 
@@ -127,6 +135,8 @@ class _PaletteEditExecuteHandler(adsk.core.CommandEventHandler):
         """
         Execute against the original document or fail the command without editing.
         """
+        global _last_command_error
+        _last_command_error = ""
         action, data, document = self.request
         application = adsk.core.Application.get()
         try:
@@ -137,9 +147,11 @@ class _PaletteEditExecuteHandler(adsk.core.CommandEventHandler):
             if action == "preview_routes":
                 _preview_routes(application, data)
                 return
-            if action == "clear_preview":
-                clear_route_previews(_require_active_design(application))
-                _send_palette_state(application, "Cleared route preview.")
+            if action == "generate_solids":
+                _generate_solids(application, data)
+                return
+            if action == "clear_solids":
+                _clear_solids(application, data)
                 return
             notice = _apply_palette_edit(application, action, data)
             warning = _refresh_active_preview(
@@ -150,7 +162,8 @@ class _PaletteEditExecuteHandler(adsk.core.CommandEventHandler):
         except (AttributeError, RuntimeError, TypeError, ValueError) as error:
             args.executeFailed = True
             args.executeFailedMessage = str(error)
-            _log_to_fusion(f"Harness command failed: {error}")
+            _last_command_error = str(error)
+            _log_to_fusion(f"Harness command failed: {error}\n{traceback.format_exc()}")
 
 
 class _PaletteEditCreatedHandler(adsk.core.CommandCreatedEventHandler):
@@ -222,6 +235,98 @@ class _HistoryChangedHandler(adsk.core.ApplicationCommandEventHandler):
             _send_palette_state(application)
         except (AttributeError, RuntimeError, TypeError, ValueError) as error:
             _log_to_fusion(f"Could not synchronize harness history: {error}")
+
+
+class _DocumentSavingHandler(adsk.core.DocumentEventHandler):
+    """
+    Prevent live route previews from entering Fusion's saved OGS scene cache.
+    """
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, args: adsk.core.DocumentEventArgs) -> None:
+        """
+        Disable graphics caching only for a save containing an active preview.
+        """
+        global _graphics_cache_restore_value, _graphics_cache_save_document
+        application = adsk.core.Application.get()
+        try:
+            design = _document_design(args.document)
+            if design is None or not has_route_previews(design):
+                return
+            compatibility = application.preferences.compatibilityPreferences
+            if _graphics_cache_restore_value is None:
+                _graphics_cache_restore_value = compatibility.isCacheGraphicsOnDocumentSave
+            _graphics_cache_save_document = args.document
+            compatibility.isCacheGraphicsOnDocumentSave = False
+        except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+            _log_to_fusion(f"Could not protect route previews during save: {error}")
+
+
+class _DocumentSavedHandler(adsk.core.DocumentEventHandler):
+    """
+    Restore the user's graphics-cache preference after a protected save.
+    """
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, args: adsk.core.DocumentEventArgs) -> None:
+        """
+        Restore only after the document whose save disabled graphics caching.
+        """
+        if args.document != _graphics_cache_save_document:
+            return
+        _restore_graphics_cache_preference(adsk.core.Application.get())
+
+
+def _document_design(document: adsk.core.Document) -> Optional[adsk.fusion.Design]:
+    """
+    Resolve the Design product owned by a document event.
+    """
+    product = document.products.itemByProductType("DesignProductType")
+    return adsk.fusion.Design.cast(product)
+
+
+def _restore_graphics_cache_preference(application: adsk.core.Application) -> None:
+    """
+    Restore the compatibility preference captured before a protected save.
+    """
+    global _graphics_cache_restore_value, _graphics_cache_save_document
+    if _graphics_cache_restore_value is None:
+        return
+    restore_value = _graphics_cache_restore_value
+    _graphics_cache_restore_value = None
+    _graphics_cache_save_document = None
+    application.preferences.compatibilityPreferences.isCacheGraphicsOnDocumentSave = restore_value
+
+
+def _register_document_handlers(application: adsk.core.Application) -> None:
+    """
+    Register save guards that keep transient previews out of saved documents.
+    """
+    global _document_saving_handler, _document_saved_handler
+    _remove_document_handlers(application)
+    saving_handler = _DocumentSavingHandler()
+    if not application.documentSaving.add(saving_handler):
+        raise RuntimeError("Fusion could not register route-preview save protection.")
+    saved_handler = _DocumentSavedHandler()
+    if not application.documentSaved.add(saved_handler):
+        application.documentSaving.remove(saving_handler)
+        raise RuntimeError("Fusion could not register graphics-cache restoration.")
+    _document_saving_handler = saving_handler
+    _document_saved_handler = saved_handler
+
+
+def _remove_document_handlers(application: adsk.core.Application) -> None:
+    """
+    Remove save guards and restore any compatibility preference they changed.
+    """
+    global _document_saving_handler, _document_saved_handler
+    if _document_saving_handler is not None:
+        application.documentSaving.remove(_document_saving_handler)
+        _document_saving_handler = None
+    if _document_saved_handler is not None:
+        application.documentSaved.remove(_document_saved_handler)
+        _document_saved_handler = None
+    _restore_graphics_cache_preference(application)
 
 
 def _open_palette_edit(application: adsk.core.Application, action: str, data: str) -> None:
@@ -891,6 +996,16 @@ class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
                 _open_add_wires_command(application, html_args.data)
                 html_args.returnData = json.dumps({"ok": True})
                 return
+            if html_args.action == "clear_preview":
+                count = _clear_preview(application)
+                label = "group" if count == 1 else "groups"
+                html_args.returnData = json.dumps(
+                    {
+                        "ok": True,
+                        "notice": f"Cleared {count} route-preview graphics {label}.",
+                    }
+                )
+                return
             if html_args.action in _PALETTE_EDIT_NAMES:
                 _open_palette_edit(application, html_args.action, html_args.data)
                 html_args.returnData = json.dumps({"ok": True})
@@ -969,6 +1084,7 @@ def start(_context: object) -> None:
         _history_handler = _HistoryChangedHandler()
         if not user_interface.commandTerminated.add(_history_handler):
             raise RuntimeError("Fusion could not register history synchronization.")
+        _register_document_handlers(application)
 
         workspace = user_interface.workspaces.itemById(WORKSPACE_ID)
         if workspace is None:
@@ -1085,6 +1201,7 @@ def stop(_context: object) -> None:
         design = adsk.fusion.Design.cast(application.activeProduct)
         if design is not None:
             clear_route_previews(design)
+        _remove_document_handlers(application)
         _remove_user_interface(application.userInterface)
         _handlers.clear()
         reset_preview_history()
@@ -1324,7 +1441,7 @@ def _serialize_palette_state(
                 "validationMessages": result.validation_messages,
             }
         )
-    payload = {"harnesses": harnesses, "notice": notice, "ok": True}
+    payload = {"harnesses": harnesses, "notice": notice or _last_command_error, "ok": True}
     return json.dumps(payload, sort_keys=True)
 
 
@@ -1835,10 +1952,22 @@ def _preview_routes(application: adsk.core.Application, serialized_data: str) ->
     design = _require_active_design(application)
     gateway = _create_harness_gateway(application)
     definition = loads(gateway.read_harness_definition(harness_id))
-    routes = show_route_previews(design, definition)
+    notices: list[str] = []
+    routes = show_route_previews(design, definition, notices=notices)
     application.activeViewport.refresh()
-    _send_palette_state(application, f"Previewing {len(routes)} wire routes.")
+    summary = f"Previewing {len(routes)} wire routes."
+    _send_palette_state(application, "\n".join((summary, *notices)))
     return len(routes)
+
+
+def _clear_preview(application: adsk.core.Application) -> int:
+    """
+    Remove transient route graphics outside a Fusion model-edit transaction.
+    """
+    _clear_highlight(application)
+    count = clear_route_previews(_require_active_design(application))
+    application.activeViewport.refresh()
+    return count
 
 
 def _require_active_design(application: adsk.core.Application) -> adsk.fusion.Design:
@@ -2066,3 +2195,41 @@ def _read_routing_mode(command_inputs: adsk.core.CommandInputs) -> RoutingMode:
         if selected_label == label:
             return routing_mode
     raise ValueError(f"Unsupported routing mode selection: {selected_label}")
+
+
+def _generate_solids(application: adsk.core.Application, serialized_data: str) -> int:
+    """
+    Generate persistent wire bodies inside the palette command transaction.
+    """
+    payload = _read_palette_payload(serialized_data)
+    harness_id = _read_payload_uuid(payload, "harnessId", "harness")
+    replace_existing = payload.get("replaceExisting", False)
+    if not isinstance(replace_existing, bool):
+        raise ValueError("Rebuild confirmation must be a boolean.")
+    gateway = _create_harness_gateway(application)
+    definition = loads(gateway.read_harness_definition(harness_id))
+    notices: list[str] = []
+    count = generate_wire_solids(
+        _require_active_design(application),
+        gateway.harness_component(harness_id),
+        definition,
+        replace_existing,
+        notices,
+    )
+    application.activeViewport.refresh()
+    summary = f"Generated {count} wire solids."
+    _send_palette_state(application, "\n".join((summary, *notices)))
+    return count
+
+
+def _clear_solids(application: adsk.core.Application, serialized_data: str) -> int:
+    """
+    Remove marked wire bodies inside the palette command transaction.
+    """
+    payload = _read_palette_payload(serialized_data)
+    harness_id = _read_payload_uuid(payload, "harnessId", "harness")
+    gateway = _create_harness_gateway(application)
+    count = clear_wire_solids(gateway.harness_component(harness_id))
+    application.activeViewport.refresh()
+    _send_palette_state(application, f"Cleared {count} wire solids.")
+    return count

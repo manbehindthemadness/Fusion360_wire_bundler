@@ -7,6 +7,7 @@ Run it through a Fusion API script facility, never with standalone Python.
 
 from __future__ import annotations
 
+import json
 import sys
 import traceback
 from pathlib import Path
@@ -32,6 +33,12 @@ from wire_bundler.domain import (  # noqa: E402
     validate_harness,
 )
 from wire_bundler.fusion import FusionHarnessGateway, show_route_previews  # noqa: E402
+from wire_bundler.fusion.harness_gateway import ATTRIBUTE_GROUP  # noqa: E402
+from wire_bundler.fusion.wire_solids import (  # noqa: E402
+    GENERATED_WIRE_ATTRIBUTE,
+    generate_wire_solids,
+    generated_wire_occurrences,
+)
 from wire_bundler.routing import Vector3, sample_centerline  # noqa: E402
 from wire_bundler.routing.geometry import cross, magnitude, unit  # noqa: E402
 
@@ -207,6 +214,31 @@ def run(_context: object) -> None:
                 raise AssertionError(
                     f"Expected one rediscovered harness, found {len(matching_harnesses)}."
                 )
+
+        with report.step("Generate persistent wire solids"):
+            harness = gateway.harness_component(HARNESS_ID)
+            count = generate_wire_solids(design, harness, stored_definition)
+            if count != len(WIRE_IDS):
+                raise AssertionError("Solid generation lost wires.")
+            identities = []
+            for occurrence in generated_wire_occurrences(harness):
+                component = occurrence.component
+                if component.bRepBodies.count != 1 or not component.bRepBodies.item(0).isSolid:
+                    raise AssertionError("Generated wire does not contain exactly one solid.")
+                if component.features.sweepFeatures.count != 1:
+                    raise AssertionError(
+                        "Generated wire does not contain exactly one Sweep feature."
+                    )
+                if component.features.pipeFeatures.count:
+                    raise AssertionError("Generated wire unexpectedly contains a Pipe feature.")
+                metadata = json.loads(
+                    component.attributes.itemByName(ATTRIBUTE_GROUP, GENERATED_WIRE_ATTRIBUTE).value
+                )
+                identities.append(UUID(metadata["wire_id"]))
+                if metadata["length_mm"] <= 0:
+                    raise AssertionError("Wire centerline length is invalid.")
+            if tuple(identities) != WIRE_IDS:
+                raise AssertionError("Generated bodies lost stable wire order or identity.")
 
         report.finish(True)
         application.userInterface.messageBox(

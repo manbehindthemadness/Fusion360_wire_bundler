@@ -1,6 +1,6 @@
 # Fusion 360 Wire Bundler
 
-Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, and harness assemblies. The current milestone records reusable pathways, pairs ordered End A and End B profiles into stable logical wires, and previews smooth, oriented wire centerlines through circular routing gates. Creating a harness stores a versioned draft definition, converts an active Part design to Hybrid intent, or creates an external component in Fusion's active cloud folder when working in an Assembly design.
+Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, and harness assemblies. The current milestone records reusable pathways, pairs ordered End A and End B profiles into stable logical wires, previews smooth, oriented wire centerlines through circular routing gates, and generates circular solid wire sweeps. Creating a harness stores a versioned draft definition, converts an active Part design to Hybrid intent, or creates an external component in Fusion's active cloud folder when working in an Assembly design.
 
 ## Current milestone
 
@@ -30,9 +30,11 @@ Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, an
 - Click-to-highlight Fusion profiles for gates, connections, and wire endpoint pairs
 - Stable wire, connection, profile, pathway, and routing-control identities
 - Deterministic hexagonal wire packing with circular-gate capacity checks
-- Smooth cubic transitions perpendicular to gate and end-profile planes, preserving ordered crossings and straight middle spans. Automatic transitions each occupy one quarter of their adjacent span.
+- Smooth cubic transitions perpendicular to gate and end-profile planes, preserving ordered crossings and straight middle spans. Auto starts at one quarter of the adjacent span and expands when the wire diameter requires a larger bend.
 - Each gate row and end-member row has an **Options** popup for individual interpolation distances (millimeters or Auto). **Defaults** supplies the baseline; saving updates existing controls using defaults unless unchecked. Individual overrides are preserved, and **Use harness defaults** restores inheritance.
+- **Generate/Rebuild Solids** creates one marked component per wire with an editable centerline sketch, circular diameter profile, sweep, and measured centerline length. Rebuilding requires confirmation and replaces only marked generated wire components after all new sweeps succeed.
 - Lightweight, selectable Custom Graphics centerline previews with explicit clearing
+- Save-time graphics-cache protection prevents active previews from being baked into reopened designs
 - Active previews refresh affected routing groups after member edits and redraw only changed paths, preserving unrelated graphics.
 - Persistent Fusion entity tokens with reload-time linked-geometry health reporting
 - Schema version 3 persistence with automatic in-memory reading of versions 1 and 2
@@ -57,10 +59,10 @@ This repository directory is already located under Fusion's `API/AddIns` directo
 11. Select either end node in Wire Routes and confirm its child editor shows only that wire's endpoint profile. Enter independent end names and confirm the nodes show them. Edit Wire Name and Pathway Name; name the start and end above/below the gate traversal list. Confirm the route reads `End A: Data input → lower fuse box path from O2-sensor to CAN_BUS-ctrl → End B: Data output`, persists after refresh, and restores generated fallbacks when optional labels are cleared.
 12. Expand Pathways & Occupancy, then expand one pathway and its independent Gates · Traversal Order and Wire Occupancy children. Confirm the occupancy child identifies every wire plus whether it enters at End A, arrives from a previous pathway, continues onward, or exits at End B. Click gate, end, occupancy, and wire rows and confirm Fusion highlights the referenced profile or end pair.
 13. Use **+ Add Gates** and **+ Add Wire Pairs** inside the appropriate pathway child and confirm the native dialog targets that pathway. Remove a gate and wire pair, confirming each destructive action first; a pathway's last gate must not be removable.
-14. Select **Preview Routes** and confirm one colored, selectable centerline appears per wire through every gate. These are transient smooth centerlines sampled for display; no solid wire bodies are generated yet. Check perpendicular entry/exit at gates and end profiles, with straight middle spans.
+14. Select **Preview Routes** and confirm one colored, selectable centerline appears per wire through every gate. These are transient smooth centerlines sampled for display; solid bodies are generated separately using **Generate/Rebuild Solids**. Check perpendicular entry/exit at gates and end profiles, with straight middle spans.
 15. With a preview active, replace an end member or change a wire diameter; confirm changed centerlines refresh while unaffected paths remain visible. Removing the last end member hides the incomplete wire's path; restoring the end brings it back. Select **Clear Preview**, edit again, and confirm the preview stays off. Preview again, stop the add-in, and confirm teardown removes it.
 16. Reduce a circular gate until the packed wire envelopes no longer fit, then preview and confirm the error identifies that gate instead of drawing partial results.
-17. Refresh, close and reopen the palette, then stop and run the add-in; confirm the definitions and linked-geometry status survive while previews remain transient.
+17. With a preview active, save the design, close it, and reopen it; confirm the preview was not cached into the reopened viewport. Then stop and run the add-in and confirm the definitions and linked-geometry status survive while previews remain transient.
 18. Delete or invalidate one selected sketch profile, refresh the palette, and confirm the corresponding connection or routing control reports missing linked geometry.
 19. Add another pathway with the same proposed name and confirm the suggested and persisted name increments without changing the existing pathway.
 20. Create another harness and confirm the suggested and created name increments without changing the existing harness.
@@ -123,7 +125,11 @@ F360WireGenerator/               Unrelated third-party example repository
 
 ## Domain boundary
 
-`wire_bundler/domain/`, `wire_bundler/application/`, and `wire_bundler/routing/` have no Fusion dependency. They define and transactionally persist harness drafts and solve deterministic parallel-wire crossings independently of the host. `wire_bundler/fusion/` owns Fusion persistence, profile/frame translation, linked-geometry health checks, viewport selection, and transient centerline graphics. Current routing supports circular routing gates, zero additional clearance by default, and tangent-continuous cubic transitions. Exact cubic geometry is retained separately from ordered crossings and adaptively sampled to a 0.05 mm chord tolerance for display. The host-independent fairing API supports independent approach/departure lengths and proportional clamping; the Fusion adapter uses persisted gate/end-section settings, with automatic quarter-span lengths when left blank. Ordered gate and endpoint-pairing edits update the versioned definition transactionally and invalidate stale previews. Configurable clearance, profile-gate/ribbon routing, final swept bodies, minimum bend-radius checks, and full span collision analysis remain future milestones.
+`wire_bundler/domain/`, `wire_bundler/application/`, and `wire_bundler/routing/` have no Fusion dependency. They define and transactionally persist harness drafts and solve deterministic parallel-wire crossings independently of the host. `wire_bundler/fusion/` owns Fusion persistence, profile/frame translation, linked-geometry health checks, viewport selection, and transient centerline graphics. Current routing supports circular routing gates, zero additional clearance by default, and tangent-continuous cubic transitions. Exact cubic geometry is retained separately from ordered crossings and adaptively sampled to a 0.05 mm chord tolerance for display. The host-independent fairing API supports independent approach/departure lengths with diameter-derived safety floors. Crowded spans that cannot hold two localized transitions dynamically use the full available span when one direct profile-to-profile cubic preserves the same sweep radius. Preview and solid generation report the adjusted required and applied distances in the palette's scrollable event console. The Fusion adapter applies this diameter-aware fairing across pathway controls and every connection-owned end profile. Wire-envelope fit checks apply only to pathway apertures. Ordered gate and endpoint-pairing edits update the versioned definition transactionally and invalidate stale previews. Configurable clearance, profile-gate/ribbon routing, selective solid regeneration, center drift, ovalization, and full-span collision analysis remain future milestones.
+
+Diameter-aware center drift, bounded oval deformation, and circular-envelope
+packing are parallel round-wire behavior. Ribbon routing remains a separate
+profile-gate system and follows completion of parallel-wire routing.
 
 Undo/Redo host verification (pending): with an active preview, rename a wire,
 drag an end member, reorder gates, change diameter, and remove a wire. For each,
@@ -136,3 +142,47 @@ re-registers the command-completion handler. Use an unsaved test design; the loc
 Fusion MCP endpoint was unavailable during automated verification.
 
 Deferred UI follow-up: match Fusion’s light/dark color scheme, including automatic host/OS theme changes. The current palette remains light when the host switches to dark.
+
+## Solid wire generation smoke test
+
+Stop/run the add-in, open a complete harness, and select **Generate/Rebuild Solids**.
+Confirm one child component per wire appears beneath the harness, each containing
+one solid body, Wire Centerline and Wire Diameter sketches, and a Wire Sweep.
+Unnamed wires use their stable number and measured centerline length in the
+component name. Generated geometry remains after Clear Preview and add-in stop.
+
+Edits continue to refresh lightweight previews; solids update only when explicitly
+rebuilt. Rebuild replaces all marked wire components, including manual edits inside
+them, after one confirmation. Unmarked components and original sketches are left
+untouched. **Clear Solids** removes only marked generated wire components after
+confirmation. Verify Undo restores cleared or rebuilt solids and Redo reapplies the
+operation. Clear Preview runs synchronously as transient palette cleanup outside the
+model-edit command transaction. It hides and empties nested graphics before deleting
+the parent, scans the root and every design component, verifies deletion, refreshes
+the viewport, and reports the removed count.
+A failed sweep should identify its wire and leave the previous output intact.
+Repeated harness placements are rejected because a unique coordinate context is
+required. Profile-gate/ribbon solids, center drift, ovalization, and full-span
+collision checks remain future work. The original five-case diameter-aware Sweep
+matrix, three-stroke 180-degree zig-zag, adjacent pinch turns, and explicit-value
+clamping all pass in Fusion's native Sweep kernel.
+
+The adapter uses Autodesk’s [control-point spline API](https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/SketchControlPointSplines_add.htm)
+and [sweep API](https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/SweepFeatures_createInput.htm).
+
+Generation diagnostics: failed command messages remain in the palette's scrollable,
+theme-matched event panel after refresh,
+and Fusion's application log includes the full traceback and the failed generation
+operation (for example, creating the cross-section plane or creating the sweep). If
+the Fusion kernel rejects a sweep, the message also reports the centerline's tightest
+sampled local bend radius, curve number, curve parameter, and wire radius. This
+diagnostic locates local curvature; it does not certify clearance between distant
+parts of the swept tube.
+
+For repeatable kernel verification, register
+`experiments/experiment_sweep_matrix_runner/` with the green **+** button on
+Fusion's Scripts tab, then run `experiment_sweep_matrix_runner` while no command
+transaction is active. It creates an unsaved design, generates the shared straight,
+spatial, three-stroke 180-degree zig-zag, three-adjacent-pinch, diameter-expanded,
+undersized-explicit-clamp, and impossible-span cases, invokes Sweep only for routes
+that pass preflight, and writes reports under `artifacts/verification/`.

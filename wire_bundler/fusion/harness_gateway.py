@@ -350,6 +350,16 @@ class FusionHarnessGateway:
             raise RuntimeError("Fusion did not delete the incomplete harness component.")
         self._restore_design_intent(handle.original_design_intent)
 
+    def harness_component(self, harness_id: UUID) -> adsk.fusion.Component:
+        """
+        Resolve the native component owned by a persisted harness definition.
+        """
+        component, _attribute = self._find_harness_component(harness_id)
+        resolved = adsk.fusion.Component.cast(component)
+        if resolved is None:
+            raise RuntimeError("Harness owner is not a Fusion component.")
+        return resolved
+
     def _find_harness_component(
         self,
         harness_id: UUID,

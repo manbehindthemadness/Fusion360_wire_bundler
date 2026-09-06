@@ -68,7 +68,21 @@
     .button.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
     .button.compact { padding: 5px 8px; }
     main { padding: 14px; }
-    #notice { min-height: 18px; margin: 0 0 10px; color: var(--success); }
+    #notice {
+      height: 108px;
+      margin: 0 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 7px 9px;
+      overflow-y: auto;
+      background: var(--surface);
+      color: var(--text);
+      font: 12px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+      white-space: pre-wrap;
+    }
+    #notice:empty::before { content: "Events will appear here."; color: var(--muted); }
+    .notice-entry + .notice-entry { margin-top: 5px; }
+    .notice-entry.error { color: var(--danger); }
     .library-actions { display: grid; gap: 10px; }
     #create { width: 100%; }
     .filter {
@@ -266,7 +280,7 @@
     <button id="refresh" class="button compact" type="button">Refresh</button>
   </header>
   <main>
-    <p id="notice" role="status"></p>
+    <div id="notice" role="log" aria-label="Harness events" aria-live="polite"></div>
     <section id="library-view" aria-label="Harness library">
       <div class="library-actions">
         <button id="create" class="button primary" type="button">Create New Harness</button>
@@ -283,6 +297,8 @@
         <button id="add-pathway" class="button compact primary" type="button">Add Pathway</button>
         <button id="add-wires" class="button compact primary" type="button">Add Wire Pairs</button>
         <button id="preview-routes" class="button compact primary" type="button">Preview Routes</button>
+        <button id="generate-solids" class="button compact primary" type="button">Generate/Rebuild Solids</button>
+        <button id="clear-solids" class="button compact" type="button">Clear Solids</button>
         <button id="interpolation-defaults" class="button compact" type="button">Defaults</button>
         <button id="clear-preview" class="button compact" type="button">Clear Preview</button>
         <button id="create-from-editor" class="button compact" type="button">New Harness</button>
@@ -297,6 +313,8 @@
       addWires: document.getElementById("add-wires"),
       previewRoutes: document.getElementById("preview-routes"),
       clearPreview: document.getElementById("clear-preview"),
+      generateSolids: document.getElementById("generate-solids"),
+      clearSolids: document.getElementById("clear-solids"),
       defaults: document.getElementById("interpolation-defaults"),
       create: document.getElementById("create"),
       createFromEditor: document.getElementById("create-from-editor"),
@@ -861,7 +879,7 @@
       dialog.className = "wire-options";
       heading.textContent = isDefaults ? "Generation defaults" : `Interpolation · ${name}`;
       dialog.setAttribute("aria-label", heading.textContent);
-      note.textContent = "Leave a distance blank for Auto (25% of the adjacent span). Overlapping distances are reduced to fit. "
+      note.textContent = "Leave a distance blank for Auto. Auto expands toward the wire's safe bend minimum; crowded values are reduced to the feasible range, and crowded spans use a direct profile-to-profile curve when it preserves that radius. "
         + (isDefaults ? "Presets are used for new controls. Existing controls follow defaults unless individually customized."
           : target === "end" ? "These settings apply only to this member, in terminal → pathway order. The first member uses only its pathway-side distance."
             : "Approach and departure follow the gate traversal order. Changes affect all wires through this gate.");
@@ -1133,6 +1151,7 @@
 
     function renderEditor(harness) {
       ui.editor.replaceChildren();
+      ui.generateSolids.disabled = harness.status === "damaged" || !harness.wires?.length;
       ui.defaults.disabled = harness.status === "damaged";
       ui.addWires.disabled = harness.status === "damaged" || !harness.pathways?.length;
       ui.previewRoutes.disabled = harness.status === "damaged" || !harness.wires?.length;
@@ -1236,7 +1255,7 @@
     function render(state) {
       const scrollTop = document.scrollingElement.scrollTop;
       currentState = state;
-      ui.notice.textContent = state.notice || "";
+      appendNotice(state.notice);
       renderLibrary();
       const selected = state.harnesses.find(
         (harness) => harnessKey(harness) === selectedHarnessKey,
@@ -1252,6 +1271,17 @@
         ui.libraryView.hidden = false;
       }
       window.requestAnimationFrame(() => window.scrollTo(0, scrollTop));
+    }
+
+    function appendNotice(message, isError = false) {
+      if (!message) return;
+      const previous = ui.notice.children[ui.notice.children.length - 1];
+      if (previous?.textContent === message && previous.className.includes(isError ? "error" : "notice-entry")) return;
+      const entry = document.createElement("div");
+      entry.className = `notice-entry${isError ? " error" : ""}`;
+      entry.textContent = message;
+      ui.notice.append(entry);
+      ui.notice.scrollTop = ui.notice.scrollHeight;
     }
 
     function waitForFusionHost() {
@@ -1279,48 +1309,53 @@
       return JSON.parse(response);
     }
 
+    function generateSolids() {
+      const harness = currentState.harnesses.find((item) => harnessKey(item) === selectedHarnessKey);
+      if (!harness || harness.status === "damaged" || !harness.wires?.length) return;
+      if (!window.confirm("Build wire solids? This replaces previous generated wire components, including manual edits inside them.")) return;
+      return mutate("generate_solids", { harnessId: harness.harnessId, replaceExisting: true }, "Generating wire solids…");
+    }
+
+    function clearSolids() {
+      const harness = currentState.harnesses.find((item) => harnessKey(item) === selectedHarnessKey);
+      if (!harness || harness.status === "damaged") return;
+      if (!window.confirm("Clear generated wire solids? This removes manual edits inside generated wire components.")) return;
+      return mutate("clear_solids", { harnessId: harness.harnessId }, "Clearing wire solids…");
+    }
+
     async function refresh() {
       try {
-        ui.notice.style.color = "";
         render(await send("get_state"));
       } catch (error) {
-        ui.notice.textContent = error.message;
-        ui.notice.style.color = "var(--danger)";
+        appendNotice(error.message, true);
       }
     }
 
     async function createHarness() {
-      ui.notice.style.color = "";
-      ui.notice.textContent = "Opening Create Harness…";
+      appendNotice("Opening Create Harness…");
       try {
         const response = await send("create_harness");
         if (!response.ok) {
-          ui.notice.textContent = response.error || "Create Harness could not be opened.";
-          ui.notice.style.color = "var(--danger)";
+          appendNotice(response.error || "Create Harness could not be opened.", true);
         }
       } catch (error) {
-        ui.notice.textContent = error.message;
-        ui.notice.style.color = "var(--danger)";
+        appendNotice(error.message, true);
       }
     }
 
     async function mutate(action, payload, progress) {
-      ui.notice.style.color = "";
-      ui.notice.textContent = progress;
+      appendNotice(progress);
       try {
         const response = await send(action, payload);
         if (!response.ok) {
-          ui.notice.textContent = response.error || "The harness edit could not be completed.";
-          ui.notice.style.color = "var(--danger)";
+          appendNotice(response.error || "The harness edit could not be completed.", true);
         }
       } catch (error) {
-        ui.notice.textContent = error.message;
-        ui.notice.style.color = "var(--danger)";
+        appendNotice(error.message, true);
       }
     }
 
     async function highlightMember(harness, memberType, memberId, extra = {}) {
-      ui.notice.style.color = "";
       try {
         const response = await send("highlight_member", {
           harnessId: harness.harnessId,
@@ -1329,30 +1364,25 @@
           ...extra,
         });
         if (!response.ok) {
-          ui.notice.textContent = response.error || "Linked geometry could not be highlighted.";
-          ui.notice.style.color = "var(--danger)";
+          appendNotice(response.error || "Linked geometry could not be highlighted.", true);
         }
       } catch (error) {
-        ui.notice.textContent = error.message;
-        ui.notice.style.color = "var(--danger)";
+        appendNotice(error.message, true);
       }
     }
 
     async function appendPathwayGates(harness, pathway) {
-      ui.notice.style.color = "";
-      ui.notice.textContent = `Selecting additional gates for ${pathway.name}…`;
+      appendNotice(`Selecting additional gates for ${pathway.name}…`);
       try {
         const response = await send("append_pathway_gates", {
           harnessId: harness.harnessId,
           pathwayId: pathway.pathwayId,
         });
         if (!response.ok) {
-          ui.notice.textContent = response.error || "Add Gates could not be opened.";
-          ui.notice.style.color = "var(--danger)";
+          appendNotice(response.error || "Add Gates could not be opened.", true);
         }
       } catch (error) {
-        ui.notice.textContent = error.message;
-        ui.notice.style.color = "var(--danger)";
+        appendNotice(error.message, true);
       }
     }
 
@@ -1379,17 +1409,14 @@
         (candidate) => harnessKey(candidate) === selectedHarnessKey,
       );
       if (!harness || harness.status === "damaged") return;
-      ui.notice.style.color = "";
-      ui.notice.textContent = "Opening Add Pathway…";
+      appendNotice("Opening Add Pathway…");
       try {
         const response = await send("add_pathway", { harnessId: harness.harnessId });
         if (!response.ok) {
-          ui.notice.textContent = response.error || "Add Pathway could not be opened.";
-          ui.notice.style.color = "var(--danger)";
+          appendNotice(response.error || "Add Pathway could not be opened.", true);
         }
       } catch (error) {
-        ui.notice.textContent = error.message;
-        ui.notice.style.color = "var(--danger)";
+        appendNotice(error.message, true);
       }
     }
 
@@ -1398,17 +1425,14 @@
         (candidate) => harnessKey(candidate) === selectedHarnessKey,
       );
       if (!harness || harness.status === "damaged" || !harness.pathways.length) return;
-      ui.notice.style.color = "";
-      ui.notice.textContent = "Opening Add Wires…";
+      appendNotice("Opening Add Wires…");
       try {
         const response = await send("add_wires", { harnessId: harness.harnessId, pathwayId });
         if (!response.ok) {
-          ui.notice.textContent = response.error || "Add Wires could not be opened.";
-          ui.notice.style.color = "var(--danger)";
+          appendNotice(response.error || "Add Wires could not be opened.", true);
         }
       } catch (error) {
-        ui.notice.textContent = error.message;
-        ui.notice.style.color = "var(--danger)";
+        appendNotice(error.message, true);
       }
     }
 
@@ -1417,31 +1441,27 @@
         (candidate) => harnessKey(candidate) === selectedHarnessKey,
       );
       if (!harness || harness.status === "damaged" || !harness.wires.length) return;
-      ui.notice.style.color = "";
-      ui.notice.textContent = "Solving route preview…";
+      appendNotice("Solving route preview…");
       try {
         const response = await send("preview_routes", { harnessId: harness.harnessId });
         if (!response.ok) {
-          ui.notice.textContent = response.error || "Routes could not be previewed.";
-          ui.notice.style.color = "var(--danger)";
+          appendNotice(response.error || "Routes could not be previewed.", true);
         }
       } catch (error) {
-        ui.notice.textContent = error.message;
-        ui.notice.style.color = "var(--danger)";
+        appendNotice(error.message, true);
       }
     }
 
     async function clearPreview() {
-      ui.notice.style.color = "";
       try {
         const response = await send("clear_preview");
         if (!response.ok) {
-          ui.notice.textContent = response.error || "Route preview could not be cleared.";
-          ui.notice.style.color = "var(--danger)";
+          appendNotice(response.error || "Route preview could not be cleared.", true);
+        } else {
+          appendNotice(response.notice);
         }
       } catch (error) {
-        ui.notice.textContent = error.message;
-        ui.notice.style.color = "var(--danger)";
+        appendNotice(error.message, true);
       }
     }
 
@@ -1451,6 +1471,8 @@
       const harness = currentState.harnesses.find((item) => harnessKey(item) === selectedHarnessKey);
       if (harness && harness.status !== "damaged") openInterpolationOptions(harness, "defaults");
     });
+    ui.generateSolids.addEventListener("click", generateSolids);
+    ui.clearSolids.addEventListener("click", clearSolids);
     ui.previewRoutes.addEventListener("click", previewRoutes);
     ui.clearPreview.addEventListener("click", clearPreview);
     ui.back.addEventListener("click", closeEditor);

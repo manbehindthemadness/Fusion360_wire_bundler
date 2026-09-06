@@ -195,6 +195,14 @@ Gate A                                      Gate B
 
 The result remains deterministic and geometrically valid without allowing one transition region to extend through or beyond the neighboring gate.
 
+Procedurally derived transition, center-drift, and profile-deformation values are
+projected to the closest feasible result within the wire's physical limits and the
+allowed routing corridor. User-facing controls expose the corresponding feasible
+range and clamp entries to it. A generated value does not become a user-facing
+failure while a valid routed shape remains inside those constraints. Validation
+reports an impossible route only when the permitted corridor and physical limits
+contain no feasible result.
+
 The available distance may be represented approximately as:
 
 $$
@@ -368,11 +376,12 @@ A typical procedural routing operation can follow this sequence:
 5. Assign the wires or splines that must pass through each gate.
 6. Determine legal crossing locations within each gate aperture.
 7. Enforce wire diameter and clearance requirements.
-8. Clamp transition lengths where neighboring transition regions exceed the available span.
-9. Generate localized transition curves near each gate.
-10. Connect the transition regions with straight or nearly straight spline spans.
-11. Sweep the desired wire profiles along the generated centerlines.
-12. Verify that resulting swept volumes do not intersect each other or surrounding restricted geometry.
+8. Derive minimum transition lengths from each wire diameter and local profile orientation.
+9. Project requested transition lengths into the available span while preserving those minima.
+10. Generate localized transition curves near each gate.
+11. Connect the transition regions with straight or nearly straight spline spans.
+12. Sweep the desired wire profiles along the generated centerlines.
+13. Verify that resulting swept volumes do not intersect each other or surrounding restricted geometry.
 
 ## Design Characteristics
 
@@ -391,8 +400,8 @@ A typical procedural routing operation can follow this sequence:
 * **Predominantly straight routing**
   Gate-to-gate spans remain straight or nearly straight wherever geometry permits.
 
-* **Clamped transition regions**
-  Transition distances are automatically reduced when opposing gate transitions exceed the available corridor length.
+* **Diameter-constrained transition regions**
+  Transition distances clamp proportionally into the available span without crossing their calculated bend-safe minima.
 
 * **Multi-wire capable**
   Multiple spline centerlines may pass through a single gate.
