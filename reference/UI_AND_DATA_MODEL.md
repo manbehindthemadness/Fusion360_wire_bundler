@@ -1082,7 +1082,7 @@ palette refreshes, and palette reloads. Selecting the opposite end explicitly
 switches the open ordering menu.
 Each end-member row has + (insert after), replace, and × controls and supports
 drag-and-drop reordering within its own stack. All edits refresh active preview
-state, and every member center contributes to the piecewise-linear route.
+state, and every member center contributes to the smooth, ordered route.
 Gate traversal rows use the same captured-pointer reordering and insertion marker.
 Both stacks have a far-left position column numbered from one; position numbers
 describe the current slots while stable names and IDs move with their members.
@@ -1096,3 +1096,18 @@ occupying previews. Individual gate and endpoint members highlight only their ow
 profiles. Mouse-out clears both sketch selection and preview emphasis. End nodes
 highlight their connection profiles. Intersection slice highlighting remains a
 future extension once intersection geometry exists.
+
+### Smooth centerline milestone
+
+Packing still determines the exact ordered crossings. A separate fairing stage
+uses each gate/profile plane normal as the local tangent and joins crossings
+with cubic transitions plus a straight middle span. The current default assigns
+one quarter of each span to each transition; the solver also supports independent
+approach/departure lengths, clamped proportionally to avoid overlap. Exact curves
+are retained while Custom Graphics uses adaptive sampling at 0.05 mm chord error.
+Normal signs follow the stored traversal; points are never sorted by proximity.
+Coincident consecutive profiles and unavoidable collinear reversals are rejected.
+Gate aperture packing is still validated, but minimum bend radius and whole-span
+collision/clearance validation remain pending, as does solid body generation.
+
+Deferred UI work: follow Fusion’s light/dark theme and automatic host theme changes.

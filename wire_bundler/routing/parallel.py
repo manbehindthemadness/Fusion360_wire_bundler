@@ -8,38 +8,7 @@ import math
 from dataclasses import dataclass
 from uuid import UUID
 
-
-@dataclass(frozen=True)
-class Vector3:
-    """
-    Store one point or direction in millimeters.
-
-    Args:
-        x: X coordinate.
-        y: Y coordinate.
-        z: Z coordinate.
-    """
-
-    x: float
-    y: float
-    z: float
-
-    def translated(self, direction: Vector3, distance: float) -> Vector3:
-        """
-        Return this point translated along a direction.
-
-        Args:
-            direction: Translation direction.
-            distance: Signed translation distance.
-
-        Returns:
-            Translated point.
-        """
-        return Vector3(
-            self.x + direction.x * distance,
-            self.y + direction.y * distance,
-            self.z + direction.z * distance,
-        )
+from .geometry import CubicBezier, Vector3
 
 
 @dataclass(frozen=True)
@@ -97,11 +66,13 @@ class RoutePreview:
         wire_id: Persistent conductor identity.
         wire_number: Stable user-facing identifier.
         points: Source, ordered gate crossings, and destination.
+        curves: Exact local cubic transitions, populated by the fairing stage.
     """
 
     wire_id: UUID
     wire_number: str
     points: tuple[Vector3, ...]
+    curves: tuple[CubicBezier, ...] = ()
 
 
 class GateCapacityError(ValueError):

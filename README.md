@@ -1,6 +1,6 @@
 # Fusion 360 Wire Bundler
 
-Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, and harness assemblies. The current milestone records reusable pathways, pairs ordered End A and End B profiles into stable logical wires, and previews parallel-wire centerlines through circular routing gates. Creating a harness stores a versioned draft definition, converts an active Part design to Hybrid intent, or creates an external component in Fusion's active cloud folder when working in an Assembly design.
+Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, and harness assemblies. The current milestone records reusable pathways, pairs ordered End A and End B profiles into stable logical wires, and previews smooth, oriented wire centerlines through circular routing gates. Creating a harness stores a versioned draft definition, converts an active Part design to Hybrid intent, or creates an external component in Fusion's active cloud folder when working in an Assembly design.
 
 ## Current milestone
 
@@ -30,6 +30,7 @@ Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, an
 - Click-to-highlight Fusion profiles for gates, connections, and wire endpoint pairs
 - Stable wire, connection, profile, pathway, and routing-control identities
 - Deterministic hexagonal wire packing with circular-gate capacity checks
+- Smooth cubic transitions perpendicular to gate and end-profile planes, preserving ordered crossings and straight middle spans. Automatic transitions each occupy one quarter of their adjacent span.
 - Lightweight, selectable Custom Graphics centerline previews with explicit clearing
 - Active previews refresh affected routing groups after member edits and redraw only changed paths, preserving unrelated graphics.
 - Persistent Fusion entity tokens with reload-time linked-geometry health reporting
@@ -55,7 +56,7 @@ This repository directory is already located under Fusion's `API/AddIns` directo
 11. Select either end node in Wire Routes and confirm its child editor shows only that wire's endpoint profile. Enter independent end names and confirm the nodes show them. Edit Wire Name and Pathway Name; name the start and end above/below the gate traversal list. Confirm the route reads `End A: Data input → lower fuse box path from O2-sensor to CAN_BUS-ctrl → End B: Data output`, persists after refresh, and restores generated fallbacks when optional labels are cleared.
 12. Expand Pathways & Occupancy, then expand one pathway and its independent Gates · Traversal Order and Wire Occupancy children. Confirm the occupancy child identifies every wire plus whether it enters at End A, arrives from a previous pathway, continues onward, or exits at End B. Click gate, end, occupancy, and wire rows and confirm Fusion highlights the referenced profile or end pair.
 13. Use **+ Add Gates** and **+ Add Wire Pairs** inside the appropriate pathway child and confirm the native dialog targets that pathway. Remove a gate and wire pair, confirming each destructive action first; a pathway's last gate must not be removable.
-14. Select **Preview Routes** and confirm one colored, selectable centerline appears per wire through every gate. These are transient piecewise-linear previews; no solid wire bodies are generated yet.
+14. Select **Preview Routes** and confirm one colored, selectable centerline appears per wire through every gate. These are transient smooth centerlines sampled for display; no solid wire bodies are generated yet. Check perpendicular entry/exit at gates and end profiles, with straight middle spans.
 15. With a preview active, replace an end member or change a wire diameter; confirm changed centerlines refresh while unaffected paths remain visible. Removing the last end member hides the incomplete wire's path; restoring the end brings it back. Select **Clear Preview**, edit again, and confirm the preview stays off. Preview again, stop the add-in, and confirm teardown removes it.
 16. Reduce a circular gate until the packed wire envelopes no longer fit, then preview and confirm the error identifies that gate instead of drawing partial results.
 17. Refresh, close and reopen the palette, then stop and run the add-in; confirm the definitions and linked-geometry status survive while previews remain transient.
@@ -121,7 +122,7 @@ F360WireGenerator/               Unrelated third-party example repository
 
 ## Domain boundary
 
-`wire_bundler/domain/`, `wire_bundler/application/`, and `wire_bundler/routing/` have no Fusion dependency. They define and transactionally persist harness drafts and solve deterministic parallel-wire crossings independently of the host. `wire_bundler/fusion/` owns Fusion persistence, profile/frame translation, linked-geometry health checks, viewport selection, and transient centerline graphics. Current routing supports circular routing gates, zero additional clearance by default, and piecewise-linear previews. Ordered gate and endpoint-pairing edits update the versioned definition transactionally and invalidate stale previews. Spline fairing, configurable clearance, profile-gate/ribbon routing, connection renaming, final swept bodies, terminators, and full span collision analysis remain future milestones.
+`wire_bundler/domain/`, `wire_bundler/application/`, and `wire_bundler/routing/` have no Fusion dependency. They define and transactionally persist harness drafts and solve deterministic parallel-wire crossings independently of the host. `wire_bundler/fusion/` owns Fusion persistence, profile/frame translation, linked-geometry health checks, viewport selection, and transient centerline graphics. Current routing supports circular routing gates, zero additional clearance by default, and tangent-continuous cubic transitions. Exact cubic geometry is retained separately from ordered crossings and adaptively sampled to a 0.05 mm chord tolerance for display. The host-independent fairing API supports independent approach/departure lengths and proportional clamping; the current Fusion adapter uses automatic quarter-span lengths. Ordered gate and endpoint-pairing edits update the versioned definition transactionally and invalidate stale previews. User-facing transition controls, configurable clearance, profile-gate/ribbon routing, final swept bodies, minimum bend-radius checks, and full span collision analysis remain future milestones.
 
 Undo/Redo host verification (pending): with an active preview, rename a wire,
 drag an end member, reorder gates, change diameter, and remove a wire. For each,
@@ -132,3 +133,5 @@ palette expansion stays intact and hovering does not invalidate Redo. Verify a
 failed edit leaves no partial definition or graphics, and stop/start removes and
 re-registers the command-completion handler. Use an unsaved test design; the local
 Fusion MCP endpoint was unavailable during automated verification.
+
+Deferred UI follow-up: match Fusion’s light/dark color scheme, including automatic host/OS theme changes. The current palette remains light when the host switches to dark.

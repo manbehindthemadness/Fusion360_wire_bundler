@@ -32,6 +32,8 @@ from wire_bundler.domain import (  # noqa: E402
     validate_harness,
 )
 from wire_bundler.fusion import FusionHarnessGateway, show_route_previews  # noqa: E402
+from wire_bundler.routing import Vector3, sample_centerline  # noqa: E402
+from wire_bundler.routing.geometry import cross, magnitude, unit  # noqa: E402
 
 SCENARIO_NAME = "reference_harness"
 ARTIFACT_ROOT = ADDIN_ROOT / "artifacts" / "verification"
@@ -182,6 +184,17 @@ def run(_context: object) -> None:
                 raise AssertionError("Route preview changed stable wire order.")
             if any(len(route.points) != 5 for route in route_previews):
                 raise AssertionError("Route preview did not traverse every ordered gate.")
+            for route in route_previews:
+                if len(route.curves) != 12:
+                    raise AssertionError("Route preview did not create bounded smooth transitions.")
+                for index, point in enumerate(route.points[:-1]):
+                    curve = route.curves[index * 3]
+                    if curve.start != point:
+                        raise AssertionError("Fairing moved an ordered profile crossing.")
+                    if magnitude(cross(unit(curve.derivative(0.0)), Vector3(0, 0, 1))) > 1e-9:
+                        raise AssertionError("Route did not cross its XY profile perpendicularly.")
+                if len(sample_centerline(route)) <= len(route.points):
+                    raise AssertionError("Curved preview was not tessellated for display.")
             application.activeViewport.refresh()
 
         with report.step("Rediscover harness through Fusion metadata"):

@@ -14,7 +14,8 @@ from uuid import UUID
 import pytest
 
 from wire_bundler.domain import HarnessDefinition
-from wire_bundler.routing import RoutePreview, Vector3
+from wire_bundler.routing import GateFrame, RoutePreview, Vector3, fair_route, sample_centerline
+from wire_bundler.routing.geometry import cross, magnitude, unit
 
 
 class _PreviewModule(Protocol):
@@ -26,6 +27,8 @@ class _PreviewModule(Protocol):
     _PreviewState: Callable[..., object]
     _solve_definition_routes: Callable[..., tuple[RoutePreview, ...]]
     _add_route_graphics: Callable[..., None]
+    _gate_frame: Callable[..., GateFrame]
+    _profile_frame: Callable[[object, str], tuple[Vector3, Vector3]]
     refresh_route_previews: Callable[[object, HarnessDefinition], tuple[str, ...]]
     clear_route_previews: Callable[[object], None]
     reconcile_preview_history: Callable[[object, tuple[HarnessDefinition, ...]], None]
@@ -82,6 +85,8 @@ class _Scenario:
     routes: dict[UUID, RoutePreview]
     solves: list[tuple[UUID, ...]]
     draws: list[UUID]
+    solve_definition: Callable[[object, HarnessDefinition, float], tuple[RoutePreview, ...]]
+    draw_route: Callable[[object, RoutePreview, int], None]
 
 
 @pytest.fixture
@@ -126,6 +131,7 @@ def scenario(monkeypatch: pytest.MonkeyPatch, valid_harness: HarnessDefinition) 
         {wire.wire_id: index for index, wire in enumerate(definition.wires)},
         0.25,
     )
+    # noinspection PyProtectedMember
     state = _Scenario(
         module,
         definition,
@@ -134,6 +140,8 @@ def scenario(monkeypatch: pytest.MonkeyPatch, valid_harness: HarnessDefinition) 
         routes,
         [],
         [],
+        module._solve_definition_routes,
+        module._add_route_graphics,
     )
 
     def solve(
@@ -387,3 +395,80 @@ def test_undo_clear_preview_recovers_cache(scenario: _Scenario) -> None:
     scenario.module.refresh_route_previews(scenario.design, scenario.definition)
     assert scenario.solves == []
     assert scenario.draws == []
+
+
+def test_adapter_fairs_all_end_members_in_stored_order(
+    scenario: _Scenario, monkeypatch: pytest.MonkeyPatch, valid_harness: HarnessDefinition
+) -> None:
+    """
+    Translate every profile normal and retain reversed end-B traversal through fairing.
+    """
+    definition = replace(
+        valid_harness,
+        connections=(
+            replace(valid_harness.connections[0], additional_entity_tokens=("a-guide",)),
+            replace(valid_harness.connections[1], additional_entity_tokens=("b-guide",)),
+        ),
+    )
+    frames = {
+        definition.connections[0].entity_token: (Vector3(0, 0, 0), Vector3(1, 0, 1)),
+        "a-guide": (Vector3(0, 0, 4), Vector3(0, 1, 1)),
+        "b-guide": (Vector3(0, 0, 16), Vector3(0, 1, 1)),
+        definition.connections[1].entity_token: (Vector3(0, 0, 20), Vector3(1, 0, 1)),
+    }
+    calls: list[str] = []
+
+    def profile_frame(_design: object, token: str) -> tuple[Vector3, Vector3]:
+        """
+        Resolve an explicitly identified profile without proximity inference.
+        """
+        calls.append(token)
+        return frames[token]
+
+    gate = GateFrame(UUID(int=4), "Gate", Vector3(0, 0, 10), Vector3(1, 0, 0), Vector3(0, 1, 0), 10)
+    monkeypatch.setattr(scenario.module, "_gate_frame", lambda *_args: gate)
+    monkeypatch.setattr(scenario.module, "_profile_frame", profile_frame)
+    route = scenario.solve_definition(scenario.design, definition, 0.0)[0]
+    assert [point.z for point in route.points] == [0, 4, 10, 16, 20]
+    assert set(calls) == set(frames)
+    assert len(calls) == 4
+    assert len(route.curves) == 12
+    expected_normals = (Vector3(1, 0, 1), Vector3(0, 1, 1), Vector3(0, 0, 1), Vector3(0, 1, 1))
+    for index, normal in enumerate(expected_normals):
+        tangent = route.curves[index * 3].derivative(0.0)
+        assert magnitude(cross(unit(tangent), unit(normal))) < 1e-10
+
+
+def test_graphics_use_sampled_curves_in_fusion_units(scenario: _Scenario) -> None:
+    """
+    Send curved samples, rather than just crossings, to the host line renderer.
+    """
+    route = fair_route(
+        RoutePreview(UUID(int=1), "001", (Vector3(0, 0, 0), Vector3(0, 0, 100))),
+        (Vector3(1, 0, 1), Vector3(0, 1, 1)),
+    )
+    coordinates: list[float] = []
+    lines = SimpleNamespace()
+
+    def capture(values: list[float]) -> object:
+        """
+        Record the coordinates passed across the millimeter/centimeter boundary.
+        """
+        coordinates.extend(values)
+        return object()
+
+    core = sys.modules["adsk.core"]
+    fusion = sys.modules["adsk.fusion"]
+    vars(core)["Color"] = SimpleNamespace(create=lambda *_args: object())
+    vars(fusion)["CustomGraphicsCoordinates"] = SimpleNamespace(create=capture)
+    vars(fusion)["CustomGraphicsSolidColorEffect"] = SimpleNamespace(create=lambda _color: object())
+    wire_group = SimpleNamespace(addLines=lambda *_args: lines)
+    owner = SimpleNamespace(addGroup=lambda: wire_group)
+    scenario.draw_route(owner, route, 0)
+    expected = [
+        value / 10 for point in sample_centerline(route) for value in (point.x, point.y, point.z)
+    ]
+    assert coordinates == expected
+    assert len(coordinates) > 6
+    assert wire_group.id == str(route.wire_id)
+    assert lines.weight == 1.0

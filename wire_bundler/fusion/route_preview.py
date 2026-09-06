@@ -16,7 +16,16 @@ import adsk.core
 import adsk.fusion
 
 from ..domain import ControlKind, ControlStructure, HarnessDefinition, WireDefinition
-from ..routing import GateFrame, RoutePreview, Vector3, WireRouteInput, solve_parallel_routes
+from ..routing import (
+    GateFrame,
+    RoutePreview,
+    Vector3,
+    WireRouteInput,
+    fair_route,
+    sample_centerline,
+    solve_parallel_routes,
+)
+from ..routing.geometry import cross, unit
 
 PREVIEW_GROUP_ID = "kev0.wire_bundler.route_preview"
 _PREVIEW_COLORS = (
@@ -357,36 +366,44 @@ def _solve_definition_routes(
         grouped_wires[wire.ordered_control_ids].append(wire)
 
     solved_by_id: dict[UUID, RoutePreview] = {}
+    profile_frames: dict[str, tuple[Vector3, Vector3]] = {}
     for control_ids, untyped_wires in grouped_wires.items():
         gates = tuple(
             _gate_frame(design, controls.get(control_id), control_id) for control_id in control_ids
         )
         route_inputs: list[WireRouteInput] = []
+        route_normals: dict[UUID, tuple[Vector3, ...]] = {}
         for wire in untyped_wires:
             start_connection = connections.get(wire.start_connection_id)
             end_connection = connections.get(wire.end_connection_id)
             profile = profiles.get(wire.profile_id)
             if start_connection is None or end_connection is None or profile is None:
                 raise RuntimeError(f"Wire {wire.wire_number} has incomplete definition references.")
+            for token in (*start_connection.member_tokens, *end_connection.member_tokens):
+                if token not in profile_frames:
+                    profile_frames[token] = _profile_frame(design, token)
+            start_frames = tuple(profile_frames[token] for token in start_connection.member_tokens)
+            end_frames = tuple(profile_frames[token] for token in end_connection.member_tokens)
+            route_normals[wire.wire_id] = (
+                *(frame[1] for frame in start_frames),
+                *(cross(gate.u_direction, gate.v_direction) for gate in gates),
+                *(frame[1] for frame in reversed(end_frames)),
+            )
             route_inputs.append(
                 WireRouteInput(
                     wire_id=wire.wire_id,
                     wire_number=wire.wire_number,
-                    start=_profile_center(design, start_connection.entity_token),
-                    end=_profile_center(design, end_connection.entity_token),
+                    start=start_frames[0][0],
+                    end=end_frames[0][0],
                     diameter_mm=profile.diameter_mm,
-                    start_guides=tuple(
-                        _profile_center(design, token)
-                        for token in start_connection.additional_entity_tokens
-                    ),
-                    end_guides=tuple(
-                        _profile_center(design, token)
-                        for token in end_connection.additional_entity_tokens
-                    ),
+                    start_guides=tuple(frame[0] for frame in start_frames[1:]),
+                    end_guides=tuple(frame[0] for frame in end_frames[1:]),
                 )
             )
         routes = solve_parallel_routes(tuple(route_inputs), gates, clearance_mm)
-        solved_by_id.update((route.wire_id, route) for route in routes)
+        solved_by_id.update(
+            (route.wire_id, fair_route(route, route_normals[route.wire_id])) for route in routes
+        )
     return tuple(solved_by_id[wire.wire_id] for wire in definition.wires)
 
 
@@ -437,23 +454,25 @@ def _gate_frame(
     )
 
 
-def _profile_center(design: adsk.fusion.Design, entity_token: str) -> Vector3:
+def _profile_frame(design: adsk.fusion.Design, entity_token: str) -> tuple[Vector3, Vector3]:
     """
-    Return a profile centroid in model-space millimeters.
+    Return a profile centroid and unit plane normal in model coordinates.
 
     Args:
         design: Fusion design used to resolve the profile.
         entity_token: Stored persistent profile token.
 
     Returns:
-        Model-space centroid.
+        Model-space centroid in millimeters and a dimensionless unit normal.
     """
     profile = _resolve_profile(design, entity_token)
     area_properties = profile.areaProperties()
     if area_properties is None:
         raise RuntimeError("Fusion could not calculate connection-profile area properties.")
     model_centroid = profile.parentSketch.sketchToModelSpace(area_properties.centroid)
-    return _point_to_mm(model_centroid)
+    sketch = profile.parentSketch
+    normal = unit(cross(_vector(sketch.xDirection), _vector(sketch.yDirection)))
+    return _point_to_mm(model_centroid), normal
 
 
 def _resolve_profile(design: adsk.fusion.Design, entity_token: str) -> adsk.fusion.Profile:
@@ -492,8 +511,13 @@ def _add_route_graphics(
         raise RuntimeError(f"Fusion did not create graphics for wire {route.wire_number}.")
     wire_group.id = str(route.wire_id)
     wire_group.name = f"Wire {route.wire_number} Preview"
+    sampled_points = sample_centerline(route)
     coordinates = adsk.fusion.CustomGraphicsCoordinates.create(
-        [coordinate / 10.0 for point in route.points for coordinate in (point.x, point.y, point.z)]
+        [
+            coordinate / 10.0
+            for point in sampled_points
+            for coordinate in (point.x, point.y, point.z)
+        ]
     )
     if coordinates is None:
         raise RuntimeError(f"Fusion did not create coordinates for wire {route.wire_number}.")
