@@ -16,7 +16,13 @@ from uuid import UUID
 
 import pytest
 
-from wire_bundler.domain import HarnessDefinition, WireDefinition
+from wire_bundler.domain import (
+    HarnessDefinition,
+    WireAppearanceReference,
+    WireColor,
+    WireDefinition,
+    WireMaterialSettings,
+)
 from wire_bundler.routing import CubicBezier, RoutePreview, Vector3
 
 
@@ -29,8 +35,10 @@ class _SolidsModule(Protocol):
     clear_wire_solids: Callable[..., int]
     solve_route_centerlines: Callable[..., tuple[RoutePreview, ...]]
     build_wire_sweep: Callable[..., None]
+    apply_wire_materials: Callable[..., int]
     _world_to_harness: Callable[..., object]
     _point: Callable[..., object]
+    _wire_appearance: Callable[..., object]
 
 
 @pytest.fixture
@@ -274,3 +282,118 @@ def test_transforms_points_into_harness_placement(solids: _SolidsModule) -> None
     assert (point.x, point.y, point.z) == (1, 2, 3)
     point.transformBy.assert_called_once_with(transform)
     transform.invert.assert_called_once()
+
+
+def test_creates_and_reuses_document_insulation_appearance(
+    solids: _SolidsModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Copy Fusion's released generic appearance once and update its opaque color.
+    """
+    color = WireColor("Blue", 35, 94, 190)
+    color_property = SimpleNamespace(value=None)
+    created = SimpleNamespace(
+        appearanceProperties=SimpleNamespace(itemById=lambda identity: color_property)
+    )
+    appearances = Mock()
+    appearances.itemByName.side_effect = (None, created)
+    appearances.addByCopy.return_value = created
+    generic = object()
+    library = SimpleNamespace(
+        appearances=SimpleNamespace(
+            itemById=lambda identity: generic if identity == "Prism-129" else None
+        )
+    )
+    application = SimpleNamespace(
+        materialLibraries=SimpleNamespace(
+            itemById=lambda identity: (
+                library if identity == "BA5EE55E-9982-449B-9D66-9F036540E140" else None
+            )
+        )
+    )
+    core = sys.modules["adsk.core"]
+    core.Application = SimpleNamespace(get=lambda: application)  # type: ignore[attr-defined]
+    core.Color = SimpleNamespace(create=lambda *channels: channels)  # type: ignore[attr-defined]
+    design = SimpleNamespace(appearances=appearances)
+
+    assert solids._wire_appearance(design, color) is created
+    assert color_property.value == (35, 94, 190, 255)
+    appearances.addByCopy.assert_called_once_with(generic, "Wire Bundler Insulation #235EBE")
+    assert solids._wire_appearance(design, color) is created
+    appearances.addByCopy.assert_called_once()
+
+
+def test_copies_selected_fusion_library_appearance(
+    solids: _SolidsModule,
+) -> None:
+    """
+    Preserve a user's library appearance without replacing it with a flat color.
+    """
+    reference = WireAppearanceReference(
+        "custom-library", "My Appearances", "rubber-blue", "Rubber - Blue"
+    )
+    source = object()
+    library = SimpleNamespace(
+        appearances=SimpleNamespace(
+            itemById=lambda identity: source if identity == "rubber-blue" else None
+        )
+    )
+    application = SimpleNamespace(
+        materialLibraries=SimpleNamespace(
+            itemById=lambda identity: library if identity == "custom-library" else None
+        )
+    )
+    core = sys.modules["adsk.core"]
+    core.Application = SimpleNamespace(get=lambda: application)  # type: ignore[attr-defined]
+    created = object()
+    appearances = Mock(itemByName=Mock(return_value=None), addByCopy=Mock(return_value=created))
+    design = SimpleNamespace(appearances=appearances)
+
+    result = solids._wire_appearance(design, WireColor("Blue", 35, 94, 190), reference)
+
+    assert result is created
+    appearances.addByCopy.assert_called_once()
+    assert appearances.addByCopy.call_args.args[0] is source
+    assert "Rubber - Blue" in appearances.addByCopy.call_args.args[1]
+
+
+def test_applies_saved_materials_to_existing_generated_body(
+    solids: _SolidsModule,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Recolor generated output and refresh its resolved material metadata in place.
+    """
+    blue = WireColor("Blue", 35, 94, 190)
+    definition = replace(
+        valid_harness,
+        material_defaults=WireMaterialSettings(
+            insulation_material="ETFE",
+            main_color=blue,
+            part_number="WB-001",
+        ),
+    )
+    metadata = {"wire_id": str(definition.wires[0].wire_id), "length_mm": 42.0}
+    attribute = SimpleNamespace(value=json.dumps(metadata))
+    body = SimpleNamespace(appearance=None)
+    bodies = SimpleNamespace(count=1, item=lambda _index: body)
+    component = SimpleNamespace(
+        attributes=SimpleNamespace(itemByName=lambda *_args: attribute),
+        bRepBodies=bodies,
+    )
+    occurrence = SimpleNamespace(component=component)
+    harness = SimpleNamespace(occurrences=(occurrence,))
+    appearance = object()
+    monkeypatch.setattr(
+        solids, "_wire_appearance", lambda _design, _color, _reference=None: appearance
+    )
+
+    assert solids.apply_wire_materials(object(), harness, definition) == 1
+    assert body.appearance is appearance
+    stored = json.loads(attribute.value)
+    assert stored["length_mm"] == 42.0
+    assert stored["main_color"] == "#235EBE"
+    assert stored["insulation_material"] == "ETFE"
+    assert stored["part_number"] == "WB-001"

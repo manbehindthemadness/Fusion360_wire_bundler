@@ -8,7 +8,7 @@ import json
 import traceback
 from dataclasses import asdict
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 from uuid import UUID
 
 # noinspection PyUnresolvedReferences
@@ -23,6 +23,7 @@ from .application import (
     append_pathway_gates,
     create_empty_harness,
     load_harnesses,
+    load_wire_material_catalog,
     move_pathway_gate,
     move_wire_endpoint,
     remove_pathway_gate,
@@ -30,12 +31,24 @@ from .application import (
     rename_pathway,
     rename_route_end,
     rename_wire,
+    set_harness_material_defaults,
     set_wire_diameter,
+    set_wire_material_overrides,
     suggest_harness_name,
     suggest_pathway_name,
 )
 from .application.edit_harness import edit_end_members, set_interpolation
-from .domain import HarnessDefinition, RoutingMode, loads
+from .domain import (
+    HarnessDefinition,
+    RoutingMode,
+    StripePattern,
+    WireAppearanceReference,
+    WireColor,
+    WireMaterialOverrides,
+    WireMaterialSettings,
+    WireStripe,
+    loads,
+)
 from .domain.codec import parse_interpolation
 from .fusion import (
     FusionHarnessGateway,
@@ -50,7 +63,7 @@ from .fusion.route_preview import (
     refresh_route_previews,
     reset_preview_history,
 )
-from .fusion.wire_solids import clear_wire_solids, generate_wire_solids
+from .fusion.wire_solids import apply_wire_materials, clear_wire_solids, generate_wire_solids
 
 COMMAND_ID = "kev0_wire_bundler_harness_builder"
 CREATE_COMMAND_ID = "kev0_wire_bundler_create_harness"
@@ -110,6 +123,8 @@ _PALETTE_EDIT_NAMES = {
     "rename_pathway": "Rename Pathway",
     "rename_wire": "Rename Wire",
     "set_wire_diameter": "Change Wire Diameter",
+    "set_harness_material_defaults": "Change Harness Wire Materials",
+    "set_wire_material_overrides": "Change Wire Materials",
     "set_interpolation": "Change Interpolation Options",
     "remove_end_member": "Remove End Member",
     "move_end_member": "Reorder End Members",
@@ -154,8 +169,14 @@ class _PaletteEditExecuteHandler(adsk.core.CommandEventHandler):
                 _clear_solids(application, data)
                 return
             notice = _apply_palette_edit(application, action, data)
+            harness_id = _read_payload_uuid(_read_palette_payload(data), "harnessId", "harness")
+            if action in {"set_harness_material_defaults", "set_wire_material_overrides"}:
+                notice = f"{notice} {_apply_generated_materials(application, harness_id)}".strip()
             warning = _refresh_active_preview(
-                application, _read_payload_uuid(_read_palette_payload(data), "harnessId", "harness")
+                application,
+                harness_id,
+                ensure_visible=action
+                in {"set_harness_material_defaults", "set_wire_material_overrides"},
             )
             application.activeViewport.refresh()
             _send_palette_state(application, f"{notice} {warning}".strip())
@@ -972,6 +993,25 @@ class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
             if html_args.action == "get_state":
                 html_args.returnData = _serialize_palette_state(application)
                 return
+            if html_args.action == "get_appearance_libraries":
+                html_args.returnData = json.dumps(
+                    {"ok": True, "libraries": _appearance_libraries_payload(application)},
+                    sort_keys=True,
+                )
+                return
+            if html_args.action == "get_library_appearances":
+                payload = _read_palette_payload(html_args.data)
+                library_id = payload.get("libraryId")
+                if not isinstance(library_id, str) or not library_id.strip():
+                    raise ValueError("Appearance-library request requires a library ID.")
+                html_args.returnData = json.dumps(
+                    {
+                        "ok": True,
+                        "appearances": _library_appearances_payload(application, library_id),
+                    },
+                    sort_keys=True,
+                )
+                return
             if html_args.action == "create_harness":
                 command_definition = application.userInterface.commandDefinitions.itemById(
                     CREATE_COMMAND_ID
@@ -1293,18 +1333,48 @@ def _show_palette(application: adsk.core.Application) -> None:
     _send_palette_state(application)
 
 
-def _refresh_active_preview(application: adsk.core.Application, harness_id: UUID) -> str:
+def _refresh_active_preview(
+    application: adsk.core.Application,
+    harness_id: UUID,
+    *,
+    ensure_visible: bool = False,
+) -> str:
     """
-    Refresh an already displayed harness preview after its edit has been saved.
+    Refresh a harness preview after its edit has been saved.
 
-    Preview failures are notices, not failures of the persisted edit itself.
+    Material edits can request a visible preview so their stripe presentation is
+    immediate even when Preview Routes was not already active. Preview failures
+    are notices, not failures of the persisted edit itself.
     """
     design = _require_active_design(application)
     definition = loads(_create_harness_gateway(application).read_harness_definition(harness_id))
-    warnings = refresh_route_previews(design, definition)
+    if (
+        ensure_visible
+        and definition.wires
+        and any(definition.wire_materials(wire).stripes for wire in definition.wires)
+    ):
+        warnings: tuple[str, ...] = ()
+        show_route_previews(design, definition)
+    else:
+        warnings = refresh_route_previews(design, definition)
     for warning in warnings:
         _log_to_fusion(warning)
     return " ".join(warnings)
+
+
+def _apply_generated_materials(application: adsk.core.Application, harness_id: UUID) -> str:
+    """
+    Update existing generated bodies after a material definition is saved.
+    """
+    design = _require_active_design(application)
+    gateway = _create_harness_gateway(application)
+    definition = loads(gateway.read_harness_definition(harness_id))
+    count = apply_wire_materials(
+        design,
+        gateway.harness_component(harness_id),
+        definition,
+    )
+    return f"Applied materials to {count} generated wire{'s' if count != 1 else ''}."
 
 
 def _send_palette_state(
@@ -1340,6 +1410,7 @@ def _serialize_palette_state(
     """
     gateway = _create_harness_gateway(application)
     results = load_harnesses(gateway)
+    catalog = load_wire_material_catalog()
     harnesses: list[dict[str, object]] = []
     for result in results:
         definition = result.definition
@@ -1361,6 +1432,7 @@ def _serialize_palette_state(
                 "routingMode": _ROUTING_MODE_LABELS[definition.routing_mode],
                 "gateDefaults": asdict(definition.gate_defaults),
                 "endDefaults": asdict(definition.end_defaults),
+                "materialDefaults": _material_settings_payload(definition.material_defaults),
                 "profiles": [
                     {
                         "profileId": str(profile.profile_id),
@@ -1434,6 +1506,8 @@ def _serialize_palette_state(
                         "orderedControlIds": [
                             str(control_id) for control_id in wire.ordered_control_ids
                         ],
+                        "materials": _material_settings_payload(definition.wire_materials(wire)),
+                        "materialOverrides": _material_overrides_payload(wire.material_overrides),
                     }
                     for wire in definition.wires
                 ],
@@ -1441,8 +1515,134 @@ def _serialize_palette_state(
                 "validationMessages": result.validation_messages,
             }
         )
-    payload = {"harnesses": harnesses, "notice": notice or _last_command_error, "ok": True}
+    payload = {
+        "catalog": {
+            "insulationMaterials": list(catalog.insulation_materials),
+            "conductorMaterials": list(catalog.conductor_materials),
+            "colors": [_color_payload(color) for color in catalog.colors],
+            "stripePatterns": [pattern.value for pattern in catalog.stripe_patterns],
+        },
+        "harnesses": harnesses,
+        "notice": notice or _last_command_error,
+        "ok": True,
+    }
     return json.dumps(payload, sort_keys=True)
+
+
+def _color_payload(color: WireColor) -> dict[str, object]:
+    """
+    Convert a stored wire color for the HTML palette.
+    """
+    return {
+        "name": color.name,
+        "red": color.red,
+        "green": color.green,
+        "blue": color.blue,
+        "hex": color.hex_rgb,
+    }
+
+
+def _appearance_reference_payload(
+    appearance: Optional[WireAppearanceReference],
+) -> Optional[dict[str, str]]:
+    """
+    Convert an optional stored Fusion appearance reference for the palette.
+    """
+    if appearance is None:
+        return None
+    return {
+        "libraryId": appearance.library_id,
+        "libraryName": appearance.library_name,
+        "appearanceId": appearance.appearance_id,
+        "appearanceName": appearance.appearance_name,
+    }
+
+
+def _appearance_libraries_payload(
+    application: adsk.core.Application,
+) -> list[dict[str, str]]:
+    """
+    List installed Fusion appearance libraries without loading their contents.
+    """
+    libraries = application.materialLibraries
+    result: list[dict[str, str]] = []
+    for index in range(libraries.count):
+        library = libraries.item(index)
+        if library is not None:
+            result.append({"id": library.id, "name": library.name})
+    result.sort(key=lambda item: item["name"].casefold())
+    return result
+
+
+def _library_appearances_payload(
+    application: adsk.core.Application,
+    library_id: str,
+) -> list[dict[str, str]]:
+    """
+    List appearances from one explicitly selected installed Fusion library.
+    """
+    library = application.materialLibraries.itemById(library_id)
+    if library is None:
+        raise ValueError("The selected Fusion appearance library is unavailable.")
+    appearances = library.appearances
+    result: list[dict[str, str]] = []
+    for index in range(appearances.count):
+        appearance = appearances.item(index)
+        if appearance is not None:
+            result.append({"id": appearance.id, "name": appearance.name})
+    result.sort(key=lambda item: item["name"].casefold())
+    return result
+
+
+def _stripe_payload(stripe: WireStripe) -> dict[str, object]:
+    """
+    Convert one ordered procedural stripe for the HTML palette.
+    """
+    return {
+        "color": _color_payload(stripe.color),
+        "widthMm": stripe.width_mm,
+        "pattern": stripe.pattern.value,
+        "angleDeg": stripe.angle_deg,
+        "repeatMm": stripe.repeat_mm,
+    }
+
+
+def _material_settings_payload(settings: WireMaterialSettings) -> dict[str, object]:
+    """
+    Convert resolved material settings for editing and display.
+    """
+    return {
+        "insulationMaterial": settings.insulation_material,
+        "mainColor": _color_payload(settings.main_color),
+        "appearance": _appearance_reference_payload(settings.appearance),
+        "stripes": [_stripe_payload(stripe) for stripe in settings.stripes],
+        "conductorMaterial": settings.conductor_material,
+        "manufacturer": settings.manufacturer,
+        "partNumber": settings.part_number,
+        "notes": settings.notes,
+    }
+
+
+def _material_overrides_payload(overrides: WireMaterialOverrides) -> dict[str, object]:
+    """
+    Preserve null inheritance markers at the palette boundary.
+    """
+    return {
+        "insulationMaterial": overrides.insulation_material,
+        "mainColor": (
+            None if overrides.main_color is None else _color_payload(overrides.main_color)
+        ),
+        "appearance": _appearance_reference_payload(overrides.appearance),
+        "stripes": (
+            None
+            if overrides.stripes is None
+            else [_stripe_payload(stripe) for stripe in overrides.stripes]
+        ),
+        "conductorMaterial": overrides.conductor_material,
+        "manufacturer": overrides.manufacturer,
+        "partNumber": overrides.part_number,
+        "notes": overrides.notes,
+    }
 
 
 def _report_failure(operation: str) -> None:
@@ -1715,6 +1915,21 @@ def _apply_palette_edit(
             harness_id, _read_payload_uuid(payload, "wireId", "wire"), diameter, gateway
         )
         return "Saved wire diameter."
+    if action == "set_harness_material_defaults":
+        set_harness_material_defaults(
+            harness_id,
+            _read_material_settings(payload.get("materials")),
+            gateway,
+        )
+        return "Saved harness wire-material defaults."
+    if action == "set_wire_material_overrides":
+        set_wire_material_overrides(
+            harness_id,
+            _read_payload_uuid(payload, "wireId", "wire"),
+            _read_material_overrides(payload.get("overrides")),
+            gateway,
+        )
+        return "Saved wire-material overrides."
     if action in {"rename_pathway", "rename_wire"}:
         name = payload.get("name")
         if not isinstance(name, str):
@@ -1929,6 +2144,155 @@ def _read_payload_offset(payload: dict[str, object]) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise ValueError("Harness Builder move request is missing an integer offset.")
     return value
+
+
+def _read_material_color(raw_value: object) -> WireColor:
+    """
+    Parse one named RGB color supplied by the local HTML palette.
+    """
+    if not isinstance(raw_value, dict):
+        raise ValueError("Wire color must be an object.")
+    name = raw_value.get("name")
+    red = raw_value.get("red")
+    green = raw_value.get("green")
+    blue = raw_value.get("blue")
+    if not isinstance(name, str):
+        raise ValueError("Wire color requires a name.")
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in (red, green, blue)):
+        raise ValueError("Wire color requires integer red, green, and blue channels.")
+    return WireColor(name, cast(int, red), cast(int, green), cast(int, blue))
+
+
+def _read_appearance_reference(raw_value: object) -> Optional[WireAppearanceReference]:
+    """
+    Parse an optional Fusion library appearance supplied by the local palette.
+    """
+    if raw_value is None:
+        return None
+    if not isinstance(raw_value, dict):
+        raise ValueError("Wire appearance must be an object or null.")
+    values = []
+    for key in ("libraryId", "libraryName", "appearanceId", "appearanceName"):
+        value = raw_value.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Wire appearance requires complete library and appearance details.")
+        values.append(value)
+    return WireAppearanceReference(*values)
+
+
+def _read_material_stripes(raw_value: object) -> tuple[WireStripe, ...]:
+    """
+    Parse ordered procedural stripes supplied by the local HTML palette.
+    """
+    if not isinstance(raw_value, list):
+        raise ValueError("Wire stripes must be a list.")
+    stripes: list[WireStripe] = []
+    for index, raw_stripe in enumerate(raw_value):
+        if not isinstance(raw_stripe, dict):
+            raise ValueError(f"Stripe {index + 1} must be an object.")
+        width = raw_stripe.get("widthMm")
+        angle = raw_stripe.get("angleDeg", 0.0)
+        repeat = raw_stripe.get("repeatMm")
+        pattern = raw_stripe.get("pattern")
+        if (
+            isinstance(width, bool)
+            or not isinstance(width, (int, float))
+            or isinstance(angle, bool)
+            or not isinstance(angle, (int, float))
+            or (
+                repeat is not None
+                and (isinstance(repeat, bool) or not isinstance(repeat, (int, float)))
+            )
+            or not isinstance(pattern, str)
+        ):
+            raise ValueError(f"Stripe {index + 1} has invalid dimensions or pattern.")
+        stripes.append(
+            WireStripe(
+                color=_read_material_color(raw_stripe.get("color")),
+                width_mm=float(width),
+                pattern=StripePattern(pattern),
+                angle_deg=float(angle),
+                repeat_mm=None if repeat is None else float(repeat),
+            )
+        )
+    return tuple(stripes)
+
+
+def _read_material_text(
+    values: dict[str, object],
+    key: str,
+    label: str,
+    *,
+    required: bool,
+) -> str:
+    """
+    Read a material text field and optionally require non-whitespace content.
+    """
+    value = values.get(key)
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be text.")
+    if required and not value.strip():
+        raise ValueError(f"{label} must not be empty.")
+    return value
+
+
+def _read_material_settings(raw_value: object) -> WireMaterialSettings:
+    """
+    Parse complete parent material settings supplied by the palette.
+    """
+    if not isinstance(raw_value, dict):
+        raise ValueError("Harness wire-material settings must be an object.")
+    return WireMaterialSettings(
+        insulation_material=_read_material_text(
+            raw_value, "insulationMaterial", "Insulation material", required=True
+        ),
+        main_color=_read_material_color(raw_value.get("mainColor")),
+        appearance=_read_appearance_reference(raw_value.get("appearance")),
+        stripes=_read_material_stripes(raw_value.get("stripes")),
+        conductor_material=_read_material_text(
+            raw_value, "conductorMaterial", "Conductor material", required=True
+        ),
+        manufacturer=_read_material_text(raw_value, "manufacturer", "Manufacturer", required=False),
+        part_number=_read_material_text(raw_value, "partNumber", "Part number", required=False),
+        notes=_read_material_text(raw_value, "notes", "Notes", required=False),
+    )
+
+
+def _read_material_overrides(raw_value: object) -> WireMaterialOverrides:
+    """
+    Parse nullable wire overrides; null values retain parent inheritance.
+    """
+    if not isinstance(raw_value, dict):
+        raise ValueError("Wire-material overrides must be an object.")
+    values = raw_value
+
+    def optional_text(key: str, label: str, required: bool = False) -> Optional[str]:
+        """
+        Preserve null inheritance or validate one explicit text override.
+        """
+        value = values.get(key)
+        if value is None:
+            return None
+        return _read_material_text(values, key, label, required=required)
+
+    return WireMaterialOverrides(
+        insulation_material=optional_text(
+            "insulationMaterial", "Insulation material", required=True
+        ),
+        main_color=(
+            None
+            if values.get("mainColor") is None
+            else _read_material_color(values.get("mainColor"))
+        ),
+        appearance=_read_appearance_reference(values.get("appearance")),
+        stripes=(
+            None if values.get("stripes") is None else _read_material_stripes(values.get("stripes"))
+        ),
+        conductor_material=optional_text("conductorMaterial", "Conductor material", required=True),
+        manufacturer=optional_text("manufacturer", "Manufacturer"),
+        part_number=optional_text("partNumber", "Part number"),
+        notes=optional_text("notes", "Notes"),
+    )
 
 
 def _preview_routes(application: adsk.core.Application, serialized_data: str) -> int:

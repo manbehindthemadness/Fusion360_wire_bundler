@@ -18,6 +18,8 @@ from ..domain import (
     PathwayDefinition,
     RoutingMode,
     WireDefinition,
+    WireMaterialOverrides,
+    WireMaterialSettings,
     dumps,
     loads,
     next_available_name,
@@ -446,6 +448,57 @@ def set_wire_diameter(
         for item in definition.wires
     )
     _persist(harness_id, original, replace(definition, profiles=profiles, wires=wires), gateway)
+
+
+def set_harness_material_defaults(
+    harness_id: UUID,
+    settings: WireMaterialSettings,
+    gateway: HarnessEditGateway,
+) -> None:
+    """
+    Replace the parent material settings inherited by wires without overrides.
+
+    Args:
+        harness_id: Harness whose defaults are changing.
+        settings: Complete replacement defaults.
+        gateway: Persistence boundary participating in the Fusion transaction.
+    """
+    if not isinstance(settings, WireMaterialSettings):
+        raise ValueError("Harness material defaults are invalid.")
+    original, definition = _read_definition(harness_id, gateway)
+    _persist(
+        harness_id,
+        original,
+        replace(definition, material_defaults=settings),
+        gateway,
+    )
+
+
+def set_wire_material_overrides(
+    harness_id: UUID,
+    wire_id: UUID,
+    overrides: WireMaterialOverrides,
+    gateway: HarnessEditGateway,
+) -> None:
+    """
+    Replace one wire's field-level overrides while retaining parent inheritance.
+
+    Args:
+        harness_id: Harness that owns the wire.
+        wire_id: Persistent wire identity.
+        overrides: Nullable overrides; null fields inherit harness defaults.
+        gateway: Persistence boundary participating in the Fusion transaction.
+    """
+    if not isinstance(overrides, WireMaterialOverrides):
+        raise ValueError("Wire material overrides are invalid.")
+    original, definition = _read_definition(harness_id, gateway)
+    if not any(wire.wire_id == wire_id for wire in definition.wires):
+        raise ValueError("Selected wire does not exist in this harness.")
+    wires = tuple(
+        replace(wire, material_overrides=overrides) if wire.wire_id == wire_id else wire
+        for wire in definition.wires
+    )
+    _persist(harness_id, original, replace(definition, wires=wires), gateway)
 
 
 def rename_pathway(

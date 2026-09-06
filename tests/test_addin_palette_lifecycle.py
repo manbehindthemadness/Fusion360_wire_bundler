@@ -17,7 +17,7 @@ from uuid import UUID
 import pytest
 
 from wire_bundler.application import HarnessLoadResult
-from wire_bundler.domain import HarnessDefinition, dumps, loads
+from wire_bundler.domain import HarnessDefinition, WireColor, WireStripe, dumps, loads
 
 
 class _PaletteLifecycleModule(Protocol):
@@ -37,13 +37,16 @@ class _PaletteLifecycleModule(Protocol):
     _graphics_cache_save_document: Optional[object]
     _open_palette_edit: Callable[[object, str, str], None]
     _apply_palette_edit: Callable[[object, str, str], str]
-    _refresh_active_preview: Callable[[object, UUID], str]
+    _refresh_active_preview: Callable[..., str]
+    _apply_generated_materials: Callable[[object, UUID], str]
     _send_palette_state: Callable[[object, str], None]
     reconcile_preview_history: Callable[[object, tuple[HarnessDefinition, ...]], None]
     _ShowPaletteCreatedHandler: type
     _show_palette: Callable[[object], None]
     _create_harness_gateway: Callable[[object], object]
     _serialize_palette_state: Callable[[object, str], str]
+    _appearance_libraries_payload: Callable[[object], list[dict[str, str]]]
+    _library_appearances_payload: Callable[[object, str], list[dict[str, str]]]
     _preview_routes: Callable[[object, str], int]
     _clear_preview: Callable[[object], int]
     _clear_highlight: Callable[[object], None]
@@ -52,6 +55,7 @@ class _PaletteLifecycleModule(Protocol):
     clear_wire_solids: Callable[[object], int]
     has_route_previews: Callable[[object], bool]
     show_route_previews: Callable[..., tuple[object, ...]]
+    refresh_route_previews: Callable[..., tuple[str, ...]]
     _log_to_fusion: Callable[[str], None]
     _member_entity_tokens: Callable[[HarnessDefinition, str, UUID], tuple[str, ...]]
     _highlight_member: Callable[[object, str], int]
@@ -201,6 +205,10 @@ def test_palette_state_contains_complete_editor_definition(
 
     harness = payload["harnesses"][0]
     assert payload["notice"] == "Ready"
+    assert "ETFE" in payload["catalog"]["insulationMaterials"]
+    assert harness["materialDefaults"]["mainColor"]["hex"] == "#202020"
+    assert harness["wires"][0]["materials"] == harness["materialDefaults"]
+    assert harness["wires"][0]["materialOverrides"]["mainColor"] is None
     assert harness["gateDefaults"] == {"approach_mm": None, "departure_mm": None}
     assert harness["connections"][0]["interpolation"] == harness["endDefaults"]
     assert harness["controls"][0]["interpolation"] == harness["gateDefaults"]
@@ -415,11 +423,84 @@ def test_palette_edit_waits_for_execute_and_releases_handlers(
     args = SimpleNamespace(executeFailed=False)
     cast(Mock, handlers[0]).notify(args)
     applied.assert_called_once_with(application, action, payload)
-    refreshed.assert_called_once_with(application, UUID(int=1))
+    refreshed.assert_called_once_with(application, UUID(int=1), ensure_visible=False)
     assert not args.executeFailed
     cast(Mock, cleanup[0]).notify(SimpleNamespace())
     assert handlers[0] not in addin_module._handlers
     assert cleanup[0] not in addin_module._handlers
+
+
+def test_material_save_applies_existing_bodies_and_preview(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Apply saved material settings to persistent solids and active graphics together.
+    """
+    document = object()
+    application = SimpleNamespace(activeDocument=document, activeViewport=Mock())
+    core_module = sys.modules["adsk.core"]
+    core_module.Application = SimpleNamespace(get=lambda: application)  # type: ignore[attr-defined]
+    harness_id = UUID(int=1)
+    applied = Mock(return_value="Saved harness wire-material defaults.")
+    applied_bodies = Mock(return_value="Applied materials to 2 generated wires.")
+    refreshed = Mock(return_value="")
+    sent = Mock()
+    monkeypatch.setattr(addin_module, "_apply_palette_edit", applied)
+    monkeypatch.setattr(addin_module, "_apply_generated_materials", applied_bodies)
+    monkeypatch.setattr(addin_module, "_refresh_active_preview", refreshed)
+    monkeypatch.setattr(addin_module, "_send_palette_state", sent)
+    payload = json.dumps({"harnessId": str(harness_id)})
+    args = SimpleNamespace(executeFailed=False, executeFailedMessage="")
+
+    addin_module._PaletteEditExecuteHandler(
+        ("set_harness_material_defaults", payload, document)
+    ).notify(args)
+
+    applied_bodies.assert_called_once_with(application, harness_id)
+    refreshed.assert_called_once_with(application, harness_id, ensure_visible=True)
+    sent.assert_called_once_with(
+        application,
+        "Saved harness wire-material defaults. Applied materials to 2 generated wires.",
+    )
+    assert not args.executeFailed
+
+
+def test_material_refresh_shows_striped_preview_when_none_is_active(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Create visible stripe graphics as direct feedback for Apply and Save.
+    """
+    stripe = WireStripe(WireColor("White", 245, 245, 245), 0.2)
+    definition = replace(
+        valid_harness,
+        material_defaults=replace(valid_harness.material_defaults, stripes=(stripe,)),
+    )
+    design = object()
+    application = SimpleNamespace(activeProduct=design)
+    gateway = SimpleNamespace(read_harness_definition=lambda _identity: dumps(definition))
+    fusion_module = sys.modules["adsk.fusion"]
+    fusion_module.Design = SimpleNamespace(cast=lambda product: product)  # type: ignore[attr-defined]
+    show = Mock(return_value=(object(),))
+    refresh = Mock()
+    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
+    monkeypatch.setattr(addin_module, "show_route_previews", show)
+    monkeypatch.setattr(addin_module, "refresh_route_previews", refresh)
+
+    assert (
+        addin_module._refresh_active_preview(
+            application,
+            definition.harness_id,
+            ensure_visible=True,
+        )
+        == ""
+    )
+
+    show.assert_called_once_with(design, definition)
+    refresh.assert_not_called()
 
 
 def test_palette_edit_rejects_document_switch(
@@ -605,6 +686,36 @@ def test_clear_preview_palette_event_bypasses_model_edit_command(
         "ok": True,
         "notice": "Cleared 2 route-preview graphics groups.",
     }
+
+
+def test_lists_installed_fusion_appearance_libraries_and_contents(
+    addin_module: _PaletteLifecycleModule,
+) -> None:
+    """
+    Load appearance names only for the library selected in the palette.
+    """
+    appearances = SimpleNamespace(
+        count=2,
+        item=lambda index: (
+            SimpleNamespace(id="blue-id", name="Rubber - Blue"),
+            SimpleNamespace(id="black-id", name="Rubber - Black"),
+        )[index],
+    )
+    library = SimpleNamespace(id="custom-id", name="My Library", appearances=appearances)
+    libraries = SimpleNamespace(
+        count=1,
+        item=lambda _index: library,
+        itemById=lambda identity: library if identity == "custom-id" else None,
+    )
+    application = SimpleNamespace(materialLibraries=libraries)
+
+    assert addin_module._appearance_libraries_payload(application) == [
+        {"id": "custom-id", "name": "My Library"}
+    ]
+    assert addin_module._library_appearances_payload(application, "custom-id") == [
+        {"id": "black-id", "name": "Rubber - Black"},
+        {"id": "blue-id", "name": "Rubber - Blue"},
+    ]
 
 
 def test_preview_reports_dynamic_transition_adjustment_as_information(

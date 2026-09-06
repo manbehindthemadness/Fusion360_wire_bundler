@@ -21,6 +21,9 @@ class Element {
     /** @type {Object.<string, Function>} */
     this.events = {};
     this.attributes = {};
+    this.classList = { add: (...names) => {
+      this.className = [this.className || '', ...names].filter(Boolean).join(' ');
+    } };
     this.textContent = '';
     /** @type {Element|null} */
     this.parentElement = null;
@@ -28,6 +31,10 @@ class Element {
   append(...children) {
     for (const child of children) if (typeof child === 'object') child.parentElement = this;
     this.children.push(...children);
+  }
+  prepend(...children) {
+    for (const child of children) if (typeof child === 'object') child.parentElement = this;
+    this.children.unshift(...children);
   }
   insertBefore(child, reference) {
     child.parentElement = this;
@@ -42,6 +49,10 @@ class Element {
     const editorId = selector.match(/data-editor-id="([^"]+)"/);
     return descendants(this, (child) => editorId
       ? child.dataset.editorId === editorId[1] : child.tag === selector)[0];
+  }
+  querySelectorAll(selector) {
+    const tags = selector.split(',').map((item) => item.trim());
+    return descendants(this, (child) => tags.includes(child.tag));
   }
   focus() {}
   select() {}
@@ -81,8 +92,14 @@ function descendants(root, predicate) {
 
 /** Return three wires sharing one pathway and distinct endpoint profiles. */
 function harness() {
+  const materialDefaults = {
+    insulationMaterial: 'PVC', conductorMaterial: 'Copper',
+    mainColor: { name: 'Black', hex: '#202020' }, appearance: null, stripes: [],
+    manufacturer: '', partNumber: '', notes: '',
+  };
   return {
     harnessId: 'h', profiles: [{ profileId: 'profile', name: 'Profile', diameterMm: 1.5 }], controls: [],
+    materialDefaults,
     pathways: [{ pathwayId: 'p', name: 'lower fuse box path', startName: 'O2-sensor',
       endName: 'CAN_BUS-ctrl', orderedControlIds: [] }],
     connections: [1, 2, 3].flatMap((i) => ['a', 'b'].map((end) => ({
@@ -90,6 +107,10 @@ function harness() {
     }))),
     wires: [1, 2, 3].map((i) => ({ wireId: `w${i}`, wireNumber: `00${i}`,
       profileId: 'profile',
+      materials: materialDefaults,
+      materialOverrides: { insulationMaterial: null, conductorMaterial: null,
+        mainColor: null, appearance: null, stripes: null, manufacturer: null,
+        partNumber: null, notes: null },
       startConnectionId: `a${i}`, endConnectionId: `b${i}`, orderedPathwayIds: ['p'],
       startEndName: i === 1 ? 'Data input' : '', endEndName: i === 1 ? 'Data output' : '',
     })),
@@ -462,4 +483,35 @@ test('event console retains messages and marks failures', () => {
     ['Solving route preview…', 'Wire 001: dynamically adjusted transitions.', 'Sweep failed'],
   );
   assert.equal(entries[2].className, 'notice-entry error');
+});
+
+test('material text fields use controlled autocomplete instead of native datalists', () => {
+  const { context } = palette();
+  const definition = harness();
+  runInNewContext('currentState = { catalog };', Object.assign(context, { catalog: {
+    insulationMaterials: ['PVC', 'ETFE'], conductorMaterials: ['Copper'],
+    colors: [{ name: 'Black', hex: '#202020' }], stripePatterns: [],
+  } }));
+  context.send = async (action) => action === 'get_appearance_libraries'
+    ? { ok: true, libraries: [] } : { ok: true, appearances: [] };
+
+  context.openMaterialOptions(definition);
+
+  const dialog = context.document.body.children.at(-1);
+  assert.equal(descendants(dialog, (item) => item.tag === 'datalist').length, 0);
+  const insulation = descendants(dialog, (item) => item.type === 'text')[0];
+  const choices = descendants(dialog, (item) => item.className === 'autocomplete-suggestions')[0];
+  assert.equal(choices.hidden, true);
+  insulation.events.click();
+  assert.equal(choices.hidden, false);
+  assert.deepEqual(choices.children.map((item) => item.textContent), ['PVC']);
+  insulation.value = '';
+  insulation.events.input();
+  assert.deepEqual(choices.children.map((item) => item.textContent), ['PVC', 'ETFE']);
+});
+
+test('material dialog constrains library controls to its horizontal bounds', () => {
+  const html = readFileSync(join(__dirname, '..', 'palette.html'), 'utf8');
+  assert.match(html, /\.material-options \{[^}]*overflow-x: hidden;/);
+  assert.match(html, /\.material-options select, \.material-options textarea \{[^}]*max-width: 100%;/s);
 });

@@ -938,6 +938,59 @@ A typical creation workflow should be:
 
 ---
 
+# Wire Materials
+
+Every harness owns complete wire-material defaults. Every persistent wire owns
+nullable, field-level overrides. A null wire field inherits the corresponding
+harness field, while an explicit value takes precedence. For ordered stripes,
+null means inherit and an explicit empty list means no stripes.
+
+The material definition includes insulation material, main insulation color,
+zero or more ordered stripes, conductor material, manufacturer, part number,
+and notes. Each stripe stores its color, width, starting angular position,
+pattern, and optional repeat distance. Longitudinal, dashed, and helical
+patterns are represented procedurally so previews, generated geometry, and
+future diagrams consume the same source data.
+
+Insulation and conductor inputs offer searchable bundled suggestions but permit
+custom text. Their controlled autocomplete menus avoid host-native datalist layout
+differences. The main insulation visual may use a named RGB color or an appearance
+selected from any installed Fusion material library. Library and appearance IDs are
+stored with their display names; a per-wire main-color override also owns whether
+that wire uses its own library appearance or plain color. Palette edits use the
+existing native Fusion transaction and document change tracking. The bundled catalog
+is an add-in-relative resource that must be included when the finished add-in is packaged.
+
+The current rendering slice applies resolved main colors to route previews and
+generated wire bodies. A selected library appearance is copied into the active
+document before it is assigned to a body, allowing its renderer properties and
+textures to persist with that document. It renders longitudinal, dashed, and helical
+stripe bands at the wire radius in route previews using a parallel-transported local frame.
+Apply persists and renders without closing the material dialog; Save performs the
+same operation and closes it. Both actions update active previews and recolor
+existing generated bodies without rebuilding their geometry. If stripes exist and
+no preview is active, either action creates the material preview. Stripe graphics are
+two-sided model-space surface meshes whose width is measured in millimeters. A small
+physical surface offset prevents depth conflict with the wire body while ordinary
+depth testing hides the rear surface, so angle remains visible and the band scales
+with model geometry during viewport zoom. The bands sample exact centerline cubics
+at a tighter chord tolerance than the lightweight centerline graphic, and helical
+bands use at least 32 angular steps per repeat to remain conformal through bends.
+Their width is tessellated at no more than ten degrees per face so a broad band's
+flat mesh faces remain outside the circular insulation surface instead of cutting
+through it. Material-dialog grids and native selects are constrained to the dialog's
+content width; only vertical overflow scrolls when the available palette height is
+smaller than the complete form.
+Diagram output and persistent
+stripe face appearances on generated solids remain subsequent consumers. Those face
+appearances can carry stripes into Fusion rendering without relying on transient graphics.
+The conformal preview mesh may also serve as the front surface of optional render
+geometry after adding an underside and end caps. Before implementing that path, verify
+whether Fusion exposes a dependable pre-render event; otherwise expose render preparation
+as an explicit command and keep the resulting bodies clearly application-owned.
+
+---
+
 # Deferred Presentation and Routing Research
 
 The following ideas are explicitly deferred and must not expand the scope or
@@ -955,7 +1008,7 @@ validation milestones:
   bundle axis. Any future design must account for pitch, phase, conductor length,
   bend behavior, and wire-to-wire clearance without changing conductor identity.
 
-* **Wire tips and material assignment**
+* **Wire tips**
   Investigate optional start and end tip bodies that extend outward from their
   connection profiles. Tip length is user-defined and stored canonically in
   millimeters while the UI may display the active Fusion document units. For a
@@ -984,7 +1037,7 @@ validation milestones:
   research questions; do not infer them until verified against the then-current
   Fusion Electrical API and representative designs.
 
-Generated coverings, tips, material assignments, and twist settings should remain
+Generated coverings, tips, and twist settings should remain
 optional, regenerable, and separable from the underlying connection mapping and
 pathway definition.
 

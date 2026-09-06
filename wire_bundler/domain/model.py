@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Optional
 from uuid import UUID, uuid5
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class RoutingMode(str, Enum):
@@ -29,6 +29,227 @@ class ControlKind(str, Enum):
 
     ROUTING_GATE = "routing_gate"
     PROFILE_GATE = "profile_gate"
+
+
+class StripePattern(str, Enum):
+    """
+    Describe how an insulation-identification stripe repeats along a wire.
+    """
+
+    LONGITUDINAL = "longitudinal"
+    DASHED = "dashed"
+    HELICAL = "helical"
+
+
+@dataclass(frozen=True)
+class WireColor:
+    """
+    Store a portable named RGB color independently of Fusion appearances.
+    """
+
+    name: str
+    red: int
+    green: int
+    blue: int
+
+    def __post_init__(self) -> None:
+        """
+        Require a name and three byte-sized color channels.
+        """
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("Wire color name must not be empty.")
+        for channel in (self.red, self.green, self.blue):
+            if isinstance(channel, bool) or not isinstance(channel, int) or not 0 <= channel <= 255:
+                raise ValueError("Wire color channels must be integers from 0 through 255.")
+
+    @property
+    def hex_rgb(self) -> str:
+        """
+        Return the color in HTML-compatible hexadecimal form.
+        """
+        return f"#{self.red:02X}{self.green:02X}{self.blue:02X}"
+
+
+DEFAULT_WIRE_COLOR = WireColor("Black", 32, 32, 32)
+
+
+@dataclass(frozen=True)
+class WireAppearanceReference:
+    """
+    Identify an appearance in one of Fusion's installed material libraries.
+
+    Names are retained for display and diagnostics while the stable library and
+    appearance IDs drive host lookup.
+    """
+
+    library_id: str
+    library_name: str
+    appearance_id: str
+    appearance_name: str
+
+    def __post_init__(self) -> None:
+        """
+        Require complete lookup and display information.
+        """
+        for value in (
+            self.library_id,
+            self.library_name,
+            self.appearance_id,
+            self.appearance_name,
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("Fusion appearance references require nonempty IDs and names.")
+
+
+@dataclass(frozen=True)
+class WireStripe:
+    """
+    Define one ordered procedural stripe on the insulation surface.
+
+    ``repeat_mm`` is required for dashed and helical patterns and unused by a
+    continuous longitudinal stripe. ``angle_deg`` locates the stripe around the
+    wire circumference at its starting section.
+    """
+
+    color: WireColor
+    width_mm: float
+    pattern: StripePattern = StripePattern.LONGITUDINAL
+    angle_deg: float = 0.0
+    repeat_mm: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        """
+        Reject stripe dimensions that cannot drive procedural geometry.
+        """
+        if not isinstance(self.color, WireColor):
+            raise ValueError("Stripe color must be a wire color.")
+        if not isinstance(self.pattern, StripePattern):
+            raise ValueError("Stripe pattern is not supported.")
+        if (
+            isinstance(self.width_mm, bool)
+            or not isinstance(self.width_mm, (int, float))
+            or not math.isfinite(self.width_mm)
+            or self.width_mm <= 0
+        ):
+            raise ValueError("Stripe width must be a finite positive value in millimeters.")
+        if (
+            isinstance(self.angle_deg, bool)
+            or not isinstance(self.angle_deg, (int, float))
+            or not math.isfinite(self.angle_deg)
+        ):
+            raise ValueError("Stripe angle must be finite degrees.")
+        if self.repeat_mm is not None and (
+            isinstance(self.repeat_mm, bool)
+            or not isinstance(self.repeat_mm, (int, float))
+            or not math.isfinite(self.repeat_mm)
+            or self.repeat_mm <= 0
+        ):
+            raise ValueError("Stripe repeat must be a finite positive value in millimeters.")
+        if self.pattern is not StripePattern.LONGITUDINAL and self.repeat_mm is None:
+            raise ValueError("Dashed and helical stripes require a positive repeat length.")
+
+
+@dataclass(frozen=True)
+class WireMaterialSettings:
+    """
+    Store resolved harness-level defaults for wire construction and identification.
+    """
+
+    insulation_material: str = "PVC"
+    main_color: WireColor = DEFAULT_WIRE_COLOR
+    appearance: Optional[WireAppearanceReference] = None
+    stripes: tuple[WireStripe, ...] = ()
+    conductor_material: str = "Copper"
+    manufacturer: str = ""
+    part_number: str = ""
+    notes: str = ""
+
+    def __post_init__(self) -> None:
+        """
+        Require usable material labels while permitting optional catalog metadata.
+        """
+        if not isinstance(self.insulation_material, str) or not self.insulation_material.strip():
+            raise ValueError("Insulation material must not be empty.")
+        if not isinstance(self.conductor_material, str) or not self.conductor_material.strip():
+            raise ValueError("Conductor material must not be empty.")
+        if not isinstance(self.main_color, WireColor):
+            raise ValueError("Main insulation color must be a wire color.")
+        if self.appearance is not None and not isinstance(self.appearance, WireAppearanceReference):
+            raise ValueError("Main insulation appearance must reference a Fusion appearance.")
+        if not isinstance(self.stripes, tuple) or not all(
+            isinstance(stripe, WireStripe) for stripe in self.stripes
+        ):
+            raise ValueError("Wire stripes must be an ordered tuple of stripe definitions.")
+        for value in (self.manufacturer, self.part_number, self.notes):
+            if not isinstance(value, str):
+                raise ValueError("Wire catalog metadata must be text.")
+
+
+@dataclass(frozen=True)
+class WireMaterialOverrides:
+    """
+    Override selected harness material defaults for one persistent wire.
+
+    A null stripes value inherits the harness stripe collection. An explicit
+    empty tuple suppresses every inherited stripe.
+    """
+
+    insulation_material: Optional[str] = None
+    main_color: Optional[WireColor] = None
+    appearance: Optional[WireAppearanceReference] = None
+    stripes: Optional[tuple[WireStripe, ...]] = None
+    conductor_material: Optional[str] = None
+    manufacturer: Optional[str] = None
+    part_number: Optional[str] = None
+    notes: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """
+        Validate explicit overrides while preserving null inheritance markers.
+        """
+        for value, label in (
+            (self.insulation_material, "Insulation material"),
+            (self.conductor_material, "Conductor material"),
+        ):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError(f"{label} override must not be empty.")
+        if self.main_color is not None and not isinstance(self.main_color, WireColor):
+            raise ValueError("Main color override must be a wire color.")
+        if self.appearance is not None and not isinstance(self.appearance, WireAppearanceReference):
+            raise ValueError("Main appearance override must reference a Fusion appearance.")
+        if self.main_color is None and self.appearance is not None:
+            raise ValueError("A main appearance override requires a main color override.")
+        if self.stripes is not None and (
+            not isinstance(self.stripes, tuple)
+            or not all(isinstance(stripe, WireStripe) for stripe in self.stripes)
+        ):
+            raise ValueError("Stripe override must be an ordered tuple of stripe definitions.")
+        for value in (self.manufacturer, self.part_number, self.notes):
+            if value is not None and not isinstance(value, str):
+                raise ValueError("Wire catalog metadata overrides must be text.")
+
+    def resolve(self, parent: WireMaterialSettings) -> WireMaterialSettings:
+        """
+        Merge these field-level overrides over harness defaults.
+        """
+        return WireMaterialSettings(
+            insulation_material=(
+                parent.insulation_material
+                if self.insulation_material is None
+                else self.insulation_material
+            ),
+            main_color=parent.main_color if self.main_color is None else self.main_color,
+            appearance=(parent.appearance if self.main_color is None else self.appearance),
+            stripes=parent.stripes if self.stripes is None else self.stripes,
+            conductor_material=(
+                parent.conductor_material
+                if self.conductor_material is None
+                else self.conductor_material
+            ),
+            manufacturer=parent.manufacturer if self.manufacturer is None else self.manufacturer,
+            part_number=parent.part_number if self.part_number is None else self.part_number,
+            notes=parent.notes if self.notes is None else self.notes,
+        )
 
 
 @dataclass(frozen=True)
@@ -194,6 +415,7 @@ class WireDefinition:
     start_end_name: str = ""
     end_end_name: str = ""
     display_name: str = ""
+    material_overrides: WireMaterialOverrides = WireMaterialOverrides()
 
 
 @dataclass(frozen=True)
@@ -226,3 +448,10 @@ class HarnessDefinition:
     wires: tuple[WireDefinition, ...]
     gate_defaults: InterpolationSettings = InterpolationSettings()
     end_defaults: InterpolationSettings = InterpolationSettings()
+    material_defaults: WireMaterialSettings = WireMaterialSettings()
+
+    def wire_materials(self, wire: WireDefinition) -> WireMaterialSettings:
+        """
+        Resolve one wire's effective material settings from parent defaults.
+        """
+        return wire.material_overrides.resolve(self.material_defaults)

@@ -24,7 +24,9 @@ from wire_bundler.application import (
     rename_pathway,
     rename_route_end,
     rename_wire,
+    set_harness_material_defaults,
     set_wire_diameter,
+    set_wire_material_overrides,
 )
 from wire_bundler.application.edit_harness import edit_end_members, set_interpolation
 from wire_bundler.domain import (
@@ -32,7 +34,10 @@ from wire_bundler.domain import (
     ControlKind,
     ControlStructure,
     HarnessDefinition,
+    WireColor,
     WireDefinition,
+    WireMaterialOverrides,
+    WireMaterialSettings,
     dumps,
     loads,
 )
@@ -161,6 +166,38 @@ def test_diameter_edit_isolates_shared_profile(valid_harness: HarnessDefinition)
     updated = loads(gateway.serialized_definition)
     assert len(updated.profiles) == len(stored.profiles)
     assert updated.profiles[-1].diameter_mm == 3.0
+
+
+def test_wire_material_overrides_take_precedence_over_parent(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Update inherited fields while preserving each explicit per-wire override.
+    """
+    definition = _expanded_harness(valid_harness)
+    gateway = _recording_gateway(definition)
+    first, second = definition.wires
+    red = WireColor("Red", 200, 38, 38)
+    blue = WireColor("Blue", 35, 94, 190)
+
+    set_wire_material_overrides(
+        definition.harness_id,
+        first.wire_id,
+        WireMaterialOverrides(main_color=red, stripes=()),
+        gateway,
+    )
+    set_harness_material_defaults(
+        definition.harness_id,
+        WireMaterialSettings(insulation_material="ETFE", main_color=blue),
+        gateway,
+    )
+
+    stored = loads(gateway.serialized_definition)
+    assert stored.wire_materials(stored.wires[0]).main_color == red
+    assert stored.wire_materials(stored.wires[0]).stripes == ()
+    assert stored.wire_materials(stored.wires[1]).main_color == blue
+    assert stored.wire_materials(stored.wires[1]).insulation_material == "ETFE"
+    assert stored.wires[1] == second
 
 
 @pytest.mark.parametrize("diameter", [0.0, -1.0, float("nan"), float("inf")])

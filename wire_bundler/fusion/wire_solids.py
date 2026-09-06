@@ -15,7 +15,14 @@ import adsk.core
 # noinspection PyUnresolvedReferences
 import adsk.fusion
 
-from ..domain import HarnessDefinition, WireDefinition, validate_harness
+from ..domain import (
+    HarnessDefinition,
+    WireAppearanceReference,
+    WireColor,
+    WireDefinition,
+    WireMaterialSettings,
+    validate_harness,
+)
 from ..routing import CubicBezier, RoutePreview, Vector3, tightest_bend
 from ..routing.geometry import cross, difference, magnitude
 from .harness_gateway import ATTRIBUTE_GROUP
@@ -77,6 +84,8 @@ def generate_wire_solids(
                     profiles[wire.profile_id].diameter_mm,
                     local_transform,
                     definition.harness_id,
+                    definition.wire_materials(wire),
+                    design,
                 )
             except (AttributeError, RuntimeError, TypeError, ValueError) as error:
                 raise RuntimeError(
@@ -122,6 +131,47 @@ def clear_wire_solids(harness: adsk.fusion.Component) -> int:
         if not occurrence.deleteMe():
             raise RuntimeError("Fusion could not delete a generated wire component.")
     return len(occurrences)
+
+
+def apply_wire_materials(
+    design: adsk.fusion.Design,
+    harness: adsk.fusion.Component,
+    definition: HarnessDefinition,
+) -> int:
+    """
+    Apply resolved colors and metadata to existing generated wire bodies.
+
+    This updates material presentation without rebuilding centerlines or replacing
+    generated components, so it is safe to run from the material-save transaction.
+    """
+    wires = {wire.wire_id: wire for wire in definition.wires}
+    applied = 0
+    for occurrence in generated_wire_occurrences(harness):
+        component = occurrence.component
+        attribute = component.attributes.itemByName(ATTRIBUTE_GROUP, GENERATED_WIRE_ATTRIBUTE)
+        if attribute is None:
+            continue
+        try:
+            metadata = json.loads(attribute.value)
+            wire_id = UUID(metadata["wire_id"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            raise RuntimeError("A generated wire has invalid identity metadata.") from error
+        wire = wires.get(wire_id)
+        if wire is None:
+            continue
+        materials = definition.wire_materials(wire)
+        appearance = _wire_appearance(design, materials.main_color, materials.appearance)
+        bodies = component.bRepBodies
+        if bodies.count == 0:
+            raise RuntimeError(f"Generated wire {wire.wire_number} has no body to color.")
+        for index in range(bodies.count):
+            body = bodies.item(index)
+            if body is not None:
+                body.appearance = appearance
+        metadata.update(_material_metadata(materials))
+        attribute.value = json.dumps(metadata, sort_keys=True)
+        applied += 1
+    return applied
 
 
 def _world_to_harness(
@@ -172,6 +222,8 @@ def build_wire_sweep(
     diameter_mm: float,
     transform: adsk.core.Matrix3D,
     harness_id: UUID,
+    materials: Optional[WireMaterialSettings] = None,
+    design: Optional[adsk.fusion.Design] = None,
 ) -> None:
     """
     Create editable cubic control-point splines, a normal circular profile, and one sweep.
@@ -238,6 +290,9 @@ def build_wire_sweep(
             raise RuntimeError("Fusion produced an invalid or empty wire solid.")
         component.name = wire.display_name or f"{wire.wire_number}_{length_mm:.2f}mm"
         body.name = component.name
+        if materials is not None and design is not None:
+            stage = "apply insulation appearance"
+            body.appearance = _wire_appearance(design, materials.main_color, materials.appearance)
         sweep.name = "Wire Sweep"
         sketch.isLightBulbOn = False
         section.isLightBulbOn = False
@@ -250,6 +305,13 @@ def build_wire_sweep(
                 "wire_number": wire.wire_number,
                 "diameter_mm": diameter_mm,
                 "length_mm": length_mm,
+                **(
+                    {
+                        **_material_metadata(materials),
+                    }
+                    if materials is not None
+                    else {}
+                ),
             },
             sort_keys=True,
         )
@@ -266,3 +328,91 @@ def build_wire_sweep(
                 )
                 raise RuntimeError(f"{stage}: {error}; route diagnostic: {diagnostic}") from error
         raise RuntimeError(f"{stage}: {error}") from error
+
+
+def _material_metadata(materials: WireMaterialSettings) -> dict[str, object]:
+    """
+    Serialize the resolved material values stored with generated output.
+    """
+    return {
+        "insulation_material": materials.insulation_material,
+        "main_color": materials.main_color.hex_rgb,
+        "appearance": (
+            None
+            if materials.appearance is None
+            else {
+                "library_id": materials.appearance.library_id,
+                "library_name": materials.appearance.library_name,
+                "appearance_id": materials.appearance.appearance_id,
+                "appearance_name": materials.appearance.appearance_name,
+            }
+        ),
+        "conductor_material": materials.conductor_material,
+        "manufacturer": materials.manufacturer,
+        "part_number": materials.part_number,
+        "notes": materials.notes,
+        "stripes": [
+            {
+                "color": stripe.color.hex_rgb,
+                "color_name": stripe.color.name,
+                "width_mm": stripe.width_mm,
+                "pattern": stripe.pattern.value,
+                "angle_deg": stripe.angle_deg,
+                "repeat_mm": stripe.repeat_mm,
+            }
+            for stripe in materials.stripes
+        ],
+    }
+
+
+def _wire_appearance(
+    design: adsk.fusion.Design,
+    color: WireColor,
+    reference: Optional[WireAppearanceReference] = None,
+) -> adsk.core.Appearance:
+    """
+    Return a document-owned library appearance or opaque stored insulation color.
+
+    Fusion's released appearance API requires copying a library appearance into
+    the design before changing its ``opaque_albedo`` property.
+    """
+    name = (
+        f"Wire Bundler {reference.library_name} · {reference.appearance_name} "
+        f"[{reference.appearance_id}]"
+        if reference is not None
+        else f"Wire Bundler Insulation {color.hex_rgb}"
+    )
+    appearance = design.appearances.itemByName(name)
+    if appearance is not None:
+        return appearance
+    application = adsk.core.Application.get()
+    if reference is not None:
+        library = application.materialLibraries.itemById(reference.library_id)
+        if library is None:
+            raise RuntimeError(
+                f"Fusion appearance library '{reference.library_name}' is unavailable."
+            )
+        source = library.appearances.itemById(reference.appearance_id)
+        if source is None:
+            raise RuntimeError(
+                f"Fusion appearance '{reference.appearance_name}' is unavailable in "
+                f"'{reference.library_name}'."
+            )
+        appearance = design.appearances.addByCopy(source, name)
+        if appearance is None:
+            raise RuntimeError("Fusion could not copy the selected wire appearance.")
+        return appearance
+    library = application.materialLibraries.itemById("BA5EE55E-9982-449B-9D66-9F036540E140")
+    if library is None:
+        raise RuntimeError("Fusion's built-in appearance library is unavailable.")
+    generic = library.appearances.itemById("Prism-129")
+    if generic is None:
+        raise RuntimeError("Fusion's generic opaque appearance is unavailable.")
+    appearance = design.appearances.addByCopy(generic, name)
+    if appearance is None:
+        raise RuntimeError("Fusion could not create the wire insulation appearance.")
+    color_property = appearance.appearanceProperties.itemById("opaque_albedo")
+    if color_property is None:
+        raise RuntimeError("Fusion's wire appearance has no editable color property.")
+    color_property.value = adsk.core.Color.create(color.red, color.green, color.blue, 255)
+    return appearance

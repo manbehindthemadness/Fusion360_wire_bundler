@@ -33,11 +33,12 @@ Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, an
 - Smooth cubic transitions perpendicular to gate and end-profile planes, preserving ordered crossings and straight middle spans. Auto starts at one quarter of the adjacent span and expands when the wire diameter requires a larger bend.
 - Each gate row and end-member row has an **Options** popup for individual interpolation distances (millimeters or Auto). **Defaults** supplies the baseline; saving updates existing controls using defaults unless unchecked. Individual overrides are preserved, and **Use harness defaults** restores inheritance.
 - **Generate/Rebuild Solids** creates one marked component per wire with an editable centerline sketch, circular diameter profile, sweep, and measured centerline length. Rebuilding requires confirmation and replaces only marked generated wire components after all new sweeps succeed.
+- Harness-level wire-material defaults and field-level per-wire overrides for insulation, main color or an installed Fusion library appearance, ordered procedural stripe specifications, conductor, manufacturer, part number, and notes. Controlled autocomplete fields provide bundled suggestions while accepting custom values. Resolved visuals drive route previews and generated solid appearances.
 - Lightweight, selectable Custom Graphics centerline previews with explicit clearing
 - Save-time graphics-cache protection prevents active previews from being baked into reopened designs
 - Active previews refresh affected routing groups after member edits and redraw only changed paths, preserving unrelated graphics.
 - Persistent Fusion entity tokens with reload-time linked-geometry health reporting
-- Schema version 3 persistence with automatic in-memory reading of versions 1 and 2
+- Schema version 4 persistence with automatic in-memory reading of versions 1 through 3
 - Isolated reporting of malformed stored definitions without hiding healthy harnesses
 
 The detailed product behavior is defined in `reference/`. Persistent conductor identity, explicit control-structure ordering, editable geometry, and stored procedural metadata are core requirements.
@@ -126,6 +127,17 @@ F360WireGenerator/               Unrelated third-party example repository
 ## Domain boundary
 
 `wire_bundler/domain/`, `wire_bundler/application/`, and `wire_bundler/routing/` have no Fusion dependency. They define and transactionally persist harness drafts and solve deterministic parallel-wire crossings independently of the host. `wire_bundler/fusion/` owns Fusion persistence, profile/frame translation, linked-geometry health checks, viewport selection, and transient centerline graphics. Current routing supports circular routing gates, zero additional clearance by default, and tangent-continuous cubic transitions. Exact cubic geometry is retained separately from ordered crossings and adaptively sampled to a 0.05 mm chord tolerance for display. The host-independent fairing API supports independent approach/departure lengths with diameter-derived safety floors. Crowded spans that cannot hold two localized transitions dynamically use the full available span when one direct profile-to-profile cubic preserves the same sweep radius. Preview and solid generation report the adjusted required and applied distances in the palette's scrollable event console. The Fusion adapter applies this diameter-aware fairing across pathway controls and every connection-owned end profile. Wire-envelope fit checks apply only to pathway apertures. Ordered gate and endpoint-pairing edits update the versioned definition transactionally and invalidate stale previews. Configurable clearance, profile-gate/ribbon routing, selective solid regeneration, center drift, ovalization, and full-span collision analysis remain future milestones.
+
+Wire materials use complete harness defaults with nullable overrides on each persistent
+wire. An unset override inherits its parent field; an explicit empty stripe list removes
+inherited stripes. The catalog under `resources/catalogs/` supplies searchable suggestions
+and remains deployable with the add-in as a relative resource. The base visual can
+instead reference an appearance from an installed Fusion library; the selected
+appearance is copied into the design before assignment to generated bodies. Route previews render
+longitudinal, dashed, and helical model-space stripe bands on the wire radius with
+physical widths and normal model depth testing. Apply keeps the material dialog open; Apply and Save both
+show or refresh the material preview and recolor existing generated bodies without
+rebuilding their geometry.
 
 Diameter-aware center drift, bounded oval deformation, and circular-envelope
 packing are parallel round-wire behavior. Ribbon routing remains a separate

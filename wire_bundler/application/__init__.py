@@ -31,7 +31,9 @@ from .edit_harness import (
     rename_pathway,
     rename_route_end,
     rename_wire,
+    set_harness_material_defaults,
     set_wire_diameter,
+    set_wire_material_overrides,
 )
 from .load_harnesses import (
     HarnessLibraryGateway,
@@ -39,6 +41,7 @@ from .load_harnesses import (
     StoredHarness,
     load_harnesses,
 )
+from .material_catalog import WireMaterialCatalog, load_wire_material_catalog
 
 __all__ = [
     "HarnessCreationError",
@@ -51,6 +54,7 @@ __all__ = [
     "WireBatchGateway",
     "WireBatchResult",
     "WireBatchUpdateError",
+    "WireMaterialCatalog",
     "PathwayGateway",
     "PathwayUpdateError",
     "add_pathway",
@@ -65,7 +69,10 @@ __all__ = [
     "rename_route_end",
     "rename_pathway",
     "rename_wire",
+    "set_harness_material_defaults",
     "set_wire_diameter",
+    "set_wire_material_overrides",
+    "load_wire_material_catalog",
     "suggest_harness_name",
     "suggest_pathway_name",
 ]

@@ -3,10 +3,22 @@ Tests for harness definition JSON serialization.
 """
 
 import json
+from dataclasses import replace
 
 import pytest
 
-from wire_bundler.domain import DefinitionParseError, HarnessDefinition, dumps, loads
+from wire_bundler.domain import (
+    DefinitionParseError,
+    HarnessDefinition,
+    StripePattern,
+    WireAppearanceReference,
+    WireColor,
+    WireMaterialOverrides,
+    WireMaterialSettings,
+    WireStripe,
+    dumps,
+    loads,
+)
 
 
 def test_round_trip_preserves_definition(valid_harness: HarnessDefinition) -> None:
@@ -30,6 +42,95 @@ def test_serialization_is_deterministic(valid_harness: HarnessDefinition) -> Non
     second = dumps(valid_harness)
 
     assert first == second
+
+
+def test_round_trip_preserves_parent_materials_and_wire_overrides(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Preserve ordered stripes and nullable field-level inheritance through JSON.
+    """
+    defaults = WireMaterialSettings(
+        insulation_material="ETFE",
+        main_color=WireColor("Blue", 35, 94, 190),
+        appearance=WireAppearanceReference(
+            "library-id", "My Appearances", "appearance-id", "Blue Rubber"
+        ),
+        stripes=(
+            WireStripe(WireColor("White", 245, 245, 245), 0.25),
+            WireStripe(
+                WireColor("Red", 200, 38, 38),
+                0.15,
+                StripePattern.HELICAL,
+                90.0,
+                12.0,
+            ),
+        ),
+        conductor_material="Tinned Copper",
+        manufacturer="Acme",
+        part_number="WB-18",
+        notes="Engine bay",
+    )
+    orange = WireColor("Orange", 232, 117, 17)
+    overrides = WireMaterialOverrides(
+        main_color=orange,
+        appearance=WireAppearanceReference(
+            "library-id", "My Appearances", "orange-id", "Orange Rubber"
+        ),
+        stripes=(),
+        part_number="WB-18-OR",
+    )
+    definition = replace(
+        valid_harness,
+        material_defaults=defaults,
+        wires=(replace(valid_harness.wires[0], material_overrides=overrides),),
+    )
+
+    parsed = loads(dumps(definition))
+
+    assert parsed == definition
+    assert parsed.wire_materials(parsed.wires[0]) == replace(
+        defaults,
+        main_color=orange,
+        appearance=overrides.appearance,
+        stripes=(),
+        part_number="WB-18-OR",
+    )
+
+
+def test_reads_version_three_with_default_materials(valid_harness: HarnessDefinition) -> None:
+    """
+    Migrate saved harnesses from before wire materials without guessing values.
+    """
+    payload = json.loads(dumps(valid_harness))
+    payload["schema_version"] = 3
+    payload.pop("material_defaults")
+    for wire in payload["wires"]:
+        wire.pop("material_overrides")
+
+    migrated = loads(json.dumps(payload))
+
+    assert migrated.material_defaults == WireMaterialSettings()
+    assert migrated.wires[0].material_overrides == WireMaterialOverrides()
+
+
+def test_rejects_stripe_without_required_repeat(valid_harness: HarnessDefinition) -> None:
+    """
+    Reject a dashed stripe that cannot define a procedural repetition.
+    """
+    payload = json.loads(dumps(valid_harness))
+    payload["material_defaults"]["stripes"] = [
+        {
+            "color": {"name": "White", "red": 255, "green": 255, "blue": 255},
+            "width_mm": 0.2,
+            "pattern": "dashed",
+            "angle_deg": 0,
+            "repeat_mm": None,
+        }
+    ]
+
+    with pytest.raises(DefinitionParseError, match="require a positive repeat"):
+        loads(json.dumps(payload))
 
 
 def test_missing_end_names_default_to_blank(valid_harness: HarnessDefinition) -> None:

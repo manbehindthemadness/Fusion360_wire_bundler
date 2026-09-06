@@ -1,0 +1,34 @@
+{
+  "colors": [
+    {"name": "Black", "red": 32, "green": 32, "blue": 32},
+    {"name": "White", "red": 245, "green": 245, "blue": 245},
+    {"name": "Red", "red": 200, "green": 38, "blue": 38},
+    {"name": "Orange", "red": 232, "green": 117, "blue": 17},
+    {"name": "Yellow", "red": 236, "green": 199, "blue": 29},
+    {"name": "Green", "red": 35, "green": 145, "blue": 72},
+    {"name": "Blue", "red": 35, "green": 94, "blue": 190},
+    {"name": "Violet", "red": 124, "green": 64, "blue": 168},
+    {"name": "Brown", "red": 115, "green": 72, "blue": 48},
+    {"name": "Gray", "red": 128, "green": 128, "blue": 128},
+    {"name": "Pink", "red": 229, "green": 112, "blue": 158},
+    {"name": "Tan", "red": 194, "green": 164, "blue": 118}
+  ],
+  "conductor_materials": [
+    "Copper",
+    "Tinned Copper",
+    "Silver-Plated Copper",
+    "Nickel-Plated Copper",
+    "Aluminum"
+  ],
+  "insulation_materials": [
+    "PVC",
+    "XLPE",
+    "PTFE",
+    "ETFE",
+    "FEP",
+    "PFA",
+    "Silicone Rubber",
+    "TPE"
+  ],
+  "stripe_patterns": ["longitudinal", "dashed", "helical"]
+}

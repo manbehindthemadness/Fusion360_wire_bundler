@@ -5,9 +5,10 @@ JSON serialization for versioned harness definitions.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
-from typing import Any, Type, TypeVar
+from typing import Any, Optional, Type, TypeVar
 from uuid import UUID
 
 from .model import (
@@ -19,11 +20,17 @@ from .model import (
     InterpolationSettings,
     PathwayDefinition,
     RoutingMode,
+    StripePattern,
+    WireAppearanceReference,
+    WireColor,
     WireDefinition,
+    WireMaterialOverrides,
+    WireMaterialSettings,
     WireProfile,
+    WireStripe,
 )
 
-EnumType = TypeVar("EnumType", RoutingMode, ControlKind)
+EnumType = TypeVar("EnumType", RoutingMode, ControlKind, StripePattern)
 
 
 class DefinitionParseError(ValueError):
@@ -79,10 +86,10 @@ def loads(serialized: str) -> HarnessDefinition:
 
     payload = _require_mapping(raw_payload, "$")
     schema_version = _require_int(payload, "schema_version", "$.schema_version")
-    if schema_version not in (1, 2, SCHEMA_VERSION):
+    if schema_version not in (1, 2, 3, SCHEMA_VERSION):
         raise DefinitionParseError(
             "$.schema_version",
-            f"unsupported version {schema_version}; expected 1, 2, or {SCHEMA_VERSION}",
+            f"unsupported version {schema_version}; expected 1, 2, 3, or {SCHEMA_VERSION}",
         )
 
     harness_id = _require_uuid(payload, "harness_id", "$.harness_id")
@@ -124,6 +131,11 @@ def loads(serialized: str) -> HarnessDefinition:
         wires=wires,
         gate_defaults=parse_interpolation(payload.get("gate_defaults", {}), "$.gate_defaults"),
         end_defaults=parse_interpolation(payload.get("end_defaults", {}), "$.end_defaults"),
+        material_defaults=(
+            parse_material_settings(payload.get("material_defaults"), "$.material_defaults")
+            if schema_version >= 4
+            else WireMaterialSettings()
+        ),
     )
     return definition
 
@@ -145,6 +157,7 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
         "routing_mode": definition.routing_mode.value,
         "gate_defaults": asdict(definition.gate_defaults),
         "end_defaults": asdict(definition.end_defaults),
+        "material_defaults": _materials_to_dict(definition.material_defaults),
         "profiles": [
             {
                 "profile_id": str(profile.profile_id),
@@ -214,6 +227,7 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
                 "profile_id": str(wire.profile_id),
                 "ordered_pathway_ids": [str(pathway_id) for pathway_id in wire.ordered_pathway_ids],
                 "ordered_control_ids": [str(control_id) for control_id in wire.ordered_control_ids],
+                "material_overrides": _material_overrides_to_dict(wire.material_overrides),
             }
             for wire in definition.wires
         ],
@@ -239,6 +253,204 @@ def _parse_profile(raw_value: object, path: str) -> WireProfile:
         diameter_mm=_require_float(value, "diameter_mm", f"{path}.diameter_mm"),
     )
     return profile
+
+
+def _color_to_dict(color: WireColor) -> dict[str, object]:
+    """
+    Convert one portable wire color to JSON-compatible values.
+    """
+    return {
+        "name": color.name,
+        "red": color.red,
+        "green": color.green,
+        "blue": color.blue,
+    }
+
+
+def _stripe_to_dict(stripe: WireStripe) -> dict[str, object]:
+    """
+    Convert one procedural stripe to JSON-compatible values.
+    """
+    return {
+        "color": _color_to_dict(stripe.color),
+        "width_mm": stripe.width_mm,
+        "pattern": stripe.pattern.value,
+        "angle_deg": stripe.angle_deg,
+        "repeat_mm": stripe.repeat_mm,
+    }
+
+
+def _materials_to_dict(settings: WireMaterialSettings) -> dict[str, object]:
+    """
+    Convert resolved wire material settings to JSON-compatible values.
+    """
+    return {
+        "insulation_material": settings.insulation_material,
+        "main_color": _color_to_dict(settings.main_color),
+        "appearance": _appearance_to_dict(settings.appearance),
+        "stripes": [_stripe_to_dict(stripe) for stripe in settings.stripes],
+        "conductor_material": settings.conductor_material,
+        "manufacturer": settings.manufacturer,
+        "part_number": settings.part_number,
+        "notes": settings.notes,
+    }
+
+
+def _material_overrides_to_dict(overrides: WireMaterialOverrides) -> dict[str, object]:
+    """
+    Preserve null inheritance markers while serializing per-wire overrides.
+    """
+    return {
+        "insulation_material": overrides.insulation_material,
+        "main_color": (
+            None if overrides.main_color is None else _color_to_dict(overrides.main_color)
+        ),
+        "appearance": _appearance_to_dict(overrides.appearance),
+        "stripes": (
+            None
+            if overrides.stripes is None
+            else [_stripe_to_dict(stripe) for stripe in overrides.stripes]
+        ),
+        "conductor_material": overrides.conductor_material,
+        "manufacturer": overrides.manufacturer,
+        "part_number": overrides.part_number,
+        "notes": overrides.notes,
+    }
+
+
+def _parse_color(raw_value: object, path: str) -> WireColor:
+    """
+    Parse one named RGB color at an external-data boundary.
+    """
+    value = _require_mapping(raw_value, path)
+    try:
+        return WireColor(
+            name=_require_str(value, "name", f"{path}.name"),
+            red=_require_int(value, "red", f"{path}.red"),
+            green=_require_int(value, "green", f"{path}.green"),
+            blue=_require_int(value, "blue", f"{path}.blue"),
+        )
+    except ValueError as error:
+        raise DefinitionParseError(path, str(error)) from error
+
+
+def _appearance_to_dict(
+    appearance: Optional[WireAppearanceReference],
+) -> Optional[dict[str, str]]:
+    """
+    Convert an optional Fusion library appearance reference to portable values.
+    """
+    if appearance is None:
+        return None
+    return {
+        "library_id": appearance.library_id,
+        "library_name": appearance.library_name,
+        "appearance_id": appearance.appearance_id,
+        "appearance_name": appearance.appearance_name,
+    }
+
+
+def _parse_appearance(raw_value: object, path: str) -> Optional[WireAppearanceReference]:
+    """
+    Parse an optional Fusion library appearance reference.
+    """
+    if raw_value is None:
+        return None
+    value = _require_mapping(raw_value, path)
+    try:
+        return WireAppearanceReference(
+            library_id=_require_str(value, "library_id", f"{path}.library_id"),
+            library_name=_require_str(value, "library_name", f"{path}.library_name"),
+            appearance_id=_require_str(value, "appearance_id", f"{path}.appearance_id"),
+            appearance_name=_require_str(value, "appearance_name", f"{path}.appearance_name"),
+        )
+    except ValueError as error:
+        raise DefinitionParseError(path, str(error)) from error
+
+
+def _parse_stripes(raw_value: object, path: str) -> tuple[WireStripe, ...]:
+    """
+    Parse an ordered procedural stripe collection.
+    """
+    if not isinstance(raw_value, list):
+        raise DefinitionParseError(path, "expected a list")
+    stripes: list[WireStripe] = []
+    for index, raw_stripe in enumerate(raw_value):
+        stripe_path = f"{path}[{index}]"
+        value = _require_mapping(raw_stripe, stripe_path)
+        try:
+            stripes.append(
+                WireStripe(
+                    color=_parse_color(value.get("color"), f"{stripe_path}.color"),
+                    width_mm=_require_float(value, "width_mm", f"{stripe_path}.width_mm"),
+                    pattern=_require_enum(
+                        StripePattern, value, "pattern", f"{stripe_path}.pattern"
+                    ),
+                    angle_deg=_require_float(
+                        {"angle_deg": 0.0, **value}, "angle_deg", f"{stripe_path}.angle_deg"
+                    ),
+                    repeat_mm=_optional_float(value.get("repeat_mm"), f"{stripe_path}.repeat_mm"),
+                )
+            )
+        except ValueError as error:
+            raise DefinitionParseError(stripe_path, str(error)) from error
+    return tuple(stripes)
+
+
+def parse_material_settings(raw_value: object, path: str) -> WireMaterialSettings:
+    """
+    Parse complete harness-level wire material defaults.
+    """
+    value = _require_mapping(raw_value, path)
+    try:
+        return WireMaterialSettings(
+            insulation_material=_require_str(
+                value, "insulation_material", f"{path}.insulation_material"
+            ),
+            main_color=_parse_color(value.get("main_color"), f"{path}.main_color"),
+            appearance=_parse_appearance(value.get("appearance"), f"{path}.appearance"),
+            stripes=_parse_stripes(value.get("stripes"), f"{path}.stripes"),
+            conductor_material=_require_str(
+                value, "conductor_material", f"{path}.conductor_material"
+            ),
+            manufacturer=_require_str(value, "manufacturer", f"{path}.manufacturer"),
+            part_number=_require_str(value, "part_number", f"{path}.part_number"),
+            notes=_require_str(value, "notes", f"{path}.notes"),
+        )
+    except ValueError as error:
+        raise DefinitionParseError(path, str(error)) from error
+
+
+def parse_material_overrides(raw_value: object, path: str) -> WireMaterialOverrides:
+    """
+    Parse nullable field-level material overrides for one wire.
+    """
+    value = _require_mapping(raw_value, path)
+    try:
+        return WireMaterialOverrides(
+            insulation_material=_optional_str(
+                value.get("insulation_material"), f"{path}.insulation_material"
+            ),
+            main_color=(
+                None
+                if value.get("main_color") is None
+                else _parse_color(value.get("main_color"), f"{path}.main_color")
+            ),
+            appearance=_parse_appearance(value.get("appearance"), f"{path}.appearance"),
+            stripes=(
+                None
+                if value.get("stripes") is None
+                else _parse_stripes(value.get("stripes"), f"{path}.stripes")
+            ),
+            conductor_material=_optional_str(
+                value.get("conductor_material"), f"{path}.conductor_material"
+            ),
+            manufacturer=_optional_str(value.get("manufacturer"), f"{path}.manufacturer"),
+            part_number=_optional_str(value.get("part_number"), f"{path}.part_number"),
+            notes=_optional_str(value.get("notes"), f"{path}.notes"),
+        )
+    except ValueError as error:
+        raise DefinitionParseError(path, str(error)) from error
 
 
 def _parse_connection(raw_value: object, path: str) -> Connection:
@@ -434,6 +646,11 @@ def _parse_wire(
         end_end_name=_require_str(
             {"end_end_name": "", **value}, "end_end_name", f"{path}.end_end_name"
         ),
+        material_overrides=(
+            parse_material_overrides(value.get("material_overrides"), f"{path}.material_overrides")
+            if schema_version >= 4
+            else WireMaterialOverrides()
+        ),
     )
     return wire
 
@@ -525,6 +742,31 @@ def _require_float(value: Mapping[str, Any], key: str, path: str) -> float:
     if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
         raise DefinitionParseError(path, "expected a number")
     return float(raw_value)
+
+
+def _optional_float(raw_value: object, path: str) -> Optional[float]:
+    """
+    Parse a nullable finite number.
+    """
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+        raise DefinitionParseError(path, "expected a number or null")
+    parsed = float(raw_value)
+    if not math.isfinite(parsed):
+        raise DefinitionParseError(path, "expected a finite number or null")
+    return parsed
+
+
+def _optional_str(raw_value: object, path: str) -> Optional[str]:
+    """
+    Parse nullable override text without treating an empty string as inheritance.
+    """
+    if raw_value is None:
+        return None
+    if not isinstance(raw_value, str):
+        raise DefinitionParseError(path, "expected a string or null")
+    return raw_value
 
 
 def _require_list(value: Mapping[str, Any], key: str, path: str) -> Sequence[object]:
