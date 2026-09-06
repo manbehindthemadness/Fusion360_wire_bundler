@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict
 from typing import Any, Type, TypeVar
 from uuid import UUID
 
@@ -15,6 +16,7 @@ from .model import (
     ControlKind,
     ControlStructure,
     HarnessDefinition,
+    InterpolationSettings,
     PathwayDefinition,
     RoutingMode,
     WireDefinition,
@@ -120,6 +122,8 @@ def loads(serialized: str) -> HarnessDefinition:
         controls=controls,
         pathways=pathways,
         wires=wires,
+        gate_defaults=parse_interpolation(payload.get("gate_defaults", {}), "$.gate_defaults"),
+        end_defaults=parse_interpolation(payload.get("end_defaults", {}), "$.end_defaults"),
     )
     return definition
 
@@ -139,6 +143,8 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
         "harness_id": str(definition.harness_id),
         "name": definition.name,
         "routing_mode": definition.routing_mode.value,
+        "gate_defaults": asdict(definition.gate_defaults),
+        "end_defaults": asdict(definition.end_defaults),
         "profiles": [
             {
                 "profile_id": str(profile.profile_id),
@@ -149,10 +155,21 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
         ],
         "connections": [
             {
+                "interpolation": asdict(connection.interpolation),
                 "connection_id": str(connection.connection_id),
                 "name": connection.name,
                 "entity_token": connection.entity_token,
                 "additional_entity_tokens": list(connection.additional_entity_tokens),
+                **(
+                    {
+                        "member_interpolations": [
+                            asdict(item) if item is not None else None
+                            for item in connection.member_interpolations
+                        ]
+                    }
+                    if connection.member_interpolations
+                    else {}
+                ),
                 **(
                     {"member_ids": [str(identity) for identity in connection.member_ids]}
                     if connection.member_ids
@@ -163,6 +180,8 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
         ],
         "controls": [
             {
+                "interpolation": asdict(control.interpolation),
+                "interpolation_is_override": control.interpolation_is_override,
                 "control_id": str(control.control_id),
                 "name": control.name,
                 "kind": control.kind.value,
@@ -256,12 +275,30 @@ def _parse_connection(raw_value: object, path: str) -> Connection:
         len(identities) != len(members) + 1 or len(set(identities)) != len(identities)
     ):
         raise DefinitionParseError(f"{path}.member_ids", "expected one unique ID per member")
+    settings = tuple(
+        parse_interpolation(item, f"{path}.member_interpolations[{index}]")
+        if item is not None
+        else None
+        for index, item in enumerate(
+            _require_list(
+                {"member_interpolations": [], **value},
+                "member_interpolations",
+                f"{path}.member_interpolations",
+            )
+        )
+    )
+    if "member_interpolations" in value and len(settings) != len(members) + 1:
+        raise DefinitionParseError(
+            f"{path}.member_interpolations", "expected one setting per member"
+        )
     connection = Connection(
         connection_id=_require_uuid(value, "connection_id", f"{path}.connection_id"),
         name=_require_str(value, "name", f"{path}.name"),
         entity_token=_require_str(value, "entity_token", f"{path}.entity_token"),
         additional_entity_tokens=tuple(members),
         member_ids=identities,
+        member_interpolations=settings,
+        interpolation=parse_interpolation(value.get("interpolation", {}), f"{path}.interpolation"),
     )
     return connection
 
@@ -278,10 +315,15 @@ def _parse_control(raw_value: object, path: str) -> ControlStructure:
         Parsed routing control.
     """
     value = _require_mapping(raw_value, path)
+    override = value.get("interpolation_is_override", False)
+    if not isinstance(override, bool):
+        raise DefinitionParseError(f"{path}.interpolation_is_override", "expected a boolean")
     control = ControlStructure(
         control_id=_require_uuid(value, "control_id", f"{path}.control_id"),
         name=_require_str(value, "name", f"{path}.name"),
         kind=_require_enum(ControlKind, value, "kind", f"{path}.kind"),
+        interpolation_is_override=override,
+        interpolation=parse_interpolation(value.get("interpolation", {}), f"{path}.interpolation"),
         entity_token=_require_str(value, "entity_token", f"{path}.entity_token"),
     )
     return control
@@ -565,3 +607,23 @@ def _require_enum(
         allowed_values = ", ".join(member.value for member in enum_type)
         raise DefinitionParseError(path, f"expected one of: {allowed_values}") from error
     return parsed_value
+
+
+def parse_interpolation(raw_value: object, path: str) -> InterpolationSettings:
+    """
+    Parse optional automatic or explicit distances for persistence and UI requests.
+    """
+    value = _require_mapping(raw_value, path)
+    distances = []
+    for field in ("approach_mm", "departure_mm"):
+        raw = value.get(field)
+        if raw is None:
+            distances.append(None)
+            continue
+        number = _require_float(value, field, f"{path}.{field}")
+        try:
+            InterpolationSettings(number)
+        except ValueError as error:
+            raise DefinitionParseError(f"{path}.{field}", str(error)) from error
+        distances.append(number)
+    return InterpolationSettings(*distances)

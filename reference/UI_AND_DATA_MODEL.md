@@ -1111,3 +1111,31 @@ Gate aperture packing is still validated, but minimum bend radius and whole-span
 collision/clearance validation remain pending, as does solid body generation.
 
 Deferred UI work: follow Fusion’s light/dark theme and automatic host theme changes.
+
+### Interpolation options and defaults
+
+Each routing-gate row and each individual end-member row has an Options popup.
+Gate labels also open options on click or keyboard activation; dragging still
+reorders without opening a popup. End section headings retain ordering/name
+controls, while interpolation belongs to the individual profiles in their stack.
+
+Gate distances follow approach/departure traversal order. End-member distances
+use terminal-side/pathway-side directions; the adapter swaps these for End B's
+reversed traversal. The terminal profile (first member) only uses its pathway-side
+value. Blank values mean Auto (25% of the adjacent span); explicit values are
+finite nonnegative millimeters. Overlap is proportionally clamped. Zero may be
+rejected where turning into the profile normal requires a positive transition.
+
+Defaults supplies separate gate and end-member baselines. The checked-by-default
+“Update existing controls using defaults” option applies new baselines to current
+previews while preserving individual overrides. Unchecking it only changes
+creation presets. New gates and members start with defaults. Individual popups
+show whether a control uses defaults or custom settings; “Use harness defaults”
+restores inheritance when saved. Member overrides follow stable member IDs across
+reorder and replacement; adding/removing members maintains aligned settings.
+
+Optional schema-v3 metadata stores per-gate override flags and per-end-member
+settings (null entries inherit the section baseline). Legacy section settings
+remain a fallback for older definitions. Saves use one native Fusion transaction,
+refresh affected active previews, and preserve editor expansion state. Original
+sketch geometry is untouched.

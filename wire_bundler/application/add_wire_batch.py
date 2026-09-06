@@ -120,7 +120,9 @@ def add_wire_batch(
             f"End A {index + 1:03d}",
             (*existing_connection_names, *(item.name for item in sources)),
         )
-        source = Connection(id_factory(), source_name, source_token)
+        source = Connection(
+            id_factory(), source_name, source_token, interpolation=definition.end_defaults
+        )
         destination_name = next_available_name(
             f"End B {index + 1:03d}",
             (
@@ -129,7 +131,9 @@ def add_wire_batch(
                 *(item.name for item in destinations),
             ),
         )
-        destination = Connection(id_factory(), destination_name, destination_token)
+        destination = Connection(
+            id_factory(), destination_name, destination_token, interpolation=definition.end_defaults
+        )
         wire = WireDefinition(
             wire_id=id_factory(),
             wire_number=f"{next_wire_number + index:03d}",

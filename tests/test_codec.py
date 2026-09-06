@@ -151,3 +151,36 @@ def test_rejects_malformed_member_identities(
     payload["connections"][0]["member_ids"] = identities
     with pytest.raises(DefinitionParseError):
         loads(json.dumps(payload))
+
+
+def test_legacy_interpolation_is_automatic(valid_harness: HarnessDefinition) -> None:
+    """
+    Keep older definitions visually unchanged when optional settings are absent.
+    """
+    payload = json.loads(dumps(valid_harness))
+    del payload["gate_defaults"]
+    del payload["end_defaults"]
+    for member in (*payload["controls"], *payload["connections"]):
+        del member["interpolation"]
+    assert loads(json.dumps(payload)) == valid_harness
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        [],
+        {"approach_mm": -1},
+        {"departure_mm": True},
+        {"approach_mm": "4"},
+        {"departure_mm": float("inf")},
+    ],
+)
+def test_rejects_malformed_interpolation(valid_harness: HarnessDefinition, raw: object) -> None:
+    """
+    Report the precise section path instead of allowing invalid geometry settings through.
+    """
+    payload = json.loads(dumps(valid_harness))
+    payload["connections"][0]["interpolation"] = raw
+    with pytest.raises(DefinitionParseError, match=r"connections\[0\].interpolation"):
+        loads(json.dumps(payload))

@@ -14,6 +14,7 @@ import pytest
 from wire_bundler.application import (
     HarnessEditError,
     HarnessEditGateway,
+    add_pathway,
     add_wire_batch,
     append_pathway_gates,
     move_pathway_gate,
@@ -25,7 +26,7 @@ from wire_bundler.application import (
     rename_wire,
     set_wire_diameter,
 )
-from wire_bundler.application.edit_harness import edit_end_members
+from wire_bundler.application.edit_harness import edit_end_members, set_interpolation
 from wire_bundler.domain import (
     Connection,
     ControlKind,
@@ -35,6 +36,7 @@ from wire_bundler.domain import (
     dumps,
     loads,
 )
+from wire_bundler.domain.model import InterpolationSettings
 
 GATE_2_ID = UUID("30000000-0000-0000-0000-000000000002")
 GATE_3_ID = UUID("30000000-0000-0000-0000-000000000003")
@@ -627,3 +629,160 @@ def test_gate_drop_inserts_across_multiple_positions(valid_harness: HarnessDefin
     assert stored.controls == definition.controls
     restored = move_pathway_gate(definition.harness_id, pathway.pathway_id, first, -2, gateway)
     assert restored.ordered_control_ids == pathway.ordered_control_ids
+
+
+def test_interpolation_defaults_only_seed_new_sections(valid_harness: HarnessDefinition) -> None:
+    """
+    Copy defaults into new pathways, appended gates, and wire ends without retroactive edits.
+    """
+    gateway = _recording_gateway(valid_harness)
+    gates = InterpolationSettings(3, None)
+    ends = InterpolationSettings(1, 2)
+    set_interpolation(valid_harness.harness_id, "defaults", gates, gateway, end_defaults=ends)
+    saved = loads(gateway.serialized_definition)
+    assert saved.controls == valid_harness.controls
+    assert saved.connections == valid_harness.connections
+    pathway = add_pathway(saved.harness_id, "New", saved.routing_mode, ("new-gate",), gateway)
+    append_pathway_gates(saved.harness_id, pathway.pathway_id, ("next-gate",), gateway)
+    add_wire_batch(saved.harness_id, pathway.pathway_id, ("new-start",), ("new-end",), 1.5, gateway)
+    created = loads(gateway.serialized_definition)
+    assert all(item.interpolation == gates for item in created.controls[1:])
+    assert all(item.interpolation == ends for item in created.connections[2:])
+    set_interpolation(
+        saved.harness_id,
+        "defaults",
+        InterpolationSettings(),
+        gateway,
+        end_defaults=InterpolationSettings(),
+    )
+    reset = loads(gateway.serialized_definition)
+    assert reset.controls == created.controls
+    assert reset.connections == created.connections
+
+
+def test_end_interpolation_survives_member_edits(valid_harness: HarnessDefinition) -> None:
+    """
+    Retain the section's settings and identity through adding, replacing, and reordering profiles.
+    """
+    gateway = _recording_gateway(valid_harness)
+    settings = InterpolationSettings(2, 4)
+    identity = valid_harness.connections[0].connection_id
+    set_interpolation(valid_harness.harness_id, "end", settings, gateway, identity)
+    wire_id = valid_harness.wires[0].wire_id
+    edit_end_members(
+        valid_harness.harness_id,
+        wire_id,
+        "start",
+        "add",
+        gateway,
+        tokens=("guide",),
+        expected_members=1,
+    )
+    edit_end_members(
+        valid_harness.harness_id,
+        wire_id,
+        "start",
+        "replace",
+        gateway,
+        tokens=("new-guide",),
+        member_index=1,
+        expected_members=2,
+    )
+    edit_end_members(
+        valid_harness.harness_id,
+        wire_id,
+        "start",
+        "reorder",
+        gateway,
+        member_index=1,
+        target_index=0,
+        expected_members=2,
+    )
+    saved = loads(gateway.serialized_definition)
+    assert saved.connections[0].interpolation == settings
+    assert saved.connections[0].connection_id == identity
+    assert saved.connections[0].member_tokens == ("new-guide", "fusion-start-token")
+    assert saved.connections[1] == valid_harness.connections[1]
+
+
+def test_interpolation_edit_rolls_back_and_rejects_missing_targets(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Restore exact metadata on a failed save and reject stale targets before writing.
+    """
+    gateway = _recording_gateway(valid_harness, (RuntimeError("save failed"),))
+    original = gateway.serialized_definition
+    with pytest.raises(RuntimeError, match="save failed"):
+        set_interpolation(
+            valid_harness.harness_id,
+            "gate",
+            InterpolationSettings(3, 4),
+            gateway,
+            valid_harness.controls[0].control_id,
+        )
+    assert gateway.serialized_definition == original
+    gateway.writes.clear()
+    with pytest.raises(ValueError, match="no longer exists"):
+        set_interpolation(
+            valid_harness.harness_id, "end", InterpolationSettings(), gateway, UUID(int=999)
+        )
+    assert not gateway.writes
+
+
+def test_defaults_preserve_member_and_gate_overrides(valid_harness: HarnessDefinition) -> None:
+    """
+    Update inherited values while preserving fine tuning across member reorder and replacement.
+    """
+    gateway = _recording_gateway(valid_harness)
+    harness_id = valid_harness.harness_id
+    wire_id = valid_harness.wires[0].wire_id
+    gate_id = valid_harness.controls[0].control_id
+    connection_id = valid_harness.connections[0].connection_id
+    edit_end_members(
+        harness_id, wire_id, "start", "add", gateway, tokens=("guide",), expected_members=1
+    )
+    connection = loads(gateway.serialized_definition).connections[0]
+    member_id = connection.member_identities[1]
+    tuned = InterpolationSettings(4, 6)
+    set_interpolation(harness_id, "end", tuned, gateway, connection_id, member_id=member_id)
+    set_interpolation(harness_id, "gate", tuned, gateway, gate_id)
+    defaults = InterpolationSettings(2, 3)
+    set_interpolation(
+        harness_id, "defaults", defaults, gateway, end_defaults=defaults, apply_existing=True
+    )
+    saved = loads(gateway.serialized_definition)
+    assert saved.connections[0].member_settings == (defaults, tuned)
+    assert saved.controls[0].interpolation == tuned
+    edit_end_members(
+        harness_id,
+        wire_id,
+        "start",
+        "reorder",
+        gateway,
+        member_index=1,
+        target_index=0,
+        expected_members=2,
+    )
+    edit_end_members(
+        harness_id,
+        wire_id,
+        "start",
+        "replace",
+        gateway,
+        tokens=("replacement",),
+        member_index=0,
+        expected_members=2,
+    )
+    saved = loads(gateway.serialized_definition)
+    assert saved.connections[0].member_identities[0] == member_id
+    assert saved.connections[0].member_settings == (tuned, defaults)
+    set_interpolation(
+        harness_id, "end", tuned, gateway, connection_id, member_id=member_id, use_defaults=True
+    )
+    set_interpolation(harness_id, "gate", tuned, gateway, gate_id, use_defaults=True)
+    saved = loads(gateway.serialized_definition)
+    assert saved.connections[0].member_settings == (defaults, defaults)
+    assert saved.controls[0].interpolation == defaults
+    assert not saved.controls[0].interpolation_is_override
+    assert len(gateway.writes) == 8

@@ -19,6 +19,7 @@ from ..domain import ControlKind, ControlStructure, HarnessDefinition, WireDefin
 from ..routing import (
     GateFrame,
     RoutePreview,
+    TransitionLengths,
     Vector3,
     WireRouteInput,
     fair_route,
@@ -190,6 +191,8 @@ def _routing_signature(definition: HarnessDefinition, wire: WireDefinition) -> t
         wire.ordered_control_ids,
         start.member_tokens if start else None,
         end.member_tokens if end else None,
+        start.member_settings if start else None,
+        end.member_settings if end else None,
         profile.diameter_mm if profile else None,
         tuple(controls.get(identity) for identity in wire.ordered_control_ids),
     )
@@ -373,6 +376,7 @@ def _solve_definition_routes(
         )
         route_inputs: list[WireRouteInput] = []
         route_normals: dict[UUID, tuple[Vector3, ...]] = {}
+        route_transitions: dict[UUID, tuple[TransitionLengths, ...]] = {}
         for wire in untyped_wires:
             start_connection = connections.get(wire.start_connection_id)
             end_connection = connections.get(wire.end_connection_id)
@@ -389,6 +393,23 @@ def _solve_definition_routes(
                 *(cross(gate.u_direction, gate.v_direction) for gate in gates),
                 *(frame[1] for frame in reversed(end_frames)),
             )
+            route_transitions[wire.wire_id] = (
+                *(
+                    TransitionLengths(settings.approach_mm, settings.departure_mm)
+                    for settings in start_connection.member_settings
+                ),
+                *(
+                    TransitionLengths(
+                        controls[identity].interpolation.approach_mm,
+                        controls[identity].interpolation.departure_mm,
+                    )
+                    for identity in control_ids
+                ),
+                *(
+                    TransitionLengths(settings.departure_mm, settings.approach_mm)
+                    for settings in reversed(end_connection.member_settings)
+                ),
+            )
             route_inputs.append(
                 WireRouteInput(
                     wire_id=wire.wire_id,
@@ -402,7 +423,11 @@ def _solve_definition_routes(
             )
         routes = solve_parallel_routes(tuple(route_inputs), gates, clearance_mm)
         solved_by_id.update(
-            (route.wire_id, fair_route(route, route_normals[route.wire_id])) for route in routes
+            (
+                route.wire_id,
+                fair_route(route, route_normals[route.wire_id], route_transitions[route.wire_id]),
+            )
+            for route in routes
         )
     return tuple(solved_by_id[wire.wire_id] for wire in definition.wires)
 

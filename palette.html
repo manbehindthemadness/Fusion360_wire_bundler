@@ -32,6 +32,8 @@
     .wire-options::backdrop { background: #0005; }
     .wire-options form { display: grid; gap: 12px; }
     .wire-options label { display: grid; gap: 8px; }
+    .wire-options label.apply-existing { display: flex; align-items: center; gap: 8px; }
+    .icon-button.options-button { width: auto; padding: 0 6px; }
     .wire-options .actions { display: flex; justify-content: flex-end; gap: 8px; }
     button, input { font: inherit; }
     button { color: inherit; cursor: pointer; }
@@ -281,6 +283,7 @@
         <button id="add-pathway" class="button compact primary" type="button">Add Pathway</button>
         <button id="add-wires" class="button compact primary" type="button">Add Wire Pairs</button>
         <button id="preview-routes" class="button compact primary" type="button">Preview Routes</button>
+        <button id="interpolation-defaults" class="button compact" type="button">Defaults</button>
         <button id="clear-preview" class="button compact" type="button">Clear Preview</button>
         <button id="create-from-editor" class="button compact" type="button">New Harness</button>
       </div>
@@ -294,6 +297,7 @@
       addWires: document.getElementById("add-wires"),
       previewRoutes: document.getElementById("preview-routes"),
       clearPreview: document.getElementById("clear-preview"),
+      defaults: document.getElementById("interpolation-defaults"),
       create: document.getElementById("create"),
       createFromEditor: document.getElementById("create-from-editor"),
       editor: document.getElementById("editor"),
@@ -428,6 +432,12 @@
       return button;
     }
 
+    function optionsButton(title, handler, disabled = false) {
+      const button = actionButton("Options", title, handler, disabled);
+      button.className = "icon-button options-button";
+      return button;
+    }
+
     function hoverHighlight(node, onHover) {
       node.addEventListener("mouseenter", onHover);
       node.addEventListener("mouseleave", () => send("clear_highlight").catch(() => {}));
@@ -515,21 +525,29 @@
         const gateRows = [];
         pathway.orderedControlIds.forEach((controlId, index) => {
           const control = controls.get(controlId);
+          const openOptions = () => openInterpolationOptions(
+            harness, "gate", controlId, control?.name || "Gate", control?.interpolation, null, control?.usesDefaults ?? true,
+          );
           const movePayload = { harnessId: harness.harnessId, pathwayId: pathway.pathwayId, controlId };
           const row = memberRow(
             `${control?.name || "Missing gate"} #${controlId.slice(0, 8)}`,
             () => highlightMember(harness, "control", controlId),
             [
+              optionsButton("Gate interpolation options", openOptions, !control),
               actionButton("×", "Remove gate", () => removeGate(
                 harness, pathway, controlId, control?.name || "this gate",
               ), pathway.orderedControlIds.length === 1, true),
             ],
             !control || !control.hasLinkedGeometry,
           );
+          row.children[0].title = "Click for gate options; drag to reorder";
+          row.children[0].addEventListener("click", (event) => {
+            if (event.detail === 0 && control) openOptions();
+          });
           row.title = `Drag to reorder ${control?.name || "gate"} (${controlId})`;
           enableSequenceDrag(sequence, gateRows, row, index, (target) => mutate(
             "move_pathway_gate", { ...movePayload, offset: target - index }, "Reordering gate…",
-          ));
+          ), control ? openOptions : null);
           sequence.append(row);
         });
         occupancyContent.className = "section-content";
@@ -609,7 +627,7 @@
       return container;
     }
 
-    function enableSequenceDrag(sequence, memberRows, row, memberIndex, onMove) {
+    function enableSequenceDrag(sequence, memberRows, row, memberIndex, onMove, onActivate = null) {
       const position = document.createElement("span");
       position.className = "sequence-position";
       position.textContent = `${memberIndex + 1}`;
@@ -655,10 +673,12 @@
       row.addEventListener("pointerup", (event) => {
         if (!drag) return;
         const target = drag.target;
+        const clicked = !drag.active;
         const moved = drag.active && target !== null && target !== memberIndex;
         clearDrag();
         if (row.hasPointerCapture(event.pointerId)) row.releasePointerCapture(event.pointerId);
         if (moved) onMove(target);
+        else if (clicked && onActivate) onActivate();
       });
       row.addEventListener("pointercancel", clearDrag);
       row.addEventListener("lostpointercapture", clearDrag);
@@ -671,7 +691,7 @@
       wires.forEach((wire) => {
         const connectionId = endpoint === "start" ? wire.startConnectionId : wire.endConnectionId;
         const connection = connections.get(connectionId);
-        const members = connection?.members || (connection ? [{ index: 0, hasLinkedGeometry: connection.hasLinkedGeometry }] : []);
+        const members = connection?.members || (connection ? [{ index: 0, hasLinkedGeometry: connection.hasLinkedGeometry, usesDefaults: true }] : []);
         const payload = { harnessId: harness.harnessId, wireId: wire.wireId, endpoint, expectedMembers: members.length };
         const memberRows = [];
         members.forEach((member, memberIndex) => {
@@ -679,6 +699,11 @@
             member.memberId ? `#${member.memberId.slice(0, 8)}` : `${memberIndex + 1}`,
             () => highlightMember(harness, "connection", connectionId, { memberIndex }),
             [
+              optionsButton("End member interpolation options", () => openInterpolationOptions(
+                harness, "end", connectionId,
+                `${endpoint === "start" ? "End A" : "End B"} · #${member.memberId?.slice(0, 8) || memberIndex + 1}`,
+                member.interpolation || connection?.interpolation, member.memberId, member.usesDefaults ?? true,
+              ), !member.memberId),
               actionButton("+", "Add member after this member", () => mutate(
                 "edit_end_members", { ...payload, memberIndex, editAction: "add" }, "Select connection profiles…",
               )),
@@ -821,6 +846,120 @@
         "×", `Remove ${wireLabel(wire)}`, () => removeWirePair(harness, wire), false, true,
       ));
       return row;
+    }
+
+    function openInterpolationOptions(harness, target, targetId = null, name = "", settings = {}, memberId = null, useDefaults = false) {
+      const dialog = document.createElement("dialog");
+      const form = document.createElement("form");
+      const heading = document.createElement("h2");
+      const note = document.createElement("p");
+      const error = document.createElement("p");
+      const actions = document.createElement("div");
+      const cancel = document.createElement("button");
+      const save = document.createElement("button");
+      const isDefaults = target === "defaults";
+      dialog.className = "wire-options";
+      heading.textContent = isDefaults ? "Generation defaults" : `Interpolation · ${name}`;
+      dialog.setAttribute("aria-label", heading.textContent);
+      note.textContent = "Leave a distance blank for Auto (25% of the adjacent span). Overlapping distances are reduced to fit. "
+        + (isDefaults ? "Presets are used for new controls. Existing controls follow defaults unless individually customized."
+          : target === "end" ? "These settings apply only to this member, in terminal → pathway order. The first member uses only its pathway-side distance."
+            : "Approach and departure follow the gate traversal order. Changes affect all wires through this gate.");
+      form.append(heading, note);
+      const applyExisting = document.createElement("input");
+      applyExisting.type = "checkbox";
+      applyExisting.checked = true;
+      if (isDefaults) {
+        const applyLabel = document.createElement("label");
+        applyLabel.className = "apply-existing";
+        const applyText = document.createElement("span");
+        applyText.textContent = "Update existing controls using defaults";
+        applyExisting.setAttribute("aria-label", applyText.textContent);
+        applyLabel.append(applyExisting, applyText);
+        form.append(applyLabel);
+      }
+      const status = document.createElement("p");
+      const updateStatus = () => { status.textContent = useDefaults ? "Using harness defaults" : "Custom settings"; };
+      if (!isDefaults) { updateStatus(); form.append(status); }
+      const fields = [];
+      const addFields = (prefix, initial, endSection) => {
+        const inputs = {};
+        for (const [key, text] of [["approach_mm", endSection ? "Terminal-side transition" : "Approach transition"],
+          ["departure_mm", endSection ? "Pathway-side transition" : "Departure transition"]]) {
+          const label = document.createElement("label");
+          const input = document.createElement("input");
+          label.textContent = `${prefix}${text} (mm)`;
+          input.type = "number";
+          input.className = "filter";
+          input.step = "any";
+          input.min = "0";
+          input.placeholder = "Auto";
+          input.value = initial?.[key] == null ? "" : `${initial[key]}`;
+          input.addEventListener("input", () => { useDefaults = false; updateStatus(); });
+          input.setAttribute("aria-label", label.textContent);
+          label.append(input);
+          form.append(label);
+          fields.push(input);
+          inputs[key] = input;
+        }
+        return inputs;
+      };
+      const primary = addFields(isDefaults ? "Gates · " : "", isDefaults ? harness.gateDefaults : settings, target === "end");
+      const ends = isDefaults ? addFields("Ends · ", harness.endDefaults, true) : null;
+      if (!isDefaults) {
+        const reset = document.createElement("button");
+        reset.type = "button";
+        reset.className = "button";
+        reset.textContent = "Use harness defaults";
+        reset.addEventListener("click", () => {
+          useDefaults = true;
+          updateStatus();
+          const defaults = target === "gate" ? harness.gateDefaults : harness.endDefaults;
+          for (const [key, input] of Object.entries(primary)) {
+            input.value = defaults?.[key] == null ? "" : `${defaults[key]}`;
+          }
+        });
+        form.append(reset);
+      }
+      error.setAttribute("role", "alert");
+      error.style.color = "var(--danger)";
+      actions.className = "actions";
+      cancel.type = "button";
+      cancel.className = "button";
+      cancel.textContent = "Cancel";
+      cancel.addEventListener("click", () => dialog.close());
+      save.type = "submit";
+      save.className = "button primary";
+      save.textContent = "Save";
+      const values = (inputs) => Object.fromEntries(Object.entries(inputs).map(([key, input]) =>
+        [key, input.value.trim() === "" ? null : Number(input.value)]));
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (fields.some((input) => input.validity?.badInput || (input.value.trim() !== ""
+          && (!Number.isFinite(Number(input.value)) || Number(input.value) < 0)))) {
+          error.textContent = "Enter nonnegative distances in millimeters, or leave blank for Auto.";
+          return;
+        }
+        save.disabled = true;
+        try {
+          const response = await send("set_interpolation", {
+            harnessId: harness.harnessId, target, targetId, memberId, useDefaults, settings: values(primary),
+            ...(ends ? { endDefaults: values(ends), applyExisting: applyExisting.checked } : {}),
+          });
+          if (response.ok) dialog.close();
+          else error.textContent = response.error || "Could not save interpolation options.";
+        } catch (failure) {
+          error.textContent = failure.message;
+        } finally {
+          save.disabled = false;
+        }
+      });
+      dialog.addEventListener("close", () => dialog.remove());
+      actions.append(cancel, save);
+      form.append(error, actions);
+      dialog.append(form);
+      document.body.append(dialog);
+      dialog.showModal();
     }
 
     function openWireOptions(harness, wire, profile) {
@@ -994,6 +1133,7 @@
 
     function renderEditor(harness) {
       ui.editor.replaceChildren();
+      ui.defaults.disabled = harness.status === "damaged";
       ui.addWires.disabled = harness.status === "damaged" || !harness.pathways?.length;
       ui.previewRoutes.disabled = harness.status === "damaged" || !harness.wires?.length;
       const heading = document.createElement("div");
@@ -1307,6 +1447,10 @@
 
     ui.addPathway.addEventListener("click", addPathway);
     ui.addWires.addEventListener("click", () => addWires());
+    ui.defaults.addEventListener("click", () => {
+      const harness = currentState.harnesses.find((item) => harnessKey(item) === selectedHarnessKey);
+      if (harness && harness.status !== "damaged") openInterpolationOptions(harness, "defaults");
+    });
     ui.previewRoutes.addEventListener("click", previewRoutes);
     ui.clearPreview.addEventListener("click", clearPreview);
     ui.back.addEventListener("click", closeEditor);

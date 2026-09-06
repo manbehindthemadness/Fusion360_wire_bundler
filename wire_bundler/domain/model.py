@@ -4,8 +4,10 @@ Immutable domain objects for a versioned harness definition.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
+from typing import Optional
 from uuid import UUID, uuid5
 
 SCHEMA_VERSION = 3
@@ -27,6 +29,33 @@ class ControlKind(str, Enum):
 
     ROUTING_GATE = "routing_gate"
     PROFILE_GATE = "profile_gate"
+
+
+@dataclass(frozen=True)
+class InterpolationSettings:
+    """
+    Bound each profile's orientation influence; None selects a quarter-span length.
+
+    End sections interpret approach/departure in terminal-to-pathway stack order.
+    """
+
+    approach_mm: Optional[float] = None
+    departure_mm: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        """
+        Reject malformed or non-finite distances at the domain boundary.
+        """
+        for value in (self.approach_mm, self.departure_mm):
+            if value is not None and (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+            ):
+                raise ValueError(
+                    "Transition distances must be finite nonnegative millimeters or Auto."
+                )
 
 
 @dataclass(frozen=True)
@@ -56,6 +85,7 @@ class Connection:
         entity_token: Opaque Fusion entity token resolved by the host adapter.
         additional_entity_tokens: Remaining connection members in explicit order.
         member_ids: Persistent per-member identities aligned with the token order.
+        interpolation: Transition distances applied to every member in local stack order.
     """
 
     connection_id: UUID
@@ -63,6 +93,17 @@ class Connection:
     entity_token: str
     additional_entity_tokens: tuple[str, ...] = ()
     member_ids: tuple[UUID, ...] = ()
+    interpolation: InterpolationSettings = InterpolationSettings()
+    member_interpolations: tuple[Optional[InterpolationSettings], ...] = ()
+
+    @property
+    def member_settings(self) -> tuple[InterpolationSettings, ...]:
+        """
+        Resolve per-member settings, retaining legacy section-wide values as fallback.
+        """
+        return tuple(
+            item if item is not None else self.interpolation for item in self.member_interpolations
+        ) or (self.interpolation,) * len(self.member_tokens)
 
     @property
     def member_identities(self) -> tuple[UUID, ...]:
@@ -88,6 +129,7 @@ class ControlStructure:
     Reference a routing or profile gate in a Fusion design.
 
     Args:
+        interpolation: Approach/departure distances in gate traversal order.
         control_id: Persistent control identity.
         name: User-facing control name.
         kind: Routing or profile gate classification.
@@ -98,6 +140,8 @@ class ControlStructure:
     name: str
     kind: ControlKind
     entity_token: str
+    interpolation: InterpolationSettings = InterpolationSettings()
+    interpolation_is_override: bool = False
 
 
 @dataclass(frozen=True)
@@ -167,6 +211,8 @@ class HarnessDefinition:
         controls: Available routing controls.
         pathways: Reusable ordered routing pathways.
         wires: Authoritative conductor mappings.
+        gate_defaults: Interpolation preset copied to newly created controls.
+        end_defaults: Interpolation preset copied to newly created connections.
     """
 
     schema_version: int
@@ -178,3 +224,5 @@ class HarnessDefinition:
     controls: tuple[ControlStructure, ...]
     pathways: tuple[PathwayDefinition, ...]
     wires: tuple[WireDefinition, ...]
+    gate_defaults: InterpolationSettings = InterpolationSettings()
+    end_defaults: InterpolationSettings = InterpolationSettings()

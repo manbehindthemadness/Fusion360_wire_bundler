@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import traceback
+from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 from uuid import UUID
@@ -33,8 +34,9 @@ from .application import (
     suggest_harness_name,
     suggest_pathway_name,
 )
-from .application.edit_harness import edit_end_members
+from .application.edit_harness import edit_end_members, set_interpolation
 from .domain import HarnessDefinition, RoutingMode, loads
+from .domain.codec import parse_interpolation
 from .fusion import (
     FusionHarnessGateway,
     clear_route_previews,
@@ -101,6 +103,7 @@ _PALETTE_EDIT_NAMES = {
     "rename_pathway": "Rename Pathway",
     "rename_wire": "Rename Wire",
     "set_wire_diameter": "Change Wire Diameter",
+    "set_interpolation": "Change Interpolation Options",
     "remove_end_member": "Remove End Member",
     "move_end_member": "Reorder End Members",
     "preview_routes": "Preview Wire Routes",
@@ -1239,6 +1242,8 @@ def _serialize_palette_state(
                 "harnessId": str(definition.harness_id),
                 "schemaVersion": definition.schema_version,
                 "routingMode": _ROUTING_MODE_LABELS[definition.routing_mode],
+                "gateDefaults": asdict(definition.gate_defaults),
+                "endDefaults": asdict(definition.end_defaults),
                 "profiles": [
                     {
                         "profileId": str(profile.profile_id),
@@ -1249,6 +1254,7 @@ def _serialize_palette_state(
                 ],
                 "connections": [
                     {
+                        "interpolation": asdict(connection.interpolation),
                         "connectionId": str(connection.connection_id),
                         "name": connection.name,
                         "hasLinkedGeometry": all(
@@ -1259,6 +1265,9 @@ def _serialize_palette_state(
                             {
                                 "index": index,
                                 "memberId": str(connection.member_identities[index]),
+                                "interpolation": asdict(connection.member_settings[index]),
+                                "usesDefaults": not connection.member_interpolations
+                                or connection.member_interpolations[index] is None,
                                 "hasLinkedGeometry": gateway.is_entity_token_resolvable(token),
                             }
                             for index, token in enumerate(connection.member_tokens)
@@ -1268,6 +1277,8 @@ def _serialize_palette_state(
                 ],
                 "controls": [
                     {
+                        "interpolation": asdict(control.interpolation),
+                        "usesDefaults": not control.interpolation_is_override,
                         "controlId": str(control.control_id),
                         "name": control.name,
                         "kind": control.kind.value,
@@ -1548,6 +1559,37 @@ def _apply_palette_edit(
             gateway,
         )
         return "Removed pathway gate."
+    if action == "set_interpolation":
+        target = payload.get("target")
+        if target not in ("gate", "end", "defaults"):
+            raise ValueError("Unsupported interpolation target.")
+        use_defaults = payload.get("useDefaults", False)
+        if not isinstance(use_defaults, bool):
+            raise ValueError("Use defaults must be a boolean.")
+        apply_existing = payload.get("applyExisting", False)
+        if not isinstance(apply_existing, bool):
+            raise ValueError("Apply to existing sections must be a boolean.")
+        settings = parse_interpolation(payload.get("settings"), "settings")
+        set_interpolation(
+            harness_id,
+            target,
+            settings,
+            gateway,
+            apply_existing=apply_existing,
+            use_defaults=use_defaults,
+            member_id=(
+                _read_payload_uuid(payload, "memberId", "end member") if target == "end" else None
+            ),
+            target_id=(
+                None if target == "defaults" else _read_payload_uuid(payload, "targetId", "section")
+            ),
+            end_defaults=(
+                parse_interpolation(payload.get("endDefaults"), "endDefaults")
+                if target == "defaults"
+                else None
+            ),
+        )
+        return "Saved interpolation options."
     if action == "set_wire_diameter":
         diameter = payload.get("diameterMm")
         if isinstance(diameter, bool) or not isinstance(diameter, (int, float)):

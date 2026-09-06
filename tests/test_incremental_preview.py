@@ -14,6 +14,7 @@ from uuid import UUID
 import pytest
 
 from wire_bundler.domain import HarnessDefinition
+from wire_bundler.domain.model import InterpolationSettings
 from wire_bundler.routing import GateFrame, RoutePreview, Vector3, fair_route, sample_centerline
 from wire_bundler.routing.geometry import cross, magnitude, unit
 
@@ -397,8 +398,12 @@ def test_undo_clear_preview_recovers_cache(scenario: _Scenario) -> None:
     assert scenario.draws == []
 
 
+@pytest.mark.parametrize("explicit", [False, True])
 def test_adapter_fairs_all_end_members_in_stored_order(
-    scenario: _Scenario, monkeypatch: pytest.MonkeyPatch, valid_harness: HarnessDefinition
+    scenario: _Scenario,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+    explicit: bool,
 ) -> None:
     """
     Translate every profile normal and retain reversed end-B traversal through fairing.
@@ -410,6 +415,27 @@ def test_adapter_fairs_all_end_members_in_stored_order(
             replace(valid_harness.connections[1], additional_entity_tokens=("b-guide",)),
         ),
     )
+    if explicit:
+        definition = replace(
+            definition,
+            connections=(
+                replace(
+                    definition.connections[0],
+                    member_interpolations=(
+                        InterpolationSettings(0.4, 0.8),
+                        InterpolationSettings(0.5, 0.9),
+                    ),
+                ),
+                replace(
+                    definition.connections[1],
+                    member_interpolations=(
+                        InterpolationSettings(0.6, 1.2),
+                        InterpolationSettings(0.7, 1.3),
+                    ),
+                ),
+            ),
+            controls=(replace(definition.controls[0], interpolation=InterpolationSettings(1, 2)),),
+        )
     frames = {
         definition.connections[0].entity_token: (Vector3(0, 0, 0), Vector3(1, 0, 1)),
         "a-guide": (Vector3(0, 0, 4), Vector3(0, 1, 1)),
@@ -433,6 +459,11 @@ def test_adapter_fairs_all_end_members_in_stored_order(
     assert set(calls) == set(frames)
     assert len(calls) == 4
     assert len(route.curves) == 12
+    if explicit:
+        assert [curve.end.z for curve in route.curves[::3]] == pytest.approx([0.8, 4.9, 12, 16.7])
+        assert [curve.start.z for curve in route.curves[2::3]] == pytest.approx(
+            [3.5, 9, 14.7, 18.8]
+        )
     expected_normals = (Vector3(1, 0, 1), Vector3(0, 1, 1), Vector3(0, 0, 1), Vector3(0, 1, 1))
     for index, normal in enumerate(expected_normals):
         tangent = route.curves[index * 3].derivative(0.0)
@@ -472,3 +503,37 @@ def test_graphics_use_sampled_curves_in_fusion_units(scenario: _Scenario) -> Non
     assert len(coordinates) > 6
     assert wire_group.id == str(route.wire_id)
     assert lines.weight == 1.0
+
+
+@pytest.mark.parametrize("target", ["gate", "end", "defaults"])
+def test_interpolation_refresh_scope(scenario: _Scenario, target: str) -> None:
+    """
+    Recompute the affected bundle for section edits; defaults leave existing previews intact.
+    """
+    definition = scenario.definition
+    settings = InterpolationSettings(3, 5)
+    if target == "gate":
+        updated = replace(
+            definition,
+            controls=(
+                replace(definition.controls[0], interpolation=settings),
+                *definition.controls[1:],
+            ),
+        )
+    elif target == "end":
+        updated = replace(
+            definition,
+            connections=(
+                replace(definition.connections[0], interpolation=settings),
+                *definition.connections[1:],
+            ),
+        )
+    else:
+        updated = replace(definition, gate_defaults=settings, end_defaults=settings)
+    scenario.module.refresh_route_previews(scenario.design, updated)
+    expected = (
+        [] if target == "defaults" else [tuple(wire.wire_id for wire in definition.wires[:2])]
+    )
+    if target == "end":
+        expected.append((definition.wires[2].wire_id,))
+    assert set(scenario.solves) == set(expected)

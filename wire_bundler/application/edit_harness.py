@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import replace
-from typing import Protocol
+from typing import Optional, Protocol
 from uuid import UUID, uuid4
 
 from ..domain import (
@@ -22,6 +22,7 @@ from ..domain import (
     loads,
     next_available_name,
 )
+from ..domain.model import InterpolationSettings
 
 
 class HarnessEditGateway(Protocol):
@@ -84,7 +85,7 @@ def append_pathway_gates(
     controls: list[ControlStructure] = []
     for token in normalized_tokens:
         name = next_available_name(f"{label} 01", (*existing_names, *(c.name for c in controls)))
-        controls.append(ControlStructure(id_factory(), name, kind, token))
+        controls.append(ControlStructure(id_factory(), name, kind, token, definition.gate_defaults))
 
     updated_pathway = replace(
         pathway,
@@ -286,6 +287,9 @@ def edit_end_members(
     )
     members = list(connection.member_tokens) if connection else []
     identities = list(connection.member_identities) if connection else []
+    settings = (
+        list(connection.member_interpolations or (None,) * len(members)) if connection else []
+    )
     if len(members) != expected_members:
         raise ValueError("End members changed; refresh the palette and try again.")
     if action == "add":
@@ -293,6 +297,7 @@ def edit_end_members(
             raise ValueError("Selected end member no longer exists.")
         members[member_index + 1 : member_index + 1] = normalized
         identities[member_index + 1 : member_index + 1] = [uuid4() for _ in normalized]
+        settings[member_index + 1 : member_index + 1] = [None for _ in normalized]
     else:
         if member_index < 0 or member_index >= len(members):
             raise ValueError("Selected end member no longer exists.")
@@ -303,9 +308,11 @@ def edit_end_members(
                 raise ValueError("Cannot move an end member beyond the sequence.")
             members.insert(target_index, members.pop(member_index))
             identities.insert(target_index, identities.pop(member_index))
+            settings.insert(target_index, settings.pop(member_index))
         else:
             members.pop(member_index)
             identities.pop(member_index)
+            settings.pop(member_index)
     remaining = tuple(
         item for item in definition.connections if item.connection_id != connection_id
     )
@@ -318,7 +325,15 @@ def edit_end_members(
                 (item.name for item in remaining),
             )
         )
-        updated = Connection(connection_id, name, members[0], tuple(members[1:]), tuple(identities))
+        updated = Connection(
+            connection_id,
+            name,
+            members[0],
+            tuple(members[1:]),
+            tuple(identities),
+            connection.interpolation if connection else definition.end_defaults,
+            tuple(settings),
+        )
         connections = (
             tuple(
                 updated if item.connection_id == connection_id else item
@@ -605,3 +620,87 @@ def _persist(
             )
             raise HarnessEditError(message) from persistence_error
         raise
+
+
+def set_interpolation(
+    harness_id: UUID,
+    target: str,
+    settings: InterpolationSettings,
+    gateway: HarnessEditGateway,
+    target_id: Optional[UUID] = None,
+    end_defaults: Optional[InterpolationSettings] = None,
+    apply_existing: bool = False,
+    member_id: Optional[UUID] = None,
+    use_defaults: bool = False,
+) -> None:
+    """
+    Save section controls or creation defaults in one reversible metadata edit.
+
+    Optionally apply both presets to existing sections in the same transaction.
+    """
+    original, definition = _read_definition(harness_id, gateway)
+    if target == "defaults":
+        if end_defaults is None:
+            raise ValueError("Both gate and end defaults are required.")
+        updated = replace(definition, gate_defaults=settings, end_defaults=end_defaults)
+        if apply_existing:
+            updated = replace(
+                updated,
+                controls=tuple(
+                    replace(item, interpolation=settings)
+                    if not item.interpolation_is_override
+                    else item
+                    for item in definition.controls
+                ),
+                connections=tuple(
+                    replace(item, interpolation=end_defaults) for item in definition.connections
+                ),
+            )
+    elif target == "gate":
+        if not any(item.control_id == target_id for item in definition.controls):
+            raise ValueError("Selected gate no longer exists.")
+        updated = replace(
+            definition,
+            controls=tuple(
+                replace(
+                    item,
+                    interpolation=definition.gate_defaults if use_defaults else settings,
+                    interpolation_is_override=not use_defaults,
+                )
+                if item.control_id == target_id
+                else item
+                for item in definition.controls
+            ),
+        )
+    elif target == "end":
+        connection = next(
+            (item for item in definition.connections if item.connection_id == target_id), None
+        )
+        if connection is None:
+            raise ValueError("Selected end section no longer exists.")
+        if member_id is None:
+            edited = replace(connection, interpolation=settings, member_interpolations=())
+        else:
+            if member_id not in connection.member_identities:
+                raise ValueError("Selected end member no longer exists.")
+            edited = replace(
+                connection,
+                interpolation=definition.end_defaults if use_defaults else connection.interpolation,
+                member_interpolations=tuple(
+                    (None if use_defaults else settings) if identity == member_id else previous
+                    for identity, previous in zip(
+                        connection.member_identities,
+                        connection.member_interpolations or (None,) * len(connection.member_tokens),
+                    )
+                ),
+            )
+        updated = replace(
+            definition,
+            connections=tuple(
+                edited if item.connection_id == target_id else item
+                for item in definition.connections
+            ),
+        )
+    else:
+        raise ValueError("Unsupported interpolation target.")
+    _persist(harness_id, original, updated, gateway)

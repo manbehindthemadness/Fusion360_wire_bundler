@@ -341,3 +341,84 @@ test('gate stacks share drag placement and both stacks have a left position colu
   assert.deepEqual(updated.map((row) => row.children[0].textContent), ['1', '2', '3']);
   assert.equal(updated[2].children[1].textContent, 'Gate 1 #gate0001');
 });
+
+test('interpolation popups target native gates and ends without changing expansion state', () => {
+  const storage = new Map([['wireBundler.expandedSections', '["end:h:w1:start"]']]);
+  const { context } = palette(storage);
+  const definition = harness();
+  definition.connections.forEach((connection) => {
+    connection.members = [{ memberId: `member-${connection.connectionId}`, index: 0, hasLinkedGeometry: true }];
+  });
+  definition.controls = [{ controlId: 'gate-001', name: 'Gate 1', hasLinkedGeometry: true,
+    interpolation: { approach_mm: 3, departure_mm: null } }];
+  definition.pathways[0].orderedControlIds = ['gate-001'];
+  const requests = [];
+  context.send = async (action, payload) => { requests.push({ action, payload }); return { ok: true }; };
+  const paths = context.renderPathways(definition);
+  descendants(paths, (item) => item.title === 'Gate interpolation options')[0].events.click();
+  let dialog = context.document.body.children.at(-1);
+  let inputs = descendants(dialog, (item) => item.tag === 'input');
+  assert.equal(inputs[0].value, '3');
+  assert.equal(inputs[1].value, '');
+  inputs[1].value = '7';
+  inputs[1].events.input();
+  dialog.children[0].events.submit({ preventDefault() {} });
+  assert.equal(requests[0].payload.targetId, 'gate-001');
+  assert.equal(requests[0].payload.settings.departure_mm, 7);
+  assert.equal(requests[0].payload.useDefaults, false);
+  const wires = context.renderWireRoutes(definition);
+  descendants(wires, (item) => item.title === 'End member interpolation options')[1].events.click();
+  dialog = context.document.body.children.at(-1);
+  inputs = descendants(dialog, (item) => item.tag === 'input');
+  assert.ok(inputs[0].attributes['aria-label'].startsWith('Terminal-side'));
+  dialog.children[0].events.submit({ preventDefault() {} });
+  assert.equal(requests[1].payload.target, 'end');
+  assert.equal(requests[1].payload.targetId, 'b1');
+  assert.equal(requests[1].payload.memberId, 'member-b1');
+  assert.equal(storage.get('wireBundler.expandedSections'), '["end:h:w1:start"]');
+});
+
+test('defaults popup saves both presets together and rejects invalid distances', () => {
+  const { context } = palette();
+  const requests = [];
+  context.send = async (action, payload) => { requests.push({ action, payload }); return { ok: true }; };
+  context.openInterpolationOptions(harness(), 'defaults');
+  const dialog = context.document.body.children.at(-1);
+  const inputs = descendants(dialog, (item) => item.tag === 'input' && item.type === 'number');
+  assert.equal(inputs.length, 4);
+  inputs[0].value = '-1';
+  dialog.children[0].events.submit({ preventDefault() {} });
+  assert.equal(requests.length, 0);
+  inputs[0].value = '2.5';
+  inputs[3].value = '6';
+  dialog.children[0].events.submit({ preventDefault() {} });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].action, 'set_interpolation');
+  assert.equal(requests[0].payload.settings.approach_mm, 2.5);
+  assert.equal(requests[0].payload.settings.departure_mm, null);
+  assert.equal(requests[0].payload.endDefaults.departure_mm, 6);
+  assert.equal(requests[0].payload.applyExisting, true);
+});
+
+test('member popup can restore inheritance without changing other members', () => {
+  const { context } = palette();
+  const definition = harness();
+  definition.endDefaults = { approach_mm: 2, departure_mm: 5 };
+  definition.connections[0].members = [
+    { index: 0, memberId: 'terminal-001', interpolation: { approach_mm: 1, departure_mm: 9 }, usesDefaults: false },
+    { index: 1, memberId: 'guide-002', interpolation: { approach_mm: 3, departure_mm: 7 }, usesDefaults: false },
+  ];
+  const requests = [];
+  context.send = async (action, payload) => { requests.push({ action, payload }); return { ok: true }; };
+  const wires = context.renderWireRoutes(definition);
+  const buttons = descendants(wires, (item) => item.title === 'End member interpolation options');
+  buttons[1].events.click();
+  const dialog = context.document.body.children.at(-1);
+  const inputs = descendants(dialog, (item) => item.type === 'number');
+  assert.equal(inputs[1].value, '7');
+  descendants(dialog, (item) => item.textContent === 'Use harness defaults')[0].events.click();
+  assert.equal(inputs[1].value, '5');
+  dialog.children[0].events.submit({ preventDefault() {} });
+  assert.equal(requests[0].payload.memberId, 'guide-002');
+  assert.equal(requests[0].payload.useDefaults, true);
+});

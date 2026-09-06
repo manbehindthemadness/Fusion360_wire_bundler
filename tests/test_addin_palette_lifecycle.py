@@ -17,7 +17,7 @@ from uuid import UUID
 import pytest
 
 from wire_bundler.application import HarnessLoadResult
-from wire_bundler.domain import HarnessDefinition, dumps
+from wire_bundler.domain import HarnessDefinition, dumps, loads
 
 
 class _PaletteLifecycleModule(Protocol):
@@ -130,6 +130,9 @@ def test_palette_state_contains_complete_editor_definition(
 
     harness = payload["harnesses"][0]
     assert payload["notice"] == "Ready"
+    assert harness["gateDefaults"] == {"approach_mm": None, "departure_mm": None}
+    assert harness["connections"][0]["interpolation"] == harness["endDefaults"]
+    assert harness["controls"][0]["interpolation"] == harness["gateDefaults"]
     assert harness["schemaVersion"] == valid_harness.schema_version
     assert harness["profiles"][0]["name"] == "Primary wire"
     assert harness["connections"][0]["name"] == "J1 / Pin 1"
@@ -296,8 +299,9 @@ def test_preview_hover_emphasizes_only_matching_centerline(
     assert addin_module.highlight_route_preview(design, valid_harness.wires[0].wire_id) == 0
 
 
+@pytest.mark.parametrize("action", ["rename_wire", "set_interpolation"])
 def test_palette_edit_waits_for_execute_and_releases_handlers(
-    addin_module: _PaletteLifecycleModule, monkeypatch: pytest.MonkeyPatch
+    addin_module: _PaletteLifecycleModule, monkeypatch: pytest.MonkeyPatch, action: str
 ) -> None:
     """
     Queue without changing data, then group persistence and preview in execute.
@@ -320,7 +324,7 @@ def test_palette_edit_waits_for_execute_and_releases_handlers(
     monkeypatch.setattr(addin_module, "_refresh_active_preview", refreshed)
     monkeypatch.setattr(addin_module, "_send_palette_state", sent)
     payload = json.dumps({"harnessId": str(UUID(int=1))})
-    addin_module._open_palette_edit(application, "rename_wire", payload)
+    addin_module._open_palette_edit(application, action, payload)
     applied.assert_not_called()
     handlers: list[object] = []
     cleanup: list[object] = []
@@ -332,7 +336,7 @@ def test_palette_edit_waits_for_execute_and_releases_handlers(
     applied.assert_not_called()
     args = SimpleNamespace(executeFailed=False)
     cast(Mock, handlers[0]).notify(args)
-    applied.assert_called_once_with(application, "rename_wire", payload)
+    applied.assert_called_once_with(application, action, payload)
     refreshed.assert_called_once_with(application, UUID(int=1))
     assert not args.executeFailed
     cast(Mock, cleanup[0]).notify(SimpleNamespace())
@@ -410,3 +414,47 @@ def test_palette_command_launch_failure_releases_request(
     with pytest.raises(RuntimeError, match="could not execute"):
         addin_module._open_palette_edit(application, "rename_wire", "{}")
     assert addin_module._pending_palette_edit is None
+
+
+@pytest.mark.parametrize("target", ["gate", "end", "defaults"])
+def test_interpolation_bridge_persists_selected_target(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+    target: str,
+) -> None:
+    """
+    Translate popup distances into one complete metadata write with stable target identity.
+    """
+    gateway = Mock(read_harness_definition=Mock(return_value=dumps(valid_harness)))
+    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
+    target_id = (
+        valid_harness.controls[0].control_id
+        if target == "gate"
+        else valid_harness.connections[0].connection_id
+    )
+    request = {
+        "harnessId": str(valid_harness.harness_id),
+        "target": target,
+        "targetId": str(target_id),
+        "memberId": str(valid_harness.connections[0].member_identities[0]),
+        "settings": {"approach_mm": 2, "departure_mm": None},
+        "endDefaults": {"approach_mm": 1, "departure_mm": 3},
+    }
+    addin_module._apply_palette_edit(object(), "set_interpolation", json.dumps(request))
+    gateway.replace_harness_definition.assert_called_once()
+    saved = loads(gateway.replace_harness_definition.call_args.args[1])
+    actual = (
+        saved.gate_defaults
+        if target == "defaults"
+        else saved.controls[0].interpolation
+        if target == "gate"
+        else saved.connections[0].member_settings[0]
+    )
+    assert actual.approach_mm == 2
+    assert actual.departure_mm is None
+    assert saved.wires == valid_harness.wires
+    if target == "defaults":
+        assert saved.end_defaults.departure_mm == 3
+        assert saved.connections == valid_harness.connections
+        assert saved.controls == valid_harness.controls

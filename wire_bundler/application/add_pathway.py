@@ -121,6 +121,7 @@ def add_pathway(
             name=f"{control_label} {index:02d}",
             kind=control_kind,
             entity_token=entity_token,
+            interpolation=definition.gate_defaults,
         )
         for index, entity_token in enumerate(normalized_tokens, start=1)
     )
