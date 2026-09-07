@@ -9,6 +9,7 @@ import sys
 from dataclasses import dataclass, replace
 from types import ModuleType, SimpleNamespace
 from typing import Callable, Optional, Protocol, cast
+from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
@@ -46,7 +47,7 @@ class _PreviewModule(Protocol):
         [RoutePreview, tuple[Vector3, ...], tuple[TransitionLengths, ...], float], str
     ]
     _add_route_graphics: Callable[..., None]
-    _stripe_mesh: Callable[..., tuple[tuple[Vector3, ...], list[int]]]
+    build_stripe_mesh: Callable[..., tuple[tuple[Vector3, ...], list[int]]]
     _stripe_paths: Callable[..., tuple[tuple[Vector3, ...], ...]]
     _gate_frame: Callable[..., GateFrame]
     _profile_frame: Callable[[object, str], tuple[Vector3, Vector3]]
@@ -287,11 +288,11 @@ def test_parent_color_change_redraws_inherited_wire_previews(
     assert colors == [blue, blue, blue]
 
 
-def test_stripe_change_redraws_preview_when_centerline_is_unchanged(
+def test_stripe_change_does_not_redraw_preview_geometry(
     scenario: _Scenario,
 ) -> None:
     """
-    Replace wire graphics when only inherited procedural stripes change.
+    Leave preview centerlines alone when only solid-owned stripes change.
     """
     stripe = WireStripe(WireColor("White", 245, 245, 245), 0.2)
     updated = replace(
@@ -301,7 +302,8 @@ def test_stripe_change_redraws_preview_when_centerline_is_unchanged(
 
     scenario.module.refresh_route_previews(scenario.design, updated)
 
-    assert set(scenario.draws) == {wire.wire_id for wire in updated.wires}
+    assert scenario.solves == []
+    assert scenario.draws == []
 
 
 def test_procedural_stripe_paths_support_longitudinal_dashed_and_helical(
@@ -375,8 +377,10 @@ def test_stripe_mesh_has_physical_width_and_angular_placement(scenario: _Scenari
         (Vector3(0, 0, 0), Vector3(0, 0, 10)),
     )
     white = WireColor("White", 245, 245, 245)
-    first, first_indices = scenario.module._stripe_mesh(route, WireStripe(white, 0.2), 1.0)
-    rotated, _ = scenario.module._stripe_mesh(route, WireStripe(white, 0.2, angle_deg=90.0), 1.0)
+    first, first_indices = scenario.module.build_stripe_mesh(route, WireStripe(white, 0.2), 1.0)
+    rotated, _ = scenario.module.build_stripe_mesh(
+        route, WireStripe(white, 0.2, angle_deg=90.0), 1.0
+    )
 
     section_size = next(index for index, point in enumerate(first) if point.z > first[0].z)
     width = magnitude(
@@ -403,7 +407,7 @@ def test_wide_stripe_faces_remain_outside_wire_surface(scenario: _Scenario) -> N
     )
     stripe = WireStripe(WireColor("White", 245, 245, 245), 2.0)
 
-    vertices, _ = scenario.module._stripe_mesh(route, stripe, 1.0)
+    vertices, _ = scenario.module.build_stripe_mesh(route, stripe, 1.0)
     section_size = next(index for index, point in enumerate(vertices) if point.z > vertices[0].z)
     radial_midpoints = [
         Vector3(
@@ -434,7 +438,7 @@ def test_stripe_mesh_samples_curves_more_finely_than_centerline_graphics(
     route = RoutePreview(wire.wire_id, wire.wire_number, (curve.start, curve.end), (curve,))
     stripe = WireStripe(WireColor("White", 245, 245, 245), 0.2)
 
-    vertices, _ = scenario.module._stripe_mesh(route, stripe, 1.0)
+    vertices, _ = scenario.module.build_stripe_mesh(route, stripe, 1.0)
 
     assert len(vertices) // 2 > len(sample_centerline(route))
 
@@ -817,9 +821,9 @@ def test_graphics_use_sampled_curves_in_fusion_units(scenario: _Scenario) -> Non
     assert lines.weight == 1.0
 
 
-def test_graphics_add_colored_procedural_stripe_entity(scenario: _Scenario) -> None:
+def test_preview_graphics_exclude_solid_owned_stripes(scenario: _Scenario) -> None:
     """
-    Send a resolved stripe path to Fusion beside the selectable base centerline.
+    Draw only a centerline while stripe presentation belongs to generated solids.
     """
     route = RoutePreview(
         UUID(int=1),
@@ -828,7 +832,6 @@ def test_graphics_add_colored_procedural_stripe_entity(scenario: _Scenario) -> N
     )
     coordinate_calls: list[list[float]] = []
     line_entities: list[SimpleNamespace] = []
-    mesh_entities: list[SimpleNamespace] = []
 
     def capture(values: list[float]) -> object:
         """
@@ -845,32 +848,20 @@ def test_graphics_add_colored_procedural_stripe_entity(scenario: _Scenario) -> N
         line_entities.append(line)
         return line
 
-    def add_mesh(*_args: object) -> SimpleNamespace:
-        """
-        Return an assignable Custom Graphics mesh stub.
-        """
-        mesh = SimpleNamespace()
-        mesh_entities.append(mesh)
-        return mesh
-
     core = sys.modules["adsk.core"]
     fusion = sys.modules["adsk.fusion"]
     vars(core)["Color"] = SimpleNamespace(create=lambda *channels: channels)
     vars(fusion)["CustomGraphicsCoordinates"] = SimpleNamespace(create=capture)
     vars(fusion)["CustomGraphicsSolidColorEffect"] = SimpleNamespace(create=lambda color: color)
-    vars(fusion)["CustomGraphicsCullModes"] = SimpleNamespace(CustomGraphicsCullNone="none")
+    add_mesh = Mock()
     wire_group = SimpleNamespace(addLines=add_lines, addMesh=add_mesh)
     owner = SimpleNamespace(addGroup=lambda: wire_group)
-    stripe = WireStripe(WireColor("White", 245, 245, 245), 0.3)
 
-    scenario.draw_route(owner, route, 0, None, (stripe,), 1.0)
+    scenario.draw_route(owner, route, 0)
 
-    assert len(coordinate_calls) == 2
+    assert len(coordinate_calls) == 1
     assert len(line_entities) == 1
-    assert len(mesh_entities) == 1
-    assert mesh_entities[0].name == "Wire 001 Stripe 1"
-    assert mesh_entities[0].color == (245, 245, 245, 255)
-    assert mesh_entities[0].cullMode == "none"
+    add_mesh.assert_not_called()
 
 
 @pytest.mark.parametrize("target", ["gate", "end", "defaults"])

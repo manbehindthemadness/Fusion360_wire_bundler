@@ -10,7 +10,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import replace
 from types import ModuleType, SimpleNamespace
-from typing import Protocol, cast
+from typing import Optional, Protocol, cast
 from unittest.mock import MagicMock, Mock
 from uuid import UUID
 
@@ -22,6 +22,7 @@ from wire_bundler.domain import (
     WireColor,
     WireDefinition,
     WireMaterialSettings,
+    WireStripe,
 )
 from wire_bundler.routing import CubicBezier, RoutePreview, Vector3
 
@@ -37,6 +38,11 @@ class _SolidsModule(Protocol):
     solve_route_centerlines: Callable[..., tuple[RoutePreview, ...]]
     build_wire_sweep: Callable[..., None]
     apply_wire_materials: Callable[..., int]
+    GENERATED_STRIPE_GROUP_ID: str
+    _replace_stripe_graphics: Callable[..., int]
+    _route_from_metadata: Callable[..., Optional[RoutePreview]]
+    _route_in_component_space: Callable[..., RoutePreview]
+    _route_metadata: Callable[..., list[list[list[float]]]]
     _world_to_harness: Callable[..., object]
     _point: Callable[..., object]
     _wire_appearance: Callable[..., object]
@@ -285,6 +291,80 @@ def test_transforms_points_into_harness_placement(solids: _SolidsModule) -> None
     transform.invert.assert_called_once()
 
 
+def test_generated_stripes_are_owned_by_wire_component(
+    solids: _SolidsModule,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Replace stripe meshes inside the generated component in component-local units.
+    """
+    wire = valid_harness.wires[0]
+    route = _route(wire)
+    old_child = Mock(deleteMe=Mock(return_value=True))
+    old_group = SimpleNamespace(
+        id=solids.GENERATED_STRIPE_GROUP_ID,
+        name="Wire 001 Solid Stripes",
+        count=1,
+        item=lambda _index: old_child,
+        deleteMe=Mock(return_value=True),
+    )
+    meshes: list[SimpleNamespace] = []
+    coordinate_calls: list[list[float]] = []
+
+    def add_mesh(*_args: object) -> SimpleNamespace:
+        """
+        Return one assignable solid-owned stripe mesh.
+        """
+        mesh = SimpleNamespace()
+        meshes.append(mesh)
+        return mesh
+
+    new_group = SimpleNamespace(id="", name="", count=0, addMesh=add_mesh)
+    groups = SimpleNamespace(count=1, item=lambda _index: old_group, add=lambda: new_group)
+    component = SimpleNamespace(customGraphicsGroups=groups)
+    core = sys.modules["adsk.core"]
+    fusion = sys.modules["adsk.fusion"]
+    core.Color = SimpleNamespace(create=lambda *channels: channels)  # type: ignore[attr-defined]
+    fusion.CustomGraphicsCoordinates = SimpleNamespace(  # type: ignore[attr-defined]
+        create=lambda values: coordinate_calls.append(values) or object()
+    )
+    fusion.CustomGraphicsSolidColorEffect = SimpleNamespace(  # type: ignore[attr-defined]
+        create=lambda color: color
+    )
+    fusion.CustomGraphicsCullModes = SimpleNamespace(  # type: ignore[attr-defined]
+        CustomGraphicsCullNone="none"
+    )
+    stripe = WireStripe(WireColor("White", 245, 245, 245), 0.3)
+
+    assert solids._replace_stripe_graphics(component, route, (stripe,), 0.75) == 1
+
+    old_child.deleteMe.assert_called_once()
+    old_group.deleteMe.assert_called_once()
+    assert new_group.id.endswith(str(wire.wire_id))
+    assert new_group.name == "Wire 001 Solid Stripes"
+    assert coordinate_calls
+    assert meshes[0].name == "Wire 001 Stripe 1"
+    assert meshes[0].color == (245, 245, 245, 255)
+    assert meshes[0].cullMode == "none"
+
+
+def test_generated_route_metadata_round_trips_component_local_curves(
+    solids: _SolidsModule,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Retain the exact solid path so later material edits cannot follow a stale preview.
+    """
+    wire = valid_harness.wires[0]
+    route = _route(wire)
+    local_route = solids._route_in_component_space(route, Mock())
+    metadata = {"route_curves_mm": solids._route_metadata(local_route)}
+
+    restored = solids._route_from_metadata(wire, metadata)
+
+    assert restored == local_route
+
+
 def test_creates_and_reuses_document_insulation_appearance(
     solids: _SolidsModule,
     monkeypatch: pytest.MonkeyPatch,
@@ -368,15 +448,22 @@ def test_applies_saved_materials_to_existing_generated_body(
     Recolor generated output and refresh its resolved material metadata in place.
     """
     blue = WireColor("Blue", 35, 94, 190)
+    stripe = WireStripe(WireColor("White", 245, 245, 245), 0.3)
     definition = replace(
         valid_harness,
         material_defaults=WireMaterialSettings(
             insulation_material="ETFE",
             main_color=blue,
+            stripes=(stripe,),
             part_number="WB-001",
         ),
     )
-    metadata = {"wire_id": str(definition.wires[0].wire_id), "length_mm": 42.0}
+    route = _route(definition.wires[0])
+    metadata = {
+        "wire_id": str(definition.wires[0].wire_id),
+        "length_mm": 42.0,
+        "route_curves_mm": solids._route_metadata(route),
+    }
     attribute = SimpleNamespace(value=json.dumps(metadata))
     body = SimpleNamespace(appearance=None)
     bodies = SimpleNamespace(count=1, item=lambda _index: body)
@@ -390,9 +477,30 @@ def test_applies_saved_materials_to_existing_generated_body(
     monkeypatch.setattr(
         solids, "_wire_appearance", lambda _design, _color, _reference=None: appearance
     )
+    stripe_updates: list[tuple[object, RoutePreview, tuple[WireStripe, ...], float]] = []
+
+    def replace_stripes(
+        owner: object,
+        saved_route: RoutePreview,
+        stripes: tuple[WireStripe, ...],
+        radius: float,
+    ) -> int:
+        """
+        Record the component-local stripe refresh performed during material Apply.
+        """
+        stripe_updates.append((owner, saved_route, stripes, radius))
+        return len(stripes)
+
+    monkeypatch.setattr(
+        solids,
+        "_replace_stripe_graphics",
+        replace_stripes,
+    )
 
     assert solids.apply_wire_materials(object(), harness, definition) == 1
     assert body.appearance is appearance
+    expected_radius = definition.profiles[0].diameter_mm / 2.0
+    assert stripe_updates == [(component, route, (stripe,), expected_radius)]
     stored = json.loads(attribute.value)
     assert stored["length_mm"] == 42.0
     assert stored["main_color"] == "#235EBE"

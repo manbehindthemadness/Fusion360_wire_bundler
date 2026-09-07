@@ -64,7 +64,7 @@ This repository directory is already located under Fusion's `API/AddIns` directo
 12. Expand Pathways & Occupancy, then expand one pathway and its independent Gates · Traversal Order and Wire Occupancy children. Confirm the occupancy child identifies every wire plus whether it enters at End A, arrives from a previous pathway, continues onward, or exits at End B. Click gate, end, occupancy, and wire rows and confirm Fusion highlights the referenced profile or end pair.
 13. Expand a wire and confirm its colored route graphic is the only route representation. Activate End A and End B to open their respective ordering editors, activate a pathway bubble to expand and navigate to that pathway's configuration, and confirm mouse and keyboard activation both work. Hover the colored line, connections, and pathways to confirm the corresponding Fusion geometry highlights. One **Wire options** button remains beneath the graphic. Confirm every one-, two-, or three-stripe cue is centered within the base trace. Expand the Master Relationship Graphic below Validation and confirm its darker viewport clearly separates the pathway cards and collapsible end lists from the backdrop. With three connections per end, both lists should be open in full and each wire trace should use its resolved base color and centered stripe pattern. Hover a pathway hub and confirm only its gates highlight; click it to expand and navigate to its Pathways & Occupancy configuration. Set **Collapse end lists above** to `2` and confirm both lists and their curves collapse into one neutral aggregate relationship per side; restore `7`, search by a wire, connection, pathway, material, or color, and confirm the matching end opens temporarily with a filtered count. Click a master connection entry to return to the expanded Wire Routes entry. Confirm Validation reports a clear relationship cross-check.
 14. Use **+ Add Gates** and **+ Add Wire Pairs** inside the appropriate pathway child and confirm the native dialog targets that pathway. Remove a gate and wire pair, confirming each destructive action first; a pathway's last gate must not be removable.
-15. Select **Preview Routes** and confirm one colored, selectable centerline appears per wire through every gate. These are transient smooth centerlines sampled for display; solid bodies are generated separately using **Generate/Rebuild Solids**. Check perpendicular entry/exit at gates and end profiles, with straight middle spans. Drag the event console's lower edge to resize it. Confirm routing failures show a concise message until **Verbose diagnostics** is enabled.
+15. Select **Preview Routes** and confirm one colored, selectable centerline appears per wire through every gate without stripe meshes. These are transient smooth centerlines sampled for display; solid bodies and their component-owned stripe patterns are generated together using **Generate/Rebuild Solids**. Check perpendicular entry/exit at gates and end profiles, with straight middle spans. Drag the event console's lower edge to resize it. Confirm routing failures show a concise message until **Verbose diagnostics** is enabled.
 16. With a preview active, replace an end member or change a wire diameter; confirm changed centerlines refresh while unaffected paths remain visible. Removing the last end member hides the incomplete wire's path; restoring the end brings it back. Select **Clear Preview**, edit again, and confirm the preview stays off. Preview again, stop the add-in, and confirm teardown removes it.
 17. Reduce a circular gate until the packed wire envelopes no longer fit, then preview and confirm the error identifies that gate instead of drawing partial results.
 18. With a preview active, save the design, close it, and reopen it; confirm the preview was not cached into the reopened viewport. Then stop and run the add-in and confirm the definitions and linked-geometry status survive while previews remain transient.
@@ -137,11 +137,13 @@ wire. An unset override inherits its parent field; an explicit empty stripe list
 inherited stripes. The catalog under `resources/catalogs/` supplies searchable suggestions
 and remains deployable with the add-in as a relative resource. The base visual can
 instead reference an appearance from an installed Fusion library; the selected
-appearance is copied into the design before assignment to generated bodies. Route previews render
-longitudinal, dashed, and helical model-space stripe bands on the wire radius with
-physical widths and normal model depth testing. Apply keeps the material dialog open; Apply and Save both
-show or refresh the material preview and recolor existing generated bodies without
-rebuilding their geometry.
+appearance is copied into the design before assignment to generated bodies. Route
+previews remain lightweight colored centerlines. Longitudinal, dashed, and helical
+model-space stripe bands belong to each generated wire component, so they move and
+are deleted with their solid. Generated metadata retains the exact component-local
+curve controls so Apply and Save can refresh stripe patterns without following a
+newer, unreconstructed preview route. Existing generated wires from before this
+metadata require one rebuild before stripes can be applied.
 
 Diameter-aware center drift, bounded oval deformation, and circular-envelope
 packing are parallel round-wire behavior. Ribbon routing remains a separate

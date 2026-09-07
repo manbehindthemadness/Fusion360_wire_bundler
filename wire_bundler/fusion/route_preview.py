@@ -179,7 +179,6 @@ def show_route_previews(
     preview_group.id = f"{PREVIEW_GROUP_ID}:{uuid4()}"
     preview_group.name = f"{definition.name} Route Preview"
     wires = {wire.wire_id: wire for wire in definition.wires}
-    profiles = {profile.profile_id: profile for profile in definition.profiles}
     try:
         for index, route in enumerate(routes):
             wire = wires[route.wire_id]
@@ -189,8 +188,6 @@ def show_route_previews(
                 route,
                 index,
                 materials.main_color,
-                materials.stripes,
-                profiles[wire.profile_id].diameter_mm / 2.0,
             )
     except (AttributeError, RuntimeError, TypeError, ValueError):
         preview_group.deleteMe()
@@ -294,7 +291,6 @@ def _routing_signature(definition: HarnessDefinition, wire: WireDefinition) -> t
     end = connections.get(wire.end_connection_id)
     profile = profiles.get(wire.profile_id)
     main_color = definition.wire_materials(wire).main_color
-    stripes = definition.wire_materials(wire).stripes
     return (
         wire.wire_id,
         wire.wire_number,
@@ -305,7 +301,6 @@ def _routing_signature(definition: HarnessDefinition, wire: WireDefinition) -> t
         end.member_settings if end else None,
         profile.diameter_mm if profile else None,
         main_color,
-        stripes,
         tuple(controls.get(identity) for identity in wire.ordered_control_ids),
     )
 
@@ -404,14 +399,8 @@ def refresh_route_previews(
                 old_wire = old_wires.get(wire_id)
                 new_wire = new_wires[wire_id]
                 appearance_changed = old_wire is None or (
-                    (
-                        state.definition.wire_materials(old_wire).main_color,
-                        state.definition.wire_materials(old_wire).stripes,
-                    )
-                    != (
-                        definition.wire_materials(new_wire).main_color,
-                        definition.wire_materials(new_wire).stripes,
-                    )
+                    state.definition.wire_materials(old_wire).main_color
+                    != definition.wire_materials(new_wire).main_color
                 )
                 if state.routes.get(wire_id) == route and not appearance_changed:
                     continue
@@ -420,19 +409,12 @@ def refresh_route_previews(
                     wire_id, max(state.color_indices.values(), default=-1) + 1
                 )
                 try:
-                    profile = next(
-                        item
-                        for item in definition.profiles
-                        if item.profile_id == new_wire.profile_id
-                    )
                     materials = definition.wire_materials(new_wire)
                     _add_route_graphics(
                         group,
                         route,
                         color_index,
                         materials.main_color,
-                        materials.stripes,
-                        profile.diameter_mm / 2.0,
                     )
                 except (AttributeError, RuntimeError, TypeError, ValueError) as error:
                     for child in _wire_graphics(group, {wire_id}):
@@ -738,8 +720,6 @@ def _add_route_graphics(
     route: RoutePreview,
     color_index: int,
     wire_color: Optional[WireColor] = None,
-    stripes: tuple[WireStripe, ...] = (),
-    wire_radius_mm: float = 0.0,
 ) -> None:
     """
     Add one selectable colored line strip to a preview group.
@@ -749,8 +729,6 @@ def _add_route_graphics(
         route: Route points expressed in millimeters.
         color_index: Stable fallback palette index for legacy callers.
         wire_color: Resolved insulation color, when stored on the harness.
-        stripes: Ordered procedural insulation stripes.
-        wire_radius_mm: Radius used to place stripes on the wire surface.
     """
     wire_group = preview_group.addGroup()
     if wire_group is None:
@@ -782,33 +760,9 @@ def _add_route_graphics(
     if color_effect is None:
         raise RuntimeError(f"Fusion did not create a color for wire {route.wire_number}.")
     lines.color = color_effect
-    for index, stripe in enumerate(stripes):
-        vertices, triangle_indices = _stripe_mesh(route, stripe, wire_radius_mm)
-        if not vertices or not triangle_indices:
-            continue
-        stripe_coordinates = adsk.fusion.CustomGraphicsCoordinates.create(
-            [coordinate / 10.0 for point in vertices for coordinate in (point.x, point.y, point.z)]
-        )
-        if stripe_coordinates is None:
-            raise RuntimeError(f"Fusion did not create stripe {index + 1} coordinates.")
-        stripe_mesh = wire_group.addMesh(stripe_coordinates, triangle_indices, [], [])
-        if stripe_mesh is None:
-            raise RuntimeError(f"Fusion did not draw stripe {index + 1}.")
-        stripe_mesh.name = f"Wire {route.wire_number} Stripe {index + 1}"
-        stripe_mesh.cullMode = adsk.fusion.CustomGraphicsCullModes.CustomGraphicsCullNone
-        stripe_color = adsk.core.Color.create(
-            stripe.color.red,
-            stripe.color.green,
-            stripe.color.blue,
-            255,
-        )
-        stripe_effect = adsk.fusion.CustomGraphicsSolidColorEffect.create(stripe_color)
-        if stripe_effect is None:
-            raise RuntimeError(f"Fusion did not create stripe {index + 1} color.")
-        stripe_mesh.color = stripe_effect
 
 
-def _stripe_mesh(
+def build_stripe_mesh(
     route: RoutePreview,
     stripe: WireStripe,
     wire_radius_mm: float,

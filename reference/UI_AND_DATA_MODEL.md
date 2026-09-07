@@ -958,8 +958,8 @@ The material definition includes insulation material, main insulation color,
 zero or more ordered stripes, conductor material, manufacturer, part number,
 and notes. Each stripe stores its color, width, starting angular position,
 pattern, and optional repeat distance. Longitudinal, dashed, and helical
-patterns are represented procedurally so previews, generated geometry, and
-future diagrams consume the same source data.
+patterns are represented procedurally so generated presentation and future
+diagrams consume the same source data.
 
 Insulation and conductor inputs offer searchable bundled suggestions but permit
 custom text. Their controlled autocomplete menus avoid host-native datalist layout
@@ -973,13 +973,16 @@ is an add-in-relative resource that must be included when the finished add-in is
 The current rendering slice applies resolved main colors to route previews and
 generated wire bodies. A selected library appearance is copied into the active
 document before it is assigned to a body, allowing its renderer properties and
-textures to persist with that document. It renders longitudinal, dashed, and helical
-stripe bands at the wire radius in route previews using a parallel-transported local frame.
-Apply persists and renders without closing the material dialog; Save performs the
-same operation and closes it. Both actions update active previews and recolor
-existing generated bodies without rebuilding their geometry. If stripes exist and
-no preview is active, either action creates the material preview. Stripe graphics are
-two-sided model-space surface meshes whose width is measured in millimeters. A small
+textures to persist with that document. Route previews contain colored centerlines
+without stripe geometry. Longitudinal, dashed, and helical stripe bands are owned by
+the corresponding generated wire component and use its component-local exact route,
+so occurrence transforms and solid deletion carry the pattern with the wire. Apply
+persists and renders without closing the material dialog; Save performs the same
+operation and closes it. Both actions recolor existing generated bodies and refresh
+their component-owned stripes without rebuilding the solid. Generated wires created
+before component-local route metadata was introduced require one rebuild before a
+stripe pattern can be applied. Stripe graphics are two-sided model-space surface
+meshes whose width is measured in millimeters. A small
 physical surface offset prevents depth conflict with the wire body while ordinary
 depth testing hides the rear surface, so angle remains visible and the band scales
 with model geometry during viewport zoom. The bands sample exact centerline cubics
@@ -990,10 +993,10 @@ flat mesh faces remain outside the circular insulation surface instead of cuttin
 through it. Material-dialog grids and native selects are constrained to the dialog's
 content width; only vertical overflow scrolls when the available palette height is
 smaller than the complete form.
-Diagram output and persistent
-stripe face appearances on generated solids remain subsequent consumers. Those face
+Diagram output and persistent stripe face appearances on generated solids remain
+subsequent consumers. Those face
 appearances can carry stripes into Fusion rendering without relying on transient graphics.
-The conformal preview mesh may also serve as the front surface of optional render
+The conformal component-owned mesh may also serve as the front surface of optional render
 geometry after adding an underside and end caps. Before implementing that path, verify
 whether Fusion exposes a dependable pre-render event; otherwise expose render preparation
 as an explicit command and keep the resulting bodies clearly application-owned.
@@ -1295,8 +1298,10 @@ Generate/Rebuild Solids is an explicit native Fusion command separate from
 transient previews. It creates one child component per conductor with editable
 cubic control-point splines and straight segments, a diameter-sized circular
 profile normal to the path, and one solid sweep. UUID, number, diameter, and
-measured centerline length are stored on the generated component. Component names
-use the wire label, or its number and centerline length when no label is supplied.
+measured centerline length are stored on the generated component. The exact
+component-local cubic controls are retained for material-only stripe refreshes.
+Component names use the wire label, or its number and centerline length when no
+label is supplied.
 
 This first slice rebuilds all wires after one confirmation that includes manual
 edits inside generated components. Every replacement is built before any previous
@@ -1305,7 +1310,10 @@ modified. Native command rollback covers failures during final replacement.
 Preview edits do not implicitly replace solid bodies; explicit rebuilding is
 required. Selective regeneration and automatic manual-edit detection are later
 work. Clear Solids deletes only marked generated wire components in a native
-transaction, leaving original sketches and unrelated components untouched. Solid
+transaction, leaving original sketches and unrelated components untouched. Stripe
+graphics are children of each marked generated component, so clearing or
+moving that component clears or moves its pattern as one unit. Preview and Clear
+Preview never create, refresh, or delete these solid-owned stripe groups. Solid
 geometry persists independently of preview visibility and add-in state. The upper
 palette status area retains informational and failure events in a vertically
 scrollable console using the same surface and text colors as the rest of the palette.

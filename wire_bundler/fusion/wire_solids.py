@@ -21,14 +21,16 @@ from ..domain import (
     WireColor,
     WireDefinition,
     WireMaterialSettings,
+    WireStripe,
     validate_harness,
 )
 from ..routing import CubicBezier, RoutePreview, Vector3, tightest_bend
 from ..routing.geometry import cross, difference, magnitude
 from .harness_gateway import ATTRIBUTE_GROUP
-from .route_preview import solve_route_centerlines
+from .route_preview import build_stripe_mesh, solve_route_centerlines
 
 GENERATED_WIRE_ATTRIBUTE = "generated_wire"
+GENERATED_STRIPE_GROUP_ID = "kev0.wire_bundler.generated_wire_stripes"
 
 
 def generate_wire_solids(
@@ -176,12 +178,13 @@ def apply_wire_materials(
     definition: HarnessDefinition,
 ) -> int:
     """
-    Apply resolved colors and metadata to existing generated wire bodies.
+    Apply resolved colors, stripe overlays, and metadata to generated wire bodies.
 
     This updates material presentation without rebuilding centerlines or replacing
     generated components, so it is safe to run from the material-save transaction.
     """
     wires = {wire.wire_id: wire for wire in definition.wires}
+    profiles = {profile.profile_id: profile for profile in definition.profiles}
     applied = 0
     for occurrence in generated_wire_occurrences(harness):
         component = occurrence.component
@@ -205,6 +208,19 @@ def apply_wire_materials(
             body = bodies.item(index)
             if body is not None:
                 body.appearance = appearance
+        route = _route_from_metadata(wire, metadata)
+        if route is None and materials.stripes:
+            raise RuntimeError(
+                f"Generated wire {wire.wire_number} predates solid-owned stripes; "
+                "rebuild its solids once before applying a stripe pattern."
+            )
+        if route is not None:
+            _replace_stripe_graphics(
+                component,
+                route,
+                materials.stripes,
+                profiles[wire.profile_id].diameter_mm / 2.0,
+            )
         metadata.update(_material_metadata(materials))
         attribute.value = json.dumps(metadata, sort_keys=True)
         applied += 1
@@ -236,6 +252,142 @@ def _point(point: Vector3, transform: adsk.core.Matrix3D) -> adsk.core.Point3D:
     if not result.transformBy(transform):
         raise RuntimeError("Could not transform a wire control point.")
     return result
+
+
+def _route_in_component_space(
+    route: RoutePreview,
+    transform: adsk.core.Matrix3D,
+) -> RoutePreview:
+    """
+    Transform exact model-space curves into the generated component's coordinates.
+    """
+
+    def local(point: Vector3) -> Vector3:
+        """
+        Convert one model-space point into component-local millimeters.
+        """
+        transformed = _point(point, transform)
+        return Vector3(transformed.x * 10.0, transformed.y * 10.0, transformed.z * 10.0)
+
+    curves = tuple(
+        CubicBezier(
+            local(curve.start),
+            local(curve.control_a),
+            local(curve.control_b),
+            local(curve.end),
+        )
+        for curve in route.curves
+    )
+    points = (curves[0].start, *(curve.end for curve in curves))
+    return RoutePreview(route.wire_id, route.wire_number, points, curves)
+
+
+def _route_metadata(route: RoutePreview) -> list[list[list[float]]]:
+    """
+    Serialize component-local curve controls used by a generated stripe overlay.
+    """
+    return [
+        [
+            [point.x, point.y, point.z]
+            for point in (curve.start, curve.control_a, curve.control_b, curve.end)
+        ]
+        for curve in route.curves
+    ]
+
+
+def _route_from_metadata(
+    wire: WireDefinition,
+    metadata: dict[str, object],
+) -> Optional[RoutePreview]:
+    """
+    Restore a generated component's exact local route, retaining legacy readability.
+    """
+    encoded = metadata.get("route_curves_mm")
+    if encoded is None:
+        return None
+    if not isinstance(encoded, list) or not encoded:
+        raise RuntimeError("Generated wire route metadata is malformed.")
+    curves: list[CubicBezier] = []
+    for encoded_curve in encoded:
+        if not isinstance(encoded_curve, list) or len(encoded_curve) != 4:
+            raise RuntimeError("Generated wire route metadata is malformed.")
+        points: list[Vector3] = []
+        for encoded_point in encoded_curve:
+            if not isinstance(encoded_point, list) or len(encoded_point) != 3:
+                raise RuntimeError("Generated wire route metadata is malformed.")
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                for value in encoded_point
+            ):
+                raise RuntimeError("Generated wire route metadata is malformed.")
+            points.append(Vector3(*(float(value) for value in encoded_point)))
+        curves.append(CubicBezier(*points))
+    if any(left.end != right.start for left, right in zip(curves, curves[1:])):
+        raise RuntimeError("Generated wire route metadata is discontinuous.")
+    route_points = (curves[0].start, *(curve.end for curve in curves))
+    return RoutePreview(wire.wire_id, wire.wire_number, route_points, tuple(curves))
+
+
+def _replace_stripe_graphics(
+    component: adsk.fusion.Component,
+    route: RoutePreview,
+    stripes: tuple[WireStripe, ...],
+    wire_radius_mm: float,
+) -> int:
+    """
+    Replace procedural stripes owned in the same component as their wire solid.
+    """
+    groups = component.customGraphicsGroups
+    for group_index in range(groups.count - 1, -1, -1):
+        group = groups.item(group_index)
+        if group is None or (
+            group.id != GENERATED_STRIPE_GROUP_ID
+            and not group.id.startswith(f"{GENERATED_STRIPE_GROUP_ID}:")
+            and not group.name.endswith(" Solid Stripes")
+        ):
+            continue
+        for child_index in range(group.count - 1, -1, -1):
+            child = group.item(child_index)
+            if child is not None and child.deleteMe() is False:
+                raise RuntimeError("Fusion could not delete an obsolete wire stripe.")
+        if group.deleteMe() is False:
+            raise RuntimeError("Fusion could not delete obsolete wire stripe graphics.")
+    if not stripes:
+        return 0
+    group = groups.add()
+    if group is None:
+        raise RuntimeError(f"Fusion did not create stripe graphics for wire {route.wire_number}.")
+    group.id = f"{GENERATED_STRIPE_GROUP_ID}:{route.wire_id}"
+    group.name = f"Wire {route.wire_number} Solid Stripes"
+    created = 0
+    for index, stripe in enumerate(stripes):
+        vertices, triangle_indices = build_stripe_mesh(route, stripe, wire_radius_mm)
+        if not vertices or not triangle_indices:
+            continue
+        coordinates = adsk.fusion.CustomGraphicsCoordinates.create(
+            [coordinate / 10.0 for point in vertices for coordinate in (point.x, point.y, point.z)]
+        )
+        if coordinates is None:
+            raise RuntimeError(f"Fusion did not create stripe {index + 1} coordinates.")
+        stripe_mesh = group.addMesh(coordinates, triangle_indices, [], [])
+        if stripe_mesh is None:
+            raise RuntimeError(f"Fusion did not draw stripe {index + 1}.")
+        stripe_mesh.name = f"Wire {route.wire_number} Stripe {index + 1}"
+        stripe_mesh.cullMode = adsk.fusion.CustomGraphicsCullModes.CustomGraphicsCullNone
+        stripe_color = adsk.core.Color.create(
+            stripe.color.red,
+            stripe.color.green,
+            stripe.color.blue,
+            255,
+        )
+        stripe_effect = adsk.fusion.CustomGraphicsSolidColorEffect.create(stripe_color)
+        if stripe_effect is None:
+            raise RuntimeError(f"Fusion did not create stripe {index + 1} color.")
+        stripe_mesh.color = stripe_effect
+        created += 1
+    return created
 
 
 def _is_straight(curve: CubicBezier) -> bool:
@@ -330,6 +482,10 @@ def build_wire_sweep(
         if materials is not None and design is not None:
             stage = "apply insulation appearance"
             body.appearance = _wire_appearance(design, materials.main_color, materials.appearance)
+        local_route = _route_in_component_space(route, transform)
+        if materials is not None:
+            stage = "create component-owned stripe graphics"
+            _replace_stripe_graphics(component, local_route, materials.stripes, diameter_mm / 2.0)
         sweep.name = "Wire Sweep"
         sketch.isLightBulbOn = False
         section.isLightBulbOn = False
@@ -342,6 +498,7 @@ def build_wire_sweep(
                 "wire_number": wire.wire_number,
                 "diameter_mm": diameter_mm,
                 "length_mm": length_mm,
+                "route_curves_mm": _route_metadata(local_route),
                 **(
                     {
                         **_material_metadata(materials),
