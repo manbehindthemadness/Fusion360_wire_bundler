@@ -266,11 +266,14 @@ uv run python experiments/run_qa.py
 
 The command runs pytest, the JavaScript palette regressions, Ruff lint and formatting,
 and the Git whitespace check. It then negotiates a temporary session with the local
-Fusion MCP server and runs the capability, command-history, Sweep-matrix, and reference-
-harness scenarios sequentially. Every live scenario uses an isolated unsaved design,
-closes it, and restores the previously active document. The MCP session is deleted in a
-`finally` path. One aggregate JSON report and the individual live reports are written
-under `artifacts/verification/`; the process exits nonzero if any selected layer fails.
+Fusion MCP server and runs the capability, command-history, Sweep-matrix, reference-
+harness, and preview save/reload scenarios sequentially. The first four scenarios use
+isolated unsaved designs. The preview lifecycle scenario creates one uniquely named file
+in Fusion's active cloud folder, waits for processing, reopens it, and deletes it during
+mandatory cleanup. Every scenario closes its documents and restores the previously
+active document. The MCP session is deleted in a `finally` path. One aggregate JSON
+report and the individual live reports are written under `artifacts/verification/`; the
+process exits nonzero if any selected layer fails.
 
 Use `--local-only` when Fusion is unavailable or `--fusion-only` while iterating on live
 scenarios. `--command-timeout` and `--fusion-timeout` override the bounded defaults. The
@@ -298,6 +301,13 @@ paths; and verifies native Undo and Redo against persisted definitions, preview 
 and wire solids. It then closes the fixture and restores the user's previously active document.
 Register and run it from the Scripts tab, or invoke its assertion core through
 development MCP orchestration with changed modules refreshed.
+
+`experiments/experiment_preview_reload_runner/` exercises the original ghost-preview
+risk across an actual cloud save, close, and reopen. It asserts that no preview group is
+API-visible after reload, then creates and clears a fresh preview to prove the reloaded
+document remains controllable. Its temporary DataFile is deleted after the document is
+closed. This structural result does not replace a future deterministic viewport-image
+comparison for graphics that might exist only in Fusion's saved OGS cache.
 
 ## Layout
 

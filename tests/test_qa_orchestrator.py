@@ -122,3 +122,16 @@ def test_local_only_report_marks_fusion_skipped(
     assert exit_code == 0
     assert payload["status"] == "passed"
     assert payload["fusion"]["status"] == "skipped"
+
+
+def test_fusion_bootstrap_refreshes_dependencies_before_importing_suite() -> None:
+    """
+    Prevent Fusion's cached experiment modules from hiding newly added scenario cores.
+    """
+    script = qa_orchestrator._fusion_suite_script()
+
+    history_reload = script.index("importlib.reload(history_module)")
+    preview_import = script.index("import experiments.experiment_preview_reload")
+    suite_import = script.index("import experiments.fusion_qa_suite")
+
+    assert history_reload < preview_import < suite_import

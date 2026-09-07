@@ -107,7 +107,7 @@ def verify_command_history(
             if design is None:
                 raise RuntimeError("Fusion did not activate the command-history design.")
             design.designIntent = adsk.fusion.DesignIntentTypes.HybridDesignIntentType
-            gateway = _build_fixture(application, design)
+            gateway = build_single_wire_fixture(application, design)
             harness = gateway.harness_component(HARNESS_ID)
             if _wire_name(gateway):
                 raise AssertionError("Command-history wire unexpectedly started with a name.")
@@ -120,57 +120,57 @@ def verify_command_history(
                     "name": RENAMED_WIRE,
                 }
             )
-            _execute_palette_action(application, "rename_wire", payload)
-            _wait_for(application, lambda: _wire_name(gateway) == RENAMED_WIRE, "wire rename")
+            execute_palette_action(application, "rename_wire", payload)
+            wait_for(application, lambda: _wire_name(gateway) == RENAMED_WIRE, "wire rename")
 
         with report.step("Undo restores original harness definition"):
             _execute_native_history_command(application, "UndoCommand")
-            _wait_for(application, lambda: _wire_name(gateway) == "", "wire rename Undo")
+            wait_for(application, lambda: _wire_name(gateway) == "", "wire rename Undo")
 
         with report.step("Redo restores renamed harness definition"):
             _execute_native_history_command(application, "RedoCommand")
-            _wait_for(application, lambda: _wire_name(gateway) == RENAMED_WIRE, "wire rename Redo")
+            wait_for(application, lambda: _wire_name(gateway) == RENAMED_WIRE, "wire rename Redo")
 
         harness_payload = json.dumps({"harnessId": str(HARNESS_ID)})
         with report.step("Preview participates in native Undo and Redo"):
-            _execute_palette_action(application, "preview_routes", harness_payload)
-            _wait_for(application, lambda: has_route_previews(design), "route preview")
+            execute_palette_action(application, "preview_routes", harness_payload)
+            wait_for(application, lambda: has_route_previews(design), "route preview")
             _execute_native_history_command(application, "UndoCommand")
-            _wait_for(
+            wait_for(
                 application,
                 lambda: not has_route_previews(design),
                 "route preview Undo",
             )
             _execute_native_history_command(application, "RedoCommand")
-            _wait_for(application, lambda: has_route_previews(design), "route preview Redo")
+            wait_for(application, lambda: has_route_previews(design), "route preview Redo")
 
         with report.step("Explicit preview clear removes transient graphics"):
             if _clear_transient_preview(application) != 1:
                 raise AssertionError("Explicit preview clear did not remove exactly one group.")
-            _wait_for(
+            wait_for(
                 application,
                 lambda: not has_route_previews(design),
                 "explicit route preview clear",
             )
 
         with report.step("Generate participates in native Undo and Redo"):
-            _execute_palette_action(application, "preview_routes", harness_payload)
-            _wait_for(application, lambda: has_route_previews(design), "pre-generation preview")
+            execute_palette_action(application, "preview_routes", harness_payload)
+            wait_for(application, lambda: has_route_previews(design), "pre-generation preview")
             generate_payload = json.dumps({"harnessId": str(HARNESS_ID), "replaceExisting": False})
-            _execute_palette_action(application, "generate_solids", generate_payload)
-            _wait_for(
+            execute_palette_action(application, "generate_solids", generate_payload)
+            wait_for(
                 application,
                 lambda: _generated_wire_count(harness) == 1 and not has_route_previews(design),
                 "wire solid generation and preview cleanup",
             )
             _execute_native_history_command(application, "UndoCommand")
-            _wait_for(
+            wait_for(
                 application,
                 lambda: _generated_wire_count(harness) == 0,
                 "wire solid generation Undo",
             )
             _execute_native_history_command(application, "RedoCommand")
-            _wait_for(
+            wait_for(
                 application,
                 lambda: _generated_wire_count(harness) == 1,
                 "wire solid generation Redo",
@@ -180,8 +180,8 @@ def verify_command_history(
             original_occurrence = generated_wire_occurrences(harness)[0]
             original_token = _root_occurrence_token(design, original_occurrence)
             rebuild_payload = json.dumps({"harnessId": str(HARNESS_ID), "replaceExisting": True})
-            _execute_palette_action(application, "generate_solids", rebuild_payload)
-            _wait_for(
+            execute_palette_action(application, "generate_solids", rebuild_payload)
+            wait_for(
                 application,
                 lambda: _generated_wire_replaced(harness, original_occurrence),
                 "wire solid rebuild",
@@ -189,7 +189,7 @@ def verify_command_history(
             rebuilt_occurrence = generated_wire_occurrences(harness)[0]
             rebuilt_token = _root_occurrence_token(design, rebuilt_occurrence)
             _execute_native_history_command(application, "UndoCommand")
-            _wait_for(
+            wait_for(
                 application,
                 lambda: _generated_wire_matches_token(
                     design,
@@ -199,7 +199,7 @@ def verify_command_history(
                 "wire solid rebuild Undo",
             )
             _execute_native_history_command(application, "RedoCommand")
-            _wait_for(
+            wait_for(
                 application,
                 lambda: _generated_wire_matches_token(
                     design,
@@ -210,20 +210,20 @@ def verify_command_history(
             )
 
         with report.step("Clear Solids participates in native Undo and Redo"):
-            _execute_palette_action(application, "clear_solids", harness_payload)
-            _wait_for(
+            execute_palette_action(application, "clear_solids", harness_payload)
+            wait_for(
                 application,
                 lambda: _generated_wire_count(harness) == 0,
                 "wire solid clear",
             )
             _execute_native_history_command(application, "UndoCommand")
-            _wait_for(
+            wait_for(
                 application,
                 lambda: _generated_wire_count(harness) == 1,
                 "wire solid clear Undo",
             )
             _execute_native_history_command(application, "RedoCommand")
-            _wait_for(
+            wait_for(
                 application,
                 lambda: _generated_wire_count(harness) == 0,
                 "wire solid clear Redo",
@@ -253,7 +253,7 @@ def verify_command_history(
                 raise RuntimeError("Fusion did not restore the previously active document.")
 
 
-def _build_fixture(
+def build_single_wire_fixture(
     application: adsk.core.Application,
     design: adsk.fusion.Design,
 ) -> FusionHarnessGateway:
@@ -393,7 +393,7 @@ def _root_occurrence_token(
     return root_occurrence.entityToken
 
 
-def _execute_palette_action(
+def execute_palette_action(
     application: adsk.core.Application,
     action: str,
     payload: str,
@@ -440,7 +440,7 @@ def _execute_native_history_command(
     command_definition = application.userInterface.commandDefinitions.itemById(command_id)
     if command_definition is None:
         raise RuntimeError(f"Fusion command is not registered: {command_id}")
-    _wait_for(
+    wait_for(
         application,
         lambda: _command_is_enabled(command_definition),
         f"{command_id} to become enabled",
@@ -460,7 +460,7 @@ def _command_is_enabled(command_definition: adsk.core.CommandDefinition) -> bool
     return control_definition is not None and control_definition.isEnabled
 
 
-def _wait_for(
+def wait_for(
     application: adsk.core.Application,
     condition: Callable[[], bool],
     description: str,

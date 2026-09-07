@@ -49,9 +49,9 @@
   "orchestratedSuiteAudit": {
     "status": "passed",
     "scenario": "qa_suite",
-    "report": "artifacts/verification/qa_suite_20260907T215553.079473Z.json",
-    "verifiedScenarios": ["fusion_capabilities", "command_history", "sweep_matrix", "reference_harness"],
-    "cleanup": ["document-count-stable", "active-document-restored", "mcp-session-closed"]
+    "report": "artifacts/verification/qa_suite_20260907T221127.739222Z.json",
+    "verifiedScenarios": ["fusion_capabilities", "command_history", "sweep_matrix", "reference_harness", "preview_reload"],
+    "cleanup": ["document-count-stable", "active-document-restored", "temporary-cloud-file-deleted", "mcp-session-closed"]
   },
   "qaImplications": {
     "available": ["in-host-script-execution", "document-lifecycle-orchestration", "api-documentation", "viewport-screenshot", "active-command-inspection", "undo-redo"],

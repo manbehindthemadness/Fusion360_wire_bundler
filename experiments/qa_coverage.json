@@ -79,10 +79,10 @@
       "id": "M0-LIFE-001",
       "area": "preview-lifecycle",
       "behavior": "Preview, clear, save, close, reopen, and clear again leave no cached or orphaned Custom Graphics.",
-      "status": "candidate",
+      "status": "partial",
       "layers": ["fusion-command", "fusion-api", "mcp"],
-      "evidence": ["tests/test_incremental_preview.py", "experiments/fusion_mcp_capabilities.json"],
-      "capabilities": ["command-execution", "document-save", "document-close-open", "graphics-inspection"]
+      "evidence": ["tests/test_incremental_preview.py", "experiments/experiment_preview_reload.py", "experiments/fusion_qa_suite.py"],
+      "capabilities": ["post-reload-visual-oracle"]
     },
     {
       "id": "M0-LIFE-002",

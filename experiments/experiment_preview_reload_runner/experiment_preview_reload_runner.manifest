@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "id": "96055369-06B8-493C-AFF5-E63E8E4CE334",
+  "author": "Fusion 360 Wire Bundler contributors",
+  "description": {
+    "": "Verify route previews across a disposable Fusion save and reopen cycle."
+  },
+  "version": "0.1.0",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

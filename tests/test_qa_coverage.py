@@ -95,4 +95,5 @@ def test_mcp_capability_snapshot_records_required_automation_surfaces() -> None:
         "command_history",
         "sweep_matrix",
         "reference_harness",
+        "preview_reload",
     }

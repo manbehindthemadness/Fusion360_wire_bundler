@@ -435,6 +435,9 @@ def run(_context: str):
     importlib.reload(history_module)
     importlib.reload(sweep_module)
     importlib.reload(reference_module)
+    import experiments.experiment_preview_reload as preview_reload_module
+
+    importlib.reload(preview_reload_module)
     import experiments.fusion_qa_suite as suite_module
 
     suite_module = importlib.reload(suite_module)

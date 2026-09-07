@@ -14,6 +14,7 @@ import adsk.core
 
 from experiments.experiment_command_history import verify_command_history
 from experiments.experiment_fusion_capabilities import audit_fusion_capabilities
+from experiments.experiment_preview_reload import verify_preview_reload
 from experiments.experiment_reference_harness import verify_reference_harness
 from experiments.experiment_sweep_matrix import verify_sweep_matrix
 from experiments.scenario_report import ScenarioReport
@@ -41,6 +42,7 @@ def run_automated_fusion_suite(application: adsk.core.Application) -> dict[str, 
         ("command_history", verify_command_history),
         ("sweep_matrix", verify_sweep_matrix),
         ("reference_harness", verify_reference_harness),
+        ("preview_reload", verify_preview_reload),
     )
     initial_document = application.activeDocument
     initial_document_count = application.documents.count
