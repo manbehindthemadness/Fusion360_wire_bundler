@@ -59,7 +59,7 @@ WIRE_IDS = tuple(UUID(f"77000000-0000-0000-0000-{index:012d}") for index in rang
 
 def run(_context: object) -> None:
     """
-    Create an isolated Fusion document and verify the current backend pipeline.
+    Create an isolated Fusion document and retain it for interactive inspection.
 
     Args:
         _context: Context supplied by the Fusion script host.
@@ -68,6 +68,53 @@ def run(_context: object) -> None:
     application: Optional[adsk.core.Application] = None
     try:
         application = _require_application()
+        verify_reference_harness(application, report, retain_document=True)
+        report.finish(True)
+        application.userInterface.messageBox(
+            "Reference harness verification passed.\n\n"
+            "The unsaved verification design remains open for inspection.\n"
+            f"Log: {report.log_path}\n"
+            f"Report: {report.json_path}",
+            "Wire Bundler Verification",
+        )
+    except (
+        AssertionError,
+        AttributeError,
+        KeyError,
+        OSError,
+        RuntimeError,
+        StopIteration,
+        TypeError,
+        ValueError,
+    ):
+        failure = traceback.format_exc()
+        report.finish(False, failure)
+        if application is not None and application.userInterface is not None:
+            application.userInterface.messageBox(
+                "Reference harness verification failed.\n\n"
+                f"Log: {report.log_path}\n"
+                f"Report: {report.json_path}\n\n"
+                f"{failure}",
+                "Wire Bundler Verification",
+            )
+
+
+def verify_reference_harness(
+    application: adsk.core.Application,
+    report: ScenarioReport,
+    retain_document: bool = False,
+) -> None:
+    """
+    Verify the complete reference harness and optionally retain its unsaved design.
+
+    Args:
+        application: Active Fusion application.
+        report: Durable scenario report.
+        retain_document: Keep the isolated design open for interactive inspection.
+    """
+    previous_document = application.activeDocument
+    document: Optional[adsk.core.Document] = None
+    try:
         with report.step("Create isolated Hybrid design"):
             document = application.documents.add(adsk.core.DocumentTypes.FusionDesignDocumentType)
             if document is None:
@@ -240,34 +287,19 @@ def run(_context: object) -> None:
             if tuple(identities) != WIRE_IDS:
                 raise AssertionError("Generated bodies lost stable wire order or identity.")
 
-        report.finish(True)
-        application.userInterface.messageBox(
-            "Reference harness verification passed.\n\n"
-            "The unsaved verification design remains open for inspection.\n"
-            f"Log: {report.log_path}\n"
-            f"Report: {report.json_path}",
-            "Wire Bundler Verification",
-        )
-    except (
-        AssertionError,
-        AttributeError,
-        KeyError,
-        OSError,
-        RuntimeError,
-        StopIteration,
-        TypeError,
-        ValueError,
-    ):
-        failure = traceback.format_exc()
-        report.finish(False, failure)
-        if application is not None and application.userInterface is not None:
-            application.userInterface.messageBox(
-                "Reference harness verification failed.\n\n"
-                f"Log: {report.log_path}\n"
-                f"Report: {report.json_path}\n\n"
-                f"{failure}",
-                "Wire Bundler Verification",
-            )
+    finally:
+        if not retain_document and document is not None and document.isValid:
+            with report.step("Close isolated reference harness"):
+                if not document.close(False):
+                    raise RuntimeError("Fusion did not close the reference harness document.")
+        if (
+            not retain_document
+            and previous_document is not None
+            and previous_document.isValid
+            and application.activeDocument != previous_document
+            and not previous_document.activate()
+        ):
+            raise RuntimeError("Fusion did not restore the previously active document.")
 
 
 def _require_application() -> adsk.core.Application:

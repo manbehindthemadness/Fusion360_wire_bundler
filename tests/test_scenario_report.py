@@ -43,3 +43,31 @@ def test_records_failure_before_reraising(tmp_path: Path) -> None:
     assert payload["status"] == "running"
     assert payload["steps"][0]["status"] == "failed"
     assert payload["steps"][0]["detail"] == "fixture failed"
+
+
+def test_records_structured_observations(tmp_path: Path) -> None:
+    """
+    Preserve JSON-safe capability observations beside scenario steps.
+    """
+    report = ScenarioReport("capabilities", tmp_path)
+
+    report.record_observation("fusion.commands", {"available": True, "count": 3})
+
+    payload = json.loads(report.json_path.read_text(encoding="utf-8"))
+    assert payload["observations"] == {"fusion.commands": {"available": True, "count": 3}}
+    assert "OBSERVE fusion.commands" in report.log_path.read_text(encoding="utf-8")
+
+
+def test_rejects_invalid_or_duplicate_observations(tmp_path: Path) -> None:
+    """
+    Reject ambiguous observation names and values before corrupting a report.
+    """
+    report = ScenarioReport("capabilities", tmp_path)
+    report.record_observation("fusion.commands", True)
+
+    with pytest.raises(ValueError, match="already recorded"):
+        report.record_observation("fusion.commands", False)
+    with pytest.raises(ValueError, match="must not be empty"):
+        report.record_observation(" ", True)
+    with pytest.raises(TypeError):
+        report.record_observation("fusion.invalid", object())

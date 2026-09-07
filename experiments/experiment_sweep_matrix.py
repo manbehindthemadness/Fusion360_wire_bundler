@@ -36,13 +36,48 @@ HARNESS_ID = uuid5(NAMESPACE_URL, "wire-bundler:sweep-matrix:harness")
 
 def run(_context: object) -> None:
     """
-    Create one unsaved design and execute every safe Sweep scenario in isolation.
+    Run the Sweep matrix and retain its unsaved design for inspection.
     """
     report = ScenarioReport(SCENARIO_NAME, ARTIFACT_ROOT, _log_to_fusion)
     application: Optional[adsk.core.Application] = None
-    failures: list[str] = []
     try:
         application = _require_application()
+        verify_sweep_matrix(application, report, retain_document=True)
+        report.finish(True)
+        application.userInterface.messageBox(
+            "Sweep matrix passed.\n\n"
+            "The unsaved verification design remains open for inspection.\n"
+            f"Log: {report.log_path}\nReport: {report.json_path}",
+            "Wire Bundler Sweep Matrix",
+        )
+    except (AssertionError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        failure = traceback.format_exc()
+        report.finish(False, failure)
+        if application is not None and application.userInterface is not None:
+            application.userInterface.messageBox(
+                "Sweep matrix failed.\n\n"
+                f"Log: {report.log_path}\nReport: {report.json_path}\n\n{failure}",
+                "Wire Bundler Sweep Matrix",
+            )
+
+
+def verify_sweep_matrix(
+    application: adsk.core.Application,
+    report: ScenarioReport,
+    retain_document: bool = False,
+) -> None:
+    """
+    Execute every Sweep case and optionally retain the isolated design.
+
+    Args:
+        application: Active Fusion application.
+        report: Durable scenario report.
+        retain_document: Keep the isolated design open for interactive inspection.
+    """
+    previous_document = application.activeDocument
+    document: Optional[adsk.core.Document] = None
+    failures: list[str] = []
+    try:
         with report.step("Create isolated Hybrid design"):
             document = application.documents.add(adsk.core.DocumentTypes.FusionDesignDocumentType)
             if document is None:
@@ -58,32 +93,21 @@ def run(_context: object) -> None:
                     _run_case(design, scenario)
             except (AssertionError, AttributeError, RuntimeError, TypeError, ValueError):
                 failures.append(f"{scenario.name}:\n{traceback.format_exc()}")
-
-        failure_text = "\n".join(failures)
-        report.finish(not failures, failure_text)
-        title = "Wire Bundler Sweep Matrix"
         if failures:
-            application.userInterface.messageBox(
-                f"Sweep matrix completed with {len(failures)} failure(s).\n\n"
-                f"Log: {report.log_path}\nReport: {report.json_path}",
-                title,
-            )
-        else:
-            application.userInterface.messageBox(
-                "Sweep matrix passed.\n\n"
-                "The unsaved verification design remains open for inspection.\n"
-                f"Log: {report.log_path}\nReport: {report.json_path}",
-                title,
-            )
-    except (AssertionError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
-        failure = traceback.format_exc()
-        report.finish(False, failure)
-        if application is not None and application.userInterface is not None:
-            application.userInterface.messageBox(
-                "Sweep matrix setup failed.\n\n"
-                f"Log: {report.log_path}\nReport: {report.json_path}\n\n{failure}",
-                "Wire Bundler Sweep Matrix",
-            )
+            raise AssertionError("\n".join(failures))
+    finally:
+        if not retain_document and document is not None and document.isValid:
+            with report.step("Close isolated Sweep matrix"):
+                if not document.close(False):
+                    raise RuntimeError("Fusion did not close the Sweep matrix document.")
+        if (
+            not retain_document
+            and previous_document is not None
+            and previous_document.isValid
+            and application.activeDocument != previous_document
+            and not previous_document.activate()
+        ):
+            raise RuntimeError("Fusion did not restore the previously active document.")
 
 
 def _run_case(design: adsk.fusion.Design, scenario: SweepScenario) -> None:

@@ -48,6 +48,7 @@ class ScenarioReport:
     sink: Optional[Callable[[str], None]] = None
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     steps: list[ScenarioStep] = field(default_factory=list)
+    observations: dict[str, object] = field(default_factory=dict)
     status: str = "running"
     error: str = ""
     log_path: Path = field(init=False)
@@ -118,6 +119,33 @@ class ScenarioReport:
         self.log(f"Scenario {self.status}: {self.scenario_name}")
         self.write_json()
 
+    def record_observation(self, name: str, value: object) -> None:
+        """
+        Persist one structured capability or diagnostic observation.
+
+        Args:
+            name: Stable observation identifier.
+            value: JSON-serializable observation value.
+
+        Raises:
+            ValueError: If the observation name is empty or already present.
+            TypeError: If the value cannot be serialized as JSON.
+        """
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("Observation name must not be empty.")
+        if normalized_name in self.observations:
+            raise ValueError(f"Observation already recorded: {normalized_name}")
+        try:
+            serialized_value = json.dumps(value, sort_keys=True)
+        except (TypeError, ValueError) as error:
+            raise TypeError(
+                f"Observation {normalized_name!r} must be JSON serializable."
+            ) from error
+        self.observations[normalized_name] = value
+        self.log(f"OBSERVE {normalized_name}: {serialized_value}")
+        self.write_json()
+
     def write_json(self) -> None:
         """
         Replace the structured report with the latest complete state.
@@ -127,6 +155,7 @@ class ScenarioReport:
             "startedAt": self.started_at.isoformat(),
             "status": self.status,
             "error": self.error,
+            "observations": self.observations,
             "steps": [asdict(step) for step in self.steps],
             "logPath": str(self.log_path),
         }

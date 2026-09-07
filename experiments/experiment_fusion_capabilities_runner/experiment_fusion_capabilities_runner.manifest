@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "id": "67B07C38-CB13-4C8C-91A8-41E82B5D80AD",
+  "author": "Fusion 360 Wire Bundler contributors",
+  "description": {
+    "": "Audit Fusion controls available to Wire Bundler automated verification."
+  },
+  "version": "0.1.0",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

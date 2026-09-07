@@ -91,13 +91,13 @@ dependencies are settled.
 | Milestone | Scope | Completion gate |
 | --- | --- | --- |
 | **M0 · Round-wire foundation** *(current closeout)* | Stable round-wire data, gates and ends, smooth previews, material/stripe presentation, persistent sweeps, relationship graphics, diagnostics, and explicit clear/rebuild behavior. | Full local checks; live reference harness; Preview/Save/Reload/Clear; Generate/Rebuild/Clear; material Apply/Save/Cancel; and Fusion Undo/Redo all pass without ghosts or stale projections. |
-| **M1 · Automated Fusion QA foundation** | Audit every current and planned acceptance criterion against host-independent tests, mocked palette tests, registered Fusion scripts, supported Fusion command execution, API state inspection, and development-only MCP orchestration. Build reusable fixtures, lifecycle drivers, assertions, cleanup, timeouts, screenshots where useful, and machine-readable reports. | Every M0 QA target has an automated test wherever Fusion exposes reliable control and observation; one repeatable suite reports local and in-host results; remaining manual checks are listed with the specific missing capability, required evidence, and a review trigger. Development-only automation is separable from the production package. |
+| **M1 · Automated Fusion QA foundation** | Audit every current and planned acceptance criterion against host-independent tests, mocked palette tests, registered Fusion scripts, supported Fusion command execution, API state inspection, and development-only MCP orchestration. Build reusable cross-platform fixtures, lifecycle drivers, assertions, cleanup, timeouts, screenshots where useful, and machine-readable reports. | Every M0 QA target has an automated test wherever Fusion exposes reliable control and observation; one repeatable suite reports local and in-host results on each available required platform; unavailable platforms are explicit deferrals and do not block feature progress. Remaining manual checks name the missing capability, required evidence, and review trigger. Development-only automation is separable from the production package. |
 | **M2 · Topology and terminators** | Explicit Y junctions, arbitrary branching, recombination, extensions, open exits, loops, ground straps, end transitions, per-member guide faces, and target-face/object connection naming with provenance. Assembly nesting remains organizational and does not substitute for route topology. | Stable branch-leg identities and per-span membership survive edit/reload; capacity and relationship audits cover complex graphs; target-derived names never overwrite custom names; terminator and branch geometry pass focused automated and live scenarios. |
 | **M3 · Profile gates and ribbons** | Open profile gates, non-circular cross-sections, ribbon ordering, banking, twist, curl, deformation, and transitions between loose, ribbon, and terminated members. | Deterministic correspondence and non-crossing validation pass local fixtures and automated Fusion loft/sweep experiments across representative deformations. |
 | **M4 · Routed members and composites** | Electrical conductors, optical fiber, coolant tubing, shields, and recursively nested composite members; optional child insulation; per-kind technical data; recursive fit checks; sparse child geometry; reusable complex-wire definitions; and extension of M2 target naming to nested members. | Schema migration, recursive containment and fit validation, breakout identity, sparse realization, saved-definition round trips, and scalable diagram drill-down pass before Fusion generation is enabled. |
 | **M5 · Flex, pull, and operating modes** | Constrained and unconstrained operation, optional manufacturer flex ratings, least-flexible rated-member propagation, kink highlighting, generated reference lengths, and animation/test pull inspection. | Rating-free spans skip analysis; rated violations remain non-blocking; exact-route bend and positive-length-growth findings navigate to the responsible member and controls; no advisory input can fail generation. |
 | **M6 · Wrappings and restraints** | Slice-plane, guide-body, and incremental placement; material-aware heat-shrink and tape prefabs; selected-member wraps; and scalable custom buckles with named Band Start/Band End interfaces. | Deterministic placement/regeneration, envelope and collision contribution, material behavior, buckle scaling, and repairable missing-interface handling pass circular and non-circular live cases. |
-| **M7 · Stability and delivery** | Performance work, theme/accessibility polish, selective regeneration, migration hardening, complete reference experiments, optional user-facing self-diagnostics, Autodesk-compliant packaging, resources, and one-click installation. | The complete feature set is live-proven stable; the automated regression suite passes; production packaging excludes development-only automation; supported schema migrations, diagnostics, and one-click installation are repeatable on a clean Fusion installation. |
+| **M7 · Stability and delivery** | Performance work, theme/accessibility polish, selective regeneration, migration hardening, complete reference experiments, optional user-facing self-diagnostics, Autodesk-compliant packaging, resources, and one-click installation. | The complete feature set is live-proven stable; the automated regression suite passes; production packaging excludes development-only automation; supported schema migrations, diagnostics, and one-click installation are repeatable on clean macOS and Windows Fusion installations unless supported platforms are explicitly revised before release. |
 
 ### M1 automated Fusion QA foundation
 
@@ -114,6 +114,14 @@ appearance, graphics, selection, history, persistence, and error state; and opti
 development orchestration that starts scenarios, inspects Fusion, captures evidence,
 and collects reports through the local MCP server. MCP and developer tools remain test
 infrastructure and never become add-in runtime dependencies.
+
+macOS and Windows are required test platforms. Fixtures, paths, script bundles, report
+formats, and cleanup behavior remain platform-neutral. The coverage ledger records both
+platforms at its root. The applicable suite runs on every platform currently available;
+lack of a host is recorded with a reason and review trigger and does not block feature
+milestones. A result from one operating system cannot be presented as evidence for the
+other. Windows verification activates when a suitable host becomes available and is an
+M7 delivery gate unless supported platforms are explicitly revised before release.
 
 The automation architecture must keep development runners, fixtures, MCP adapters, and
 large regression assets separable from the production package. A shipped diagnostic
@@ -247,6 +255,50 @@ and `.json` reports are written beneath the ignored `artifacts/verification/` di
 messages are also mirrored into Fusion's application log. Extend this same scenario with spline
 fairing and body-generation assertions as those production services are implemented.
 
+## Fusion automation capability audit
+
+Run the complete development QA procedure from the repository root while Fusion and the
+Wire Bundler add-in are running:
+
+```text
+uv run python experiments/run_qa.py
+```
+
+The command runs pytest, the JavaScript palette regressions, Ruff lint and formatting,
+and the Git whitespace check. It then negotiates a temporary session with the local
+Fusion MCP server and runs the capability, command-history, Sweep-matrix, and reference-
+harness scenarios sequentially. Every live scenario uses an isolated unsaved design,
+closes it, and restores the previously active document. The MCP session is deleted in a
+`finally` path. One aggregate JSON report and the individual live reports are written
+under `artifacts/verification/`; the process exits nonzero if any selected layer fails.
+
+Use `--local-only` when Fusion is unavailable or `--fusion-only` while iterating on live
+scenarios. `--command-timeout` and `--fusion-timeout` override the bounded defaults. The
+orchestrator uses only the Python standard library plus the existing development tools,
+lives under `experiments/`, and is not a runtime or installation dependency.
+
+`experiments/qa_coverage.json` is the machine-readable M0 coverage ledger. Normal tests
+validate its schema, unique target IDs, evidence paths, and explanations for residual
+manual checks. The ledger requires both macOS and Windows. Update it whenever an
+acceptance criterion, platform requirement, or automation status changes.
+
+Register `experiments/experiment_fusion_capabilities_runner/` from Fusion's Scripts tab
+and run `experiment_fusion_capabilities_runner` while no command transaction is active.
+The audit inspects application, command, palette, selection, and entity-resolution
+surfaces, then creates and closes one isolated unsaved Hybrid design to verify safe
+document lifecycle control. It records structured observations under
+`artifacts/verification/` and leaves the user's previously active design unchanged.
+MCP availability is probed separately from outside Fusion because it is development
+orchestration rather than an add-in runtime surface.
+
+`experiments/experiment_command_history_runner/` is the first focused lifecycle
+scenario. It creates a one-wire harness in an isolated unsaved design; exercises rename,
+Preview, Generate, Rebuild, Clear Preview, and Clear Solids through their production
+paths; and verifies native Undo and Redo against persisted definitions, preview graphics,
+and wire solids. It then closes the fixture and restores the user's previously active document.
+Register and run it from the Scripts tab, or invoke its assertion core through
+development MCP orchestration with changed modules refreshed.
+
 ## Layout
 
 ```text
@@ -256,6 +308,7 @@ pyproject.toml                    Python and uv project metadata
 wire_bundler/                    Fusion lifecycle, host adapters, domain, and application services
 tests/                           Application-owned unit tests
 experiments/                     Live Fusion integration scenarios and reporting support
+experiments/qa_coverage.json     Machine-readable QA target and automation ledger
 artifacts/verification/          Ignored generated scenario logs and JSON reports
 resources/originals/             Full-resolution source artwork for all commands
 resources/                       Fusion standard and high-DPI command icon sets

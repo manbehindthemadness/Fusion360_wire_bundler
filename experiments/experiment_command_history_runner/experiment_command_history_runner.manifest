@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "id": "A31BF4C4-7783-4B6C-97F8-586A143F585C",
+  "author": "Fusion 360 Wire Bundler contributors",
+  "description": {
+    "": "Verify Wire Bundler command transactions through native Undo and Redo."
+  },
+  "version": "0.1.0",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

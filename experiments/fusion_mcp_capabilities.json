@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-09-07",
+  "endpoint": "http://127.0.0.1:27182/mcp",
+  "transport": "streamable-http",
+  "server": {
+    "name": "MCP Server Adapter",
+    "version": "1.0.0",
+    "protocolVersion": "2025-03-26"
+  },
+  "observedHost": {
+    "platform": "macos",
+    "fusionVersion": "2704.1.53"
+  },
+  "tools": [
+    {
+      "name": "fusion_mcp_execute",
+      "advertisedCapabilities": ["script", "document-open", "document-close", "document-save"],
+      "verifiedCapabilities": ["script"]
+    },
+    {
+      "name": "fusion_mcp_read",
+      "advertisedCapabilities": ["projects", "document-search", "open-documents", "recent-documents", "api-documentation", "screenshot", "active-command"],
+      "verifiedCapabilities": ["screenshot", "active-command"]
+    },
+    {
+      "name": "fusion_mcp_update",
+      "advertisedCapabilities": ["undo", "redo"],
+      "verifiedCapabilities": []
+    },
+    {
+      "name": "fusion_mcp_electronics_read",
+      "advertisedCapabilities": ["electronics-read"],
+      "verifiedCapabilities": []
+    }
+  ],
+  "liveAudit": {
+    "status": "passed",
+    "scenario": "fusion_capabilities_mcp",
+    "verifiedCapabilities": ["application-state", "command-registry", "command-executability", "document-create-close", "hybrid-intent", "active-document-restoration", "palette-registry", "selection-state", "entity-token-resolution", "application-log"]
+  },
+  "commandHistoryAudit": {
+    "status": "passed",
+    "scenario": "command_history_mcp",
+    "report": "artifacts/verification/command_history_mcp_20260907T213217.237977Z.json",
+    "verifiedCapabilities": ["palette-edit-command", "preview-undo-redo", "explicit-preview-clear", "generate-undo-redo", "rebuild-undo-redo", "clear-solids-undo-redo", "stable-wire-identity", "isolated-document-cleanup"],
+    "remainingCapabilities": ["exhaustive-edit-history", "palette-state-observation"]
+  },
+  "orchestratedSuiteAudit": {
+    "status": "passed",
+    "scenario": "qa_suite",
+    "report": "artifacts/verification/qa_suite_20260907T215553.079473Z.json",
+    "verifiedScenarios": ["fusion_capabilities", "command_history", "sweep_matrix", "reference_harness"],
+    "cleanup": ["document-count-stable", "active-document-restored", "mcp-session-closed"]
+  },
+  "qaImplications": {
+    "available": ["in-host-script-execution", "document-lifecycle-orchestration", "api-documentation", "viewport-screenshot", "active-command-inspection", "undo-redo"],
+    "unresolved": ["palette-dom-control", "addin-start-stop", "deterministic-render-oracle", "windows-host-verification"]
+  }
+}
