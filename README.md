@@ -46,6 +46,103 @@ Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, an
 
 The detailed product behavior is defined in `reference/`. Persistent conductor identity, explicit control-structure ordering, editable geometry, and stored procedural metadata are core requirements.
 
+## Product objective and invariants
+
+Wire Bundler creates an editable mechanical and connection-aware representation of a
+harness inside Fusion. It records what every physical member is, where it travels,
+what it contains, and what it connects to. Its relationship graphics support inspection
+and navigation; electrical schematic capture remains the responsibility of electrical
+design systems.
+
+The following rules apply across every milestone:
+
+- Stable UUIDs identify every harness, pathway, connection, routed member, branch leg,
+  guide, restraint, and generated object. Display names and list positions are never
+  identities.
+- The any-to-any route/connection graph, recursive physical-containment tree, ordered
+  control structures, and generated Fusion geometry are separate projections of the
+  same persistent definition. Each projection is independently cross-checked.
+- End A and End B remain symmetric. Loops, repeated branches, recombination, and ground
+  straps must not require source/destination assumptions.
+- Preview graphics are transient. Persistent solids and presentation geometry are
+  explicitly generated, application-owned, and replaceable without touching source
+  sketches or unrelated components.
+- Enclosed composite children inherit their parent route logically. Full internal
+  geometry is generated only where exposed, guided, terminated, branched, or explicitly
+  requested, keeping complex assemblies scalable.
+- Physical validity such as missing geometry, invalid topology, aperture capacity, and
+  Fusion-kernel feasibility may block generation. Flex, kink, and pull observations are
+  informational and can never fail a solver.
+- A routed member is inextensible. Flex is local bend behavior; pull is positive routed
+  length growth from a generated baseline. A **Not specified** flex rating incurs no
+  rating computation and means unlimited flexibility within solver feasibility.
+- Every harness-definition edit uses Fusion change tracking. Packaging and installer
+  work begins only after the feature set is complete and live behavior is proven stable.
+
+## Delivery roadmap
+
+The order below is dependency-driven. A later milestone may be researched early, but
+its persistent schema and Fusion behavior should not be implemented before its entry
+dependencies are settled.
+
+| Milestone | Scope | Completion gate |
+| --- | --- | --- |
+| **M0 · Round-wire foundation** *(current closeout)* | Stable round-wire data, gates and ends, smooth previews, material/stripe presentation, persistent sweeps, relationship graphics, diagnostics, and explicit clear/rebuild behavior. | Full local checks; live reference harness; Preview/Save/Reload/Clear; Generate/Rebuild/Clear; material Apply/Save/Cancel; and Fusion Undo/Redo all pass without ghosts or stale projections. |
+| **M1 · Topology and terminators** | Explicit Y junctions, arbitrary branching, recombination, extensions, open exits, loops, ground straps, end transitions, per-member guide faces, and target-face/object connection naming with provenance. Assembly nesting remains organizational and does not substitute for route topology. | Stable branch-leg identities and per-span membership survive edit/reload; capacity and relationship audits cover complex graphs; target-derived names never overwrite custom names; terminator and branch geometry pass focused live scenarios. |
+| **M2 · Profile gates and ribbons** | Open profile gates, non-circular cross-sections, ribbon ordering, banking, twist, curl, deformation, and transitions between loose, ribbon, and terminated members. | Deterministic correspondence and non-crossing validation pass local fixtures and Fusion loft/sweep experiments across representative deformations. |
+| **M3 · Routed members and composites** | Electrical conductors, optical fiber, coolant tubing, shields, and recursively nested composite members; optional child insulation; per-kind technical data; recursive fit checks; sparse child geometry; reusable complex-wire definitions; and extension of M1 target naming to nested members. | Schema migration, recursive containment and fit validation, breakout identity, sparse realization, saved-definition round trips, and scalable diagram drill-down pass before Fusion generation is enabled. |
+| **M4 · Flex, pull, and operating modes** | Constrained and unconstrained operation, optional manufacturer flex ratings, least-flexible rated-member propagation, kink highlighting, generated reference lengths, and animation/test pull inspection. | Rating-free spans skip analysis; rated violations remain non-blocking; exact-route bend and positive-length-growth findings navigate to the responsible member and controls; no advisory input can fail generation. |
+| **M5 · Wrappings and restraints** | Slice-plane, guide-body, and incremental placement; material-aware heat-shrink and tape prefabs; selected-member wraps; and scalable custom buckles with named Band Start/Band End interfaces. | Deterministic placement/regeneration, envelope and collision contribution, material behavior, buckle scaling, and repairable missing-interface handling pass circular and non-circular live cases. |
+| **M6 · Stability and delivery** | Performance work, theme/accessibility polish, selective regeneration, migration hardening, complete reference experiments, Autodesk-compliant packaging, resources, and one-click installation. | The complete feature set is live-proven stable; supported schema migrations and packaging are repeatable on a clean Fusion installation. |
+
+Detailed future contracts live in [UI and data model](reference/UI_AND_DATA_MODEL.md),
+including [recursive composites](reference/UI_AND_DATA_MODEL.md#planned-recursive-composite-wire-and-shielding-milestone),
+[flex and pull](reference/UI_AND_DATA_MODEL.md#planned-routed-member-flexibility-and-kink-diagnostics-milestone),
+and [wrappings and restraints](reference/UI_AND_DATA_MODEL.md#planned-wrappings-ties-and-custom-restraints-milestone).
+
+## Milestone implementation procedure
+
+For each milestone:
+
+1. Define terminology, identities, relationships, invariants, failure behavior, and
+   backward-compatible schema changes before building UI or Fusion geometry.
+2. Implement host-independent models, migrations, parsers, projections, validation,
+   and solver behavior with deterministic fixtures. Ambiguous legacy relationships are
+   reported and repaired explicitly rather than guessed.
+3. Establish performance bounds early. Skip optional work when it is **Not specified**,
+   retain sparse geometry, and benchmark algorithms that scale with members, spans,
+   mesh size, or graph complexity.
+4. Add the Fusion boundary: persistent entity references, selection, coordinate-frame
+   translation, preview ownership, and generated-object metadata. Keep `adsk` outside
+   the domain and application layers.
+5. Add palette editing, search, highlighting, diagram navigation, and projection audits
+   from the same typed application payload. UI state never becomes the source of truth.
+6. Generate persistent geometry only through explicit commands and only after complete
+   replacement output succeeds. Preview, Apply, Save, Cancel, rebuild, clear, Undo, Redo,
+   save/reload, and missing-reference behavior are part of the feature contract.
+7. Extend the shared reference-harness experiment and add focused live Fusion scenarios
+   for kernel-dependent behavior. Record diagnostics under `artifacts/verification/`.
+8. Exit the milestone only after focused and full local checks, clean IDE inspection,
+   live happy-path and failure-path verification, documentation updates, and a factual
+   operational note in `summary.txt`.
+
+## Documentation roles
+
+| Document | Role |
+| --- | --- |
+| `README.md` | Authoritative current implementation status, milestone order, development procedure, and live verification instructions. |
+| `reference/UI_AND_DATA_MODEL.md` | Authoritative product data, identity, validation, persistence, and UI interaction contracts. Sections marked **Planned** are future requirements. |
+| `reference/HARNESS_SPECS.md` | Routing-gate geometry and solver design reference. |
+| `reference/RIBBON_SPECS.md` | Future profile-gate and ribbon geometry reference for M2. |
+| `reference/TERMINATION_TRANSLATION.md` | Future terminator and guide-transition geometry reference for M1 and M2. |
+| `reference/UI_WORKFLOW.md` | Broad UX vision and illustrative flows. When an older illustration conflicts with current behavior or the authoritative contracts above, follow `README.md` and `UI_AND_DATA_MODEL.md`. |
+
+New requirements enter the roadmap once and receive detailed contracts in the relevant
+reference section. When implemented, update **Current milestone**, tests, and live
+verification steps, then rewrite or relabel the planned contract instead of copying it
+into a second description. Historical decisions and operational evidence belong in
+`summary.txt`; they do not define product behavior.
+
 ## Install and smoke test
 
 This repository directory is already located under Fusion's `API/AddIns` directory.

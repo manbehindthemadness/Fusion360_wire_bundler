@@ -1,5 +1,10 @@
 # Profile-Gate Ribbon Routing
 
+> **Document status:** Future M2 geometry reference. Profile-gate and ribbon behavior is
+> not part of the current round-wire implementation. Milestone order and exit criteria
+> are recorded in `../README.md`; persistent contracts belong in
+> `UI_AND_DATA_MODEL.md` before implementation.
+
 This routing method uses a sequence of **profile gates** to procedurally define ribbon cables made from an array of closely spaced wire splines. Unlike closed routing gates, profile gates are **open-ended sketched curves** that define the local transverse shape of the ribbon at each control station. A profile gate may be straight, curved, C-shaped, S-shaped, or any other open sketch profile. Its position, 3D orientation, and curvature control the local position, bank, twist, curl, and cross-sectional deformation of the ribbon, while corresponding wire positions are interpolated between successive gates to create the final ribbon geometry.
 
 Round-wire center drift, diameter-driven ovalization, and closed-aperture packing

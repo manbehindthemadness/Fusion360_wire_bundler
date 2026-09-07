@@ -1,6 +1,20 @@
-# Fusion 360 Harness Assembly and Add-In Workflow
+# Fusion 360 Harness UI and Data Model
 
-The Fusion 360 add-in should create each harness as a **self-contained child assembly** within the currently active design hierarchy. Every completed wire should exist as its own child component and contain one finished wire body together with its editable routing path, sweep or loft features, connection profiles, guide geometry, and associated metadata. This structure preserves each wire as a complete, independently editable object while allowing the harness itself to be nested inside any existing Fusion assembly. Because harness assemblies may themselves contain additional child harnesses, the same workflow can be re-run inside an existing harness to construct branching Y-, H-, or other multi-leg connection structures. The add-in UI should expose the engineering relationships that define the harness — connection mapping, wire profiles, terminators, routing gates, profile gates, ordering, dimensions, and clearances — while procedurally generating the underlying Fusion geometry and maintaining an interactive preview before final creation.
+> **Document status:** Authoritative product data, identity, validation, persistence,
+> and UI interaction contract. The current implementation and dependency-ordered
+> roadmap are recorded in `../README.md`. Sections explicitly marked **Planned** define
+> future requirements. Other sections may describe enduring target behavior across
+> several milestones; no statement here by itself establishes implementation status.
+
+The Fusion 360 add-in stores each harness as a versioned definition associated with a
+dedicated child assembly in the active design hierarchy. Each generated top-level wire
+owns its output component, editable route, sweep or loft features, presentation, and
+generation metadata. Connection profiles, gates, and guides remain persistent linked
+source references and do not need to be copied into every generated component. Future
+enclosed composite children may remain logically complete without full-length bodies,
+as specified in the planned recursive-composite section. The UI exposes connection
+mapping, containment, terminators, control structures, ordering, dimensions, materials,
+and validation while keeping transient preview separate from explicit generated output.
 
 ## End terminology
 
@@ -50,7 +64,9 @@ Each completed wire is therefore a complete modeling object rather than merely o
 
 A harness may itself become the parent of another generated harness.
 
-This allows branching structures to be created procedurally without requiring a special branch-specific assembly system.
+This provides organizational assembly nesting. Physical branching, recombination,
+loops, and per-span membership use the explicit pathway topology planned in M1;
+nested harness components do not substitute for those route relationships.
 
 ```text
 Harness_001
@@ -1237,6 +1253,277 @@ ribbon, shielding, or extended-branch behavior before those concepts have define
 domain semantics; later milestones can add node and edge kinds without replacing
 existing identities.
 
+### Planned recursive composite-wire and shielding milestone
+
+Recursive multi-conductor cables and shields are a planned domain extension rather
+than an inferred diagram feature. This milestone does not change the current
+round-wire schema or generation behavior.
+
+A complex wire is a rooted containment hierarchy. Every member has a stable UUID,
+an explicit parent, an ordered child list, and a physical outer envelope. A member
+may be a current single conductor, a shield surrounding other members, or a composite
+group containing any number of conductors, shields, and further composite members.
+The schema must not impose a fixed nesting depth or assume a pair, coaxial cable, or
+one-level construction.
+
+Containment and electrical connectivity are independent. Nesting records which
+physical envelope surrounds a member; it does not imply that a shield is electrically
+connected to a child or that children share a net. Shield terminations, bonds,
+grounds, drain-wire relationships, intermediate connections, and loops belong to the
+any-to-any connection graph.
+
+Every conductor stores its own technical record, including material, size,
+manufacturer, part number, notes, and future electrical ratings. Each conductor or
+composite child may have optional insulation using the existing material, appearance,
+color, stripe, manufacturer, part-number, and notes concepts. The schema represents a
+bare conductor explicitly. Each optional shield also has stable identity and its own
+construction, material, dimensions, coverage, manufacturer, part number, and notes;
+the exact braid, foil, served-shield, and drain-wire fields remain a design decision.
+
+Fit is checked recursively at every parent before preview or generation. Validation
+uses each child's complete outer envelope, including insulation, shield thickness,
+clearance, and the applicable packing rule, and verifies that the children fit inside
+their immediate parent's usable region without overlap. It identifies the failing
+hierarchy level, required and available envelopes, and controlling clearance or
+thickness. Circular children may reuse deterministic packing, while non-circular
+members require shape-aware containment. A valid root does not excuse an invalid
+nested child, and routing gates validate the complete outer envelope of the members
+that traverse each span.
+
+Nested members are logically continuous through their parent without requiring
+full-length Fusion bodies. By default, an enclosed child inherits its parent's route
+and is represented by identity, connectivity, cross-sectional placement, and
+technical metadata. Child geometry is realized only at entries, exits, terminations,
+breakouts, recombination regions, exposed sections, child-guided spans, and spans the
+user explicitly selects for internal detail. Optional cutaway, exploded, inspection,
+or manufacturing modes may realize selected children or their complete lengths.
+Validation and diagrams remain complete when no corresponding child body exists.
+Length reporting must distinguish inherited parent length, offset-path estimates,
+and explicitly realized geometry.
+
+Every routable child can own ordered guide-face references for local collection,
+breakout, and termination control. These references use persistent Fusion entity
+tokens and the current repairable linked-geometry health behavior. A child guide
+makes its affected local span eligible for geometry realization without forcing a
+full-length body. Parent motion propagates to descendants; deleting a guide never
+silently reassigns the child to nearby geometry.
+
+A parent may break out into any number of child conductors or composite members.
+Children keep their stable identities through guides, branches, ends, validation,
+generation, and diagrams. Repeated breakouts and later recombination must not assume
+a strict Y shape or silently reuse one physical-wire UUID for multiple bodies. The
+containment tree describes what is inside a cable, while the route graph independently
+describes where every member travels and connects.
+
+The milestone includes reusable, versioned complex-wire configurations containing
+the recursive order, relative dimensions, materials, insulation, shields, technical
+fields, and default naming. Harness-specific endpoint connections, pathway assignments,
+guide faces, and Fusion entity tokens remain instance data. Document-local presets,
+packaged catalogs, and a user-managed library remain storage candidates. Versioning,
+migration, duplicate handling, template updates versus instance overrides, and copy
+versus linked-instance behavior must be decided before persistence is implemented.
+Fusion document history continues to version placed instances.
+
+M1 establishes target-derived naming for top-level connections. This milestone extends
+the same rule to nested members: Harness Builder offers a name from the most specific
+stable metadata available, including explicit connection or pin metadata, a user-named
+target face, its owning body/component/occurrence, and finally the existing generated
+fallback. The stored connection records the target reference and naming provenance.
+An explicit Harness Builder name always wins. The schema must decide whether inherited
+names track later Fusion renames or are copied at connection time; refresh must never
+overwrite a custom name.
+
+The per-wire graphic can expand a composite recursively and navigate to each member's
+configuration. The master graphic collapses it to external connections and pathways
+until the user drills in. Search includes nested names, target-derived names, technical
+fields, and part numbers. Logical continuity remains visible independently of realized
+geometry. Cross-checking treats containment, route membership, electrical connections,
+guide references, and generated identities as separate projections.
+
+Before implementation, settle Y-junction/breakout route semantics and the profile-gate
+behavior required for non-circular envelopes. Implement and migrate the recursive
+host-independent model and deterministic fit validation before adding Fusion guide
+selection, preview, or generation. Sparse realization ensures that connection
+complexity scales primarily with data and diagrams rather than with full-length Fusion
+bodies for every enclosed member.
+
+### Planned routed-member flexibility and kink diagnostics milestone
+
+The domain must generalize the physical items routed through a harness. An electrical
+conductor remains one routed-member kind; optical fiber, liquid-cooling tubing, and
+future service lines are non-conductor kinds. All routed members share stable identity,
+parent containment, outer-envelope geometry, guide faces, route membership, technical
+notes, manufacturer and part-number provenance, and optional flexibility data. Each
+kind may add relevant fields without pretending that conductor material, electrical
+ratings, optical properties, and fluid properties are interchangeable.
+
+Every routed member may store a manufacturer-specified flex or kink rating. The
+application uses a normalized representation capable of expressing at least a minimum
+bend radius or an outer-diameter multiplier while preserving the manufacturer's
+original value, units, source, and applicable conditions. Static installation,
+dynamic/flexing service, temperature, pressure, cycle count, and bend-direction limits
+may require distinct ratings. The schema must not collapse materially different test
+conditions into one unexplained number. The default is an explicit **Not specified**
+state. It imposes no advisory bend limit, is treated as infinitely flexible within
+the geometry solver's independent feasibility constraints, and is skipped by
+rating-based routing and kink analysis to avoid unnecessary computation.
+
+A composite wire's effective bend target is set by its least-flexible active rated
+member on the span being evaluated. For minimum bend radius, this is the largest
+applicable required radius after normalizing every rated descendant and any rated
+parent jacket or shield. Members that have already branched away do not constrain
+later parent spans. Not-specified members are excluded from this calculation. If no
+active member has a rating, the span has no advisory bend target and bypasses all
+rating-driven fairing and kink checks.
+
+The harness supports two flexibility modes:
+
+- **Constrained** routing asks transition allocation and fairing to satisfy the
+  effective manufacturer bend target wherever the available route permits. If the
+  requested target cannot fit, the solver clamps the influence of that rating to the
+  best feasible geometry, completes the route, and emits a violation. Repeated or
+  severe over-bending may produce multiple warnings, but the manufacturer rating never
+  converts the result into a geometry-generation failure.
+- **Unconstrained** routing follows the user's geometric controls without using the
+  manufacturer rating to shape the route. Kink analysis still evaluates the result and
+  reports applicable violations so the user can inspect the design.
+
+Manufacturer flexibility is therefore an advisory engineering constraint. Independent
+hard failures remain possible for malformed inputs, missing required route geometry,
+impossible topology, gate-capacity violations, or a curve the Fusion kernel cannot
+construct. A flex or kink rating alone must never raise such a failure. The system must
+fall back to the same unrated best-effort geometry if rating-aware fairing cannot find
+a compliant result.
+
+Kink detection evaluates the finished exact route, including inherited parent spans
+for sparsely realized children and explicit child geometry around guides and breakouts.
+It compares local curvature and tangent continuity against every applicable normalized
+rating. Adaptive evaluation must retain the location of the tightest bend rather than
+depending on a display tessellation. Each finding records the affected member and
+ancestor composite, route span and parameter, actual bend radius, required rating,
+clamp or fallback applied, and manufacturer-rating provenance.
+
+In constrained mode, successful geometry generation also records a reference-length
+baseline for every conductor and routed member. The record includes stable member
+identity, total length, per-span lengths where available, the generated definition or
+route revision, and measurement provenance. Explicitly realized members use their
+exact generated paths. Sparse enclosed members record whether their value comes from
+inherited parent length or an offset-path estimate, so an estimate is never presented
+as exact realized geometry.
+
+Animation and test inspection recomputes current lengths and compares them with the
+stored baseline. Per member and span it reports positive length growth, percentage
+extension, and the location contributing the largest increase. This provides an
+informational indication of pull and possible tearing as parts move. A current length
+at or below its baseline produces no pull finding.
+
+The planned mechanical monitoring scope is deliberately limited to pull from length
+growth and flex from bend-radius/kink analysis. It does not attempt compression,
+buckling, force, stress, fatigue, pressure, thermal, or general material-failure
+analysis.
+
+All routed members are treated as inextensible. Flex permits a member to change shape
+through bending but does not give it elastic length. Consequently the two monitoring
+measurements are sufficient: local bend radius against the specified flex rating, and
+current routed length against the generated reference length. Any positive length
+growth beyond a small deterministic numerical tolerance is a pull finding because the
+member cannot stretch to supply it. That tolerance exists only to suppress floating
+point and curve-evaluation noise; it is not an elastic allowance. No spring, modulus,
+or stretch solver is planned.
+
+Reference lengths are observational data. They never alter transition allocation,
+fairing, packing, collision checks, or generated geometry, and no length-monitoring
+finding may fail a solver or block generation. Animation sampling reads the baseline
+without rewriting it. A successful explicit Generate/Rebuild or future Rebaseline
+action may establish a new reference state; ordinary animation frames and tests may
+not silently move that baseline.
+
+Warnings highlight the relevant route segment, controls or guide faces that bound it,
+and the member rows in Wire Routes, the recursive member editor, Validation, and the
+relationship graphics. Activating a finding navigates to the affected member and
+controls. The UI distinguishes Not specified, a compliant route, a constrained
+route that was adjusted successfully, a clamped non-compliant route, and an
+unconstrained violation. Users may acknowledge a warning for a deliberate design, but
+the stored rating and measured violation remain visible and auditable.
+
+Fit validation and bend validation remain separate. A coolant line or fiber may fit
+inside its parent while violating its bend rating, or comply with its bend rating while
+the complete bundle fails an aperture. Cross-checking reconstructs routed-member kinds,
+effective composite ratings, per-span membership, kink findings, reference lengths,
+positive animation/test pull deltas, and UI projections from the same persistent
+identities.
+
+### Planned wrappings, ties, and custom restraints milestone
+
+Wrappings and ties are physical restraint definitions associated with a selected set
+of routed members. They are not conductors, routed-member children, or electrical
+connections. Each restraint has stable identity, a placement rule, an ordered target
+member set, generated-geometry ownership, material settings, and optional naming,
+manufacturer, part number, and notes.
+
+The placement rule supports three initial methods:
+
+- **Slice plane** places one restraint at a user-selected station and orientation
+  through the routed member envelope. The plane remains a persistent linked-geometry
+  reference and follows the current repairable missing-reference behavior.
+- **Guide body** derives placement and local orientation from selected guide geometry.
+  The definition records the source body or faces needed to reproduce the placement
+  rather than relying on viewport proximity.
+- **Incremental** repeats a restraint at an explicit spacing along a selected parent or
+  pathway span. It records the start reference or offset, spacing, direction, extent or
+  count, and end handling so regeneration is deterministic.
+
+Built-in prefabs initially include **Heat shrink** and **Tape**. Each prefab owns the
+parameters required by its construction, such as axial coverage, thickness, overlap,
+or repeat where applicable. Every prefab and placed instance has the same material
+control principles as wire insulation: a catalog or custom material description,
+plain color or Fusion library appearance, manufacturer, part number, and notes, with
+clear instance override and inheritance behavior. These materials are independent of
+the materials on the restrained members.
+
+Tie, strap, and zip-tie style restraints may reference a custom buckle model. Before
+use, the model must expose two manually assigned and uniquely identifiable interface
+faces: **Band Start** and **Band End**. Harness Builder places and orients the buckle,
+constructs a band leaving Band Start, wraps that band around the outer envelope of the
+selected target members, and joins it into Band End. The generated band and buckle
+occurrence share one restraint identity while remaining distinguishable generated
+children for selection and regeneration.
+
+Custom buckle placement supports an explicit scale needed to suit the selected bundle.
+The stored definition retains the source-model reference, original dimensions,
+applied scale, transform, and both interface-face identities. Scaling must preserve
+the two interfaces and is applied before the band path is solved. Uniform scaling is
+the safe baseline; axis-specific scaling requires separate validation because it may
+distort the interfaces or the functional buckle geometry.
+
+Band construction uses the evaluated outer envelope of the selected routed members at
+the placement station, including insulation, shields, and nested composite jackets.
+It must not route through the selected members or the buckle. A restraint around a
+subset uses that subset's envelope rather than automatically capturing every member in
+the parent. The chosen wrap direction, clearance, band width, thickness, and any user
+rotation are persistent inputs, not results inferred again from incidental geometry.
+
+Wrappings and restraints contribute their finished outer geometry to clearance,
+aperture, and collision validation. They do not alter electrical connectivity, flex
+ratings, pull baselines, or the routing solver. If the target envelope changes,
+regeneration updates the wrap and incremental placements while preserving restraint
+identity and custom buckle source. Invalid buckle interfaces, lost placement references,
+or an unsolvable band path produce repairable restraint findings and do not corrupt
+the routed members they surround.
+
+The palette provides prefab selection, material controls, placement method and
+parameters, target-member selection, buckle source and scale, preview, and explicit
+generation. Hover and findings highlight the restraint, its targets, placement
+reference, buckle interfaces, and generated band. Relationship diagrams may show a
+compact physical-restraint annotation where useful, but restraints do not become
+nodes or edges in the connection relationship graph.
+
+Before implementation, define the persistent naming mechanism for Band Start and Band
+End faces, confirm how external custom buckle models are referenced and packaged, and
+prototype the band-around-envelope solver for circular and non-circular target sets.
+Incremental placement must be evaluated from stable route distance so edits do not
+accumulate positional drift.
+
 Cross-check comparisons operate on endpoint field values rather than serialized
 object-key order. Fusion state payloads use sorted JSON keys, which must not create
 findings when `{end, wireId}` and `{wireId, end}` carry identical values.
@@ -1288,11 +1575,11 @@ show whether a control uses defaults or custom settings; “Use harness defaults
 restores inheritance when saved. Member overrides follow stable member IDs across
 reorder and replacement; adding/removing members maintains aligned settings.
 
-Optional schema-v3 metadata stores per-gate override flags and per-end-member
-settings (null entries inherit the section baseline). Legacy section settings
-remain a fallback for older definitions. Saves use one native Fusion transaction,
-refresh affected active previews, and preserve editor expansion state. Original
-sketch geometry is untouched.
+Metadata introduced in schema version 3 and retained in version 4 stores per-gate
+override flags and per-end-member settings (null entries inherit the section baseline).
+Legacy section settings remain a fallback for older definitions. Saves use one native
+Fusion transaction, refresh affected active previews, and preserve editor expansion
+state. Original sketch geometry is untouched.
 
 ### Initial persistent solid generation
 

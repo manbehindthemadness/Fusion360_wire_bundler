@@ -1,5 +1,11 @@
 # Harness Builder User Interaction Workflow
 
+> **Document status:** Broad UX vision and illustrative future workflow. It contains
+> concepts from several milestones and is not a statement of current implementation.
+> Use `../README.md` for current status and delivery order, and
+> `UI_AND_DATA_MODEL.md` for authoritative data and interaction contracts when an older
+> illustration or label differs.
+
 The Harness Builder workflow should guide the user through creation of a complete wire or ribbon harness without requiring direct manipulation of spline mathematics. The user defines the physical connections, conductor properties, control structures, terminators, routing relationships, and optional overrides; the add-in then generates and previews the resulting paths before committing editable Fusion 360 geometry. Every conductor remains uniquely mapped from its starting connection to its destination throughout the workflow, and all generated wires retain their individual paths, profiles, sweeps or lofts, bodies, and metadata after creation.
 
 ---

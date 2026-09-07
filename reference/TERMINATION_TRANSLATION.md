@@ -1,5 +1,10 @@
 # Terminator Sections
 
+> **Document status:** Future M1/M2 geometry reference. The current implementation has
+> symmetric End A/End B profiles and smooth end transitions, but the complete terminator
+> and per-member guide system described here is not implemented. Milestone status is in
+> `../README.md`; persistent contracts belong in `UI_AND_DATA_MODEL.md`.
+
 A **terminator section** is the procedural transition region between the first or last control structure in a routing system and the actual modeled connection points of the wires, conductors, pins, terminals, or cable interfaces. Terminator sections are shared across all routing modes and are independent of whether the internal cable is modeled as loose wires, a structured ribbon, a frayed ribbon, or another grouped arrangement. Each wire begins or ends at its own physical connection profile, extends initially perpendicular to that profile, and then transitions through zero or more optional per-wire guide profiles before converging into the first routing or profile gate. The same process occurs in reverse at the opposite end of the routed structure.
 
 ## Core Concept

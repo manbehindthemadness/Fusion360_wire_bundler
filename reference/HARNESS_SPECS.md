@@ -1,5 +1,10 @@
 # Constraint-Driven Routing-Gate Spline Generation
 
+> **Document status:** Geometry and solver design reference. The implemented subset and
+> current milestone are recorded in `../README.md`; persistent data and UI contracts are
+> recorded in `UI_AND_DATA_MODEL.md`. Examples in this document do not by themselves
+> mark a feature implemented or scheduled.
+
 This spline-generation method uses a sequence of **oriented routing gates** to procedurally define one or more wire, cable, hose, or conduit paths through an engineered routing corridor. Each routing gate acts as both a **passage constraint** and a **directional constraint**: each spline must pass through the usable aperture of the gate while crossing its surface plane perpendicularly. Independent transition-length values are assigned to the **A and B sides** of each gate, controlling how far the gate's orientation influences the spline into the adjacent routing spans. Between these transition regions, the generated paths remain straight or nearly straight. If transition regions from neighboring gates would overlap, their lengths are clamped to the available span.
 
 The result is a procedural routing system in which the designer controls the path primarily by positioning, orienting, and shaping routing gates rather than by manually manipulating spline control points or Bézier handles.
