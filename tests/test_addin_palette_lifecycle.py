@@ -179,6 +179,31 @@ def test_palette_is_shown_during_command_creation(
     assert shown_applications == [application]
 
 
+def test_palette_opens_at_relationship_graphic_working_size(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Give the editor enough initial room for its connection-map labels and controls.
+    """
+    palette = SimpleNamespace(
+        incomingFromHTML=SimpleNamespace(add=Mock(return_value=True)),
+        navigatingURL=SimpleNamespace(add=Mock(return_value=True)),
+        htmlFileURL="palette.html",
+    )
+    palettes = SimpleNamespace(
+        itemById=Mock(return_value=None),
+        add=Mock(return_value=palette),
+    )
+    application = SimpleNamespace(userInterface=SimpleNamespace(palettes=palettes))
+    monkeypatch.setattr(addin_module, "_send_palette_state", lambda _application: None)
+    monkeypatch.setattr(addin_module, "_log_to_fusion", lambda _message: None)
+
+    addin_module._show_palette(application)
+
+    assert palettes.add.call_args.args[6:8] == (840, 760)
+
+
 def test_palette_state_contains_complete_editor_definition(
     addin_module: _PaletteLifecycleModule,
     monkeypatch: pytest.MonkeyPatch,
@@ -237,6 +262,16 @@ def test_palette_state_contains_complete_editor_definition(
     assert harness["wires"][0]["wireNumber"] == "001"
     assert harness["wires"][0]["orderedPathwayIds"] == [str(valid_harness.pathways[0].pathway_id)]
     assert harness["wires"][0]["orderedControlIds"] == [str(valid_harness.controls[0].control_id)]
+    relationship_map = harness["relationshipMap"]
+    assert relationship_map["routes"][0]["nodeIds"] == [
+        f"connection:{valid_harness.connections[0].connection_id}",
+        f"pathway:{valid_harness.pathways[0].pathway_id}",
+        f"connection:{valid_harness.connections[1].connection_id}",
+    ]
+    assert relationship_map["pathwayOccupancy"][0]["wireIds"] == [
+        str(valid_harness.wires[0].wire_id)
+    ]
+    assert relationship_map["auditIssues"] == []
 
 
 def test_route_capacity_error_fails_preview_command(

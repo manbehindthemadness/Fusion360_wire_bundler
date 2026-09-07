@@ -42,6 +42,18 @@ from .load_harnesses import (
     load_harnesses,
 )
 from .material_catalog import WireMaterialCatalog, load_wire_material_catalog
+from .relationship_map import (
+    RelationshipAuditIssue,
+    RelationshipConnectionUse,
+    RelationshipEdge,
+    RelationshipMap,
+    RelationshipNode,
+    RelationshipNodeKind,
+    RelationshipOccupancy,
+    RelationshipRoute,
+    audit_relationship_map,
+    build_relationship_map,
+)
 
 __all__ = [
     "HarnessCreationError",
@@ -57,9 +69,19 @@ __all__ = [
     "WireMaterialCatalog",
     "PathwayGateway",
     "PathwayUpdateError",
+    "RelationshipAuditIssue",
+    "RelationshipConnectionUse",
+    "RelationshipEdge",
+    "RelationshipMap",
+    "RelationshipNode",
+    "RelationshipNodeKind",
+    "RelationshipOccupancy",
+    "RelationshipRoute",
     "add_pathway",
     "add_wire_batch",
     "append_pathway_gates",
+    "audit_relationship_map",
+    "build_relationship_map",
     "create_empty_harness",
     "load_harnesses",
     "move_pathway_gate",

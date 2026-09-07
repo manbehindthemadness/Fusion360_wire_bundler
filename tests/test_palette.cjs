@@ -25,6 +25,7 @@ class Element {
       this.className = [this.className || '', ...names].filter(Boolean).join(' ');
     } };
     this.textContent = '';
+    this.value = '';
     /** @type {Element|null} */
     this.parentElement = null;
   }
@@ -47,8 +48,15 @@ class Element {
   }
   querySelector(selector) {
     const editorId = selector.match(/data-editor-id="([^"]+)"/);
-    return descendants(this, (child) => editorId
-      ? child.dataset.editorId === editorId[1] : child.tag === selector)[0];
+    const sectionId = selector.match(/data-section="([^"]+)"/);
+    const wireId = selector.match(/data-wire-id="([^"]+)"/);
+    return descendants(this, (child) => {
+      if (editorId) return child.dataset.editorId === editorId[1];
+      if (sectionId) return child.dataset.section === sectionId[1];
+      if (wireId) return child.dataset.wireId === wireId[1];
+      if (selector.startsWith('.')) return child.className?.split(' ').includes(selector.slice(1));
+      return child.tag === selector;
+    })[0];
   }
   querySelectorAll(selector) {
     const tags = selector.split(',').map((item) => item.trim());
@@ -58,9 +66,16 @@ class Element {
   select() {}
   showModal() { this.open = true; }
   close() { this.open = false; this.events.close(); }
-  replaceChildren(...children) { this.children = children; }
+  replaceChildren(...children) {
+    for (const child of children) if (typeof child === 'object') child.parentElement = this;
+    this.children = children;
+  }
   addEventListener(event, handler) { this.events[event] = handler; }
-  setAttribute(key, value) { this.attributes[key] = value; }
+  setAttribute(key, value) {
+    this.attributes[key] = value;
+    if (key === 'class') this.className = value;
+  }
+  scrollIntoView() { this.scrolledIntoView = true; }
 }
 
 /** Evaluate the complete palette script with the Fusion transport mocked. */
@@ -71,6 +86,7 @@ function palette(storage = new Map()) {
     document: {
       body: new Element('body'),
       createElement: (tag) => new Element(tag),
+      createElementNS: (_namespace, tag) => new Element(tag),
       getElementById: () => new Element('div'),
     },
     window: { sessionStorage: {
@@ -80,6 +96,7 @@ function palette(storage = new Map()) {
   };
   const html = readFileSync(join(__dirname, '..', 'palette.html'), 'utf8');
   runInNewContext(html.match(/<script>([\s\S]*?)<\/script>/)[1], context);
+  context.ui = runInNewContext('ui', context);
   context.mutate = (action, payload) => calls.push({ action, payload });
   return { context, calls };
 }
@@ -97,8 +114,10 @@ function harness() {
     mainColor: { name: 'Black', hex: '#202020' }, appearance: null, stripes: [],
     manufacturer: '', partNumber: '', notes: '',
   };
-  return {
+  const definition = {
     harnessId: 'h', profiles: [{ profileId: 'profile', name: 'Profile', diameterMm: 1.5 }], controls: [],
+    componentName: 'Harness_001', definitionName: 'Harness_001', schemaVersion: 3,
+    routingMode: 'Routing Gates', status: 'valid', validationMessages: [],
     materialDefaults,
     pathways: [{ pathwayId: 'p', name: 'lower fuse box path', startName: 'O2-sensor',
       endName: 'CAN_BUS-ctrl', orderedControlIds: [] }],
@@ -115,7 +134,187 @@ function harness() {
       startEndName: i === 1 ? 'Data input' : '', endEndName: i === 1 ? 'Data output' : '',
     })),
   };
+  definition.relationshipMap = {
+    nodes: [
+      ...definition.connections.map((connection) => ({
+        nodeId: `connection:${connection.connectionId}`, kind: 'connection',
+        memberId: connection.connectionId, label: connection.name, missing: false,
+      })),
+      { nodeId: 'pathway:p', kind: 'pathway', memberId: 'p',
+        label: 'lower fuse box path', missing: false },
+    ],
+    edges: definition.wires.flatMap((wire) => [0, 1].map((sequence) => ({
+      edgeId: `wire:${wire.wireId}:segment:${sequence}`, wireId: wire.wireId, sequence,
+    }))),
+    routes: definition.wires.map((wire) => ({
+      routeId: `wire:${wire.wireId}`, wireId: wire.wireId,
+      wireNumber: wire.wireNumber, label: `Wire ${wire.wireNumber}`,
+      nodeIds: [`connection:${wire.startConnectionId}`, 'pathway:p', `connection:${wire.endConnectionId}`],
+      edgeIds: [0, 1].map((sequence) => `wire:${wire.wireId}:segment:${sequence}`),
+    })),
+    pathwayOccupancy: [{ pathwayId: 'p', wireIds: ['w1', 'w2', 'w3'] }],
+    connectionUsage: definition.connections.map((connection) => ({
+      connectionId: connection.connectionId,
+      endpoints: definition.wires.flatMap((wire) => [
+        ...(wire.startConnectionId === connection.connectionId ? [{ end: 'start', wireId: wire.wireId }] : []),
+        ...(wire.endConnectionId === connection.connectionId ? [{ end: 'end', wireId: wire.wireId }] : []),
+      ]),
+    })),
+    auditIssues: [],
+  };
+  return definition;
 }
+
+test('master relationship graphic is last and independently cross-checked', () => {
+  const { context } = palette();
+  const definition = harness();
+  context.renderEditor(definition);
+  const sections = Array.from(context.ui.editor.children).filter((node) => node.tag === 'details');
+  assert.deepEqual(
+    sections.map((section) => section.dataset.section),
+    ['wire-routes', 'pathways', 'validation', 'master-relationship-graphic'],
+  );
+  const audit = descendants(sections[2], (node) => node.className === 'relationship-audit')[0];
+  assert.match(audit.textContent, /agrees with wire routes/);
+  const pathwayCards = descendants(sections[3], (node) => node.className === 'relationship-pathway-card');
+  assert.equal(pathwayCards.length, 1);
+  const endLists = descendants(pathwayCards[0], (node) => node.className === 'relationship-end-list');
+  assert.equal(endLists.length, 2);
+  assert.ok(endLists.every((list) => list.open));
+  const wireGraphics = descendants(sections[0], (node) => node.className === 'wire-relationship-graphic');
+  assert.equal(wireGraphics.length, 3);
+  const pathwayBubble = descendants(wireGraphics[0], (node) => (
+    node.className === 'relationship-node pathway'
+  ))[0];
+  assert.equal(pathwayBubble.attributes.width, '150');
+  assert.equal(pathwayBubble.attributes.transform, undefined);
+  const graphicLabels = descendants(wireGraphics[0], (node) => node.tag === 'text')
+    .map((node) => node.textContent);
+  assert.ok(graphicLabels.includes('Data input'));
+  assert.ok(graphicLabels.includes('lower fuse box path'));
+  assert.ok(graphicLabels.includes('Data output'));
+  const connectors = descendants(sections[3], (node) => node.className === 'relationship-connector');
+  assert.equal(connectors.length, 2);
+  assert.ok(connectors.every((connector) => (
+    descendants(connector, (node) => node.tag === 'path').length === 3
+  )));
+  endLists[0].open = false;
+  endLists[0].events.toggle();
+  assert.equal(descendants(connectors[0], (node) => node.tag === 'path').length, 1);
+  assert.equal(sections[3].open, true);
+});
+
+test('master relationship filtering, hover, navigation, and mismatch reporting work', () => {
+  const { context, calls } = palette();
+  const definition = harness();
+  definition.relationshipMap.routes[0].nodeIds.reverse();
+  const issues = context.relationshipAuditIssues(definition);
+  assert.ok(issues.some((issue) => issue.code === 'palette_wire_route_mismatch'));
+  context.highlightMember = (_harness, type, id) => calls.push({ type, id });
+  context.renderEditor(definition);
+  const graphic = context.ui.editor.children[context.ui.editor.children.length - 1];
+  const filter = descendants(graphic, (node) => node.attributes['aria-label'] === 'Filter master relationship graphic')[0];
+  filter.value = '002';
+  filter.events.input();
+  const pathwayCards = descendants(graphic, (node) => node.className === 'relationship-pathway-card');
+  assert.equal(pathwayCards.length, 1);
+  const entries = descendants(graphic, (node) => node.className === 'relationship-end-entry');
+  assert.equal(entries.length, 2);
+  entries[0].events.mouseenter();
+  assert.deepEqual(calls[calls.length - 1], { type: 'connection', id: 'a2' });
+  entries[0].events.click();
+  const wireCard = context.ui.editor.querySelector('[data-wire-id="w2"]');
+  assert.equal(wireCard.scrolledIntoView, true);
+  assert.equal(wireCard.querySelector('.wire-details').hidden, false);
+  const validation = context.ui.editor.querySelector('[data-section="validation"]');
+  assert.ok(descendants(validation, (node) => node.textContent?.includes('does not match')).length);
+});
+
+test('master collapse limit defaults to seven, clamps, persists, and search reveals matches', () => {
+  const storage = new Map();
+  const definition = harness();
+  const template = definition.wires[0];
+  definition.connections = Array.from({ length: 8 }, (_, index) => ['a', 'b'].map((end) => ({
+    connectionId: `${end}${index + 1}`, name: `${end}${index + 1}`, hasLinkedGeometry: true,
+  }))).flat();
+  definition.wires = Array.from({ length: 8 }, (_, index) => ({
+    ...template,
+    wireId: `w${index + 1}`,
+    wireNumber: `${index + 1}`.padStart(3, '0'),
+    startConnectionId: `a${index + 1}`,
+    endConnectionId: `b${index + 1}`,
+    startEndName: index === 0 ? 'Data input' : '',
+    endEndName: index === 0 ? 'Data output' : '',
+  }));
+  let { context } = palette(storage);
+  let rendered = context.renderRelationshipMap(definition, []);
+  let limit = descendants(rendered, (node) => (
+    node.attributes['aria-label'] === 'Connections before end lists collapse'
+  ))[0];
+  assert.equal(limit.value, '7');
+  let endLists = descendants(rendered, (node) => node.className === 'relationship-end-list');
+  assert.ok(endLists.every((list) => !list.open));
+  let connectors = descendants(rendered, (node) => node.className === 'relationship-connector');
+  assert.ok(connectors.every((connector) => (
+    descendants(connector, (node) => node.tag === 'path').length === 1
+  )));
+  const sevenConnectionHarness = {
+    ...definition,
+    connections: definition.connections.filter((connection) => !connection.connectionId.endsWith('8')),
+    wires: definition.wires.slice(0, 7),
+  };
+  const boundary = context.renderRelationshipMap(sevenConnectionHarness, []);
+  assert.ok(descendants(boundary, (node) => node.className === 'relationship-end-list')
+    .every((list) => list.open));
+  limit.value = '20';
+  limit.events.change();
+  endLists = descendants(rendered, (node) => node.className === 'relationship-end-list');
+  assert.ok(endLists.every((list) => list.open));
+  assert.equal(storage.get('wireBundler.relationshipCollapseLimit:h'), '20');
+  ({ context } = palette(storage));
+  rendered = context.renderRelationshipMap(definition, []);
+  limit = descendants(rendered, (node) => (
+    node.attributes['aria-label'] === 'Connections before end lists collapse'
+  ))[0];
+  assert.equal(limit.value, '20');
+  limit.value = '0';
+  limit.events.change();
+  assert.equal(limit.value, '1');
+  const filter = descendants(rendered, (node) => (
+    node.attributes['aria-label'] === 'Filter master relationship graphic'
+  ))[0];
+  filter.value = 'Data input';
+  filter.events.input();
+  endLists = descendants(rendered, (node) => node.className === 'relationship-end-list');
+  assert.equal(endLists[0].open, true);
+  assert.equal(endLists[1].open, false);
+  assert.equal(endLists[0].children[0].children[1].textContent, '1 of 8');
+  connectors = descendants(rendered, (node) => node.className === 'relationship-connector');
+  assert.equal(descendants(connectors[0], (node) => node.tag === 'path').length, 1);
+  assert.equal(descendants(connectors[1], (node) => node.tag === 'path').length, 0);
+});
+
+test('master and per-wire graphics preserve scoped Fusion highlighting', () => {
+  const { context, calls } = palette();
+  const definition = harness();
+  context.highlightMember = (_harness, type, id) => calls.push({ type, id });
+  const master = context.renderRelationshipMap(definition, []);
+  descendants(master, (node) => node.className === 'relationship-pathway-hub')[0]
+    .events.mouseenter();
+  assert.deepEqual(calls.pop(), { type: 'pathway', id: 'p' });
+  const endList = descendants(master, (node) => node.className === 'relationship-end-list')[0];
+  endList.children[0].events.mouseenter();
+  assert.deepEqual(calls.pop(), { type: 'pathway_wires', id: 'p' });
+  descendants(master, (node) => node.className === 'relationship-end-entry')[0]
+    .events.mouseenter();
+  assert.deepEqual(calls.pop(), { type: 'connection', id: 'a1' });
+  const wireGraphic = descendants(
+    context.renderWireRoutes(definition),
+    (node) => node.className === 'wire-relationship-graphic',
+  )[0];
+  wireGraphic.events.mouseenter();
+  assert.deepEqual(calls.pop(), { type: 'preview_wire', id: 'w1' });
+});
 
 test('route labels use precise names and fallbacks', () => {
   const { context } = palette();

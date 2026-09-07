@@ -18,9 +18,11 @@ import adsk.core
 import adsk.fusion
 
 from .application import (
+    RelationshipMap,
     add_pathway,
     add_wire_batch,
     append_pathway_gates,
+    build_relationship_map,
     create_empty_harness,
     load_harnesses,
     load_wire_material_catalog,
@@ -84,6 +86,8 @@ APPEND_GATES_COMMAND_NAME = "Add Gates"
 ADD_WIRES_COMMAND_NAME = "Add Wires"
 PALETTE_ID = "kev0_wire_bundler_harness_builder_palette"
 PALETTE_HTML_URL = "palette.html"
+PALETTE_INITIAL_WIDTH = 840
+PALETTE_INITIAL_HEIGHT = 760
 WORKSPACE_ID = "FusionSolidEnvironment"
 PANEL_IDS = ("SolidScriptsAddinsPanel", "InsertAssemblePanel")
 HARNESS_NAME_INPUT_ID = "harness_name"
@@ -1327,8 +1331,8 @@ def _show_palette(application: adsk.core.Application) -> None:
             True,
             True,
             True,
-            420,
-            620,
+            PALETTE_INITIAL_WIDTH,
+            PALETTE_INITIAL_HEIGHT,
             True,
         )
         if palette is None:
@@ -1438,6 +1442,7 @@ def _serialize_palette_state(
                 }
             )
             continue
+        relationship_map = build_relationship_map(definition)
         harnesses.append(
             {
                 "componentName": result.component_name,
@@ -1526,6 +1531,7 @@ def _serialize_palette_state(
                     }
                     for wire in definition.wires
                 ],
+                "relationshipMap": _relationship_map_payload(relationship_map),
                 "status": "draft" if result.validation_messages else "valid",
                 "validationMessages": result.validation_messages,
             }
@@ -1542,6 +1548,71 @@ def _serialize_palette_state(
         "ok": True,
     }
     return json.dumps(payload, sort_keys=True)
+
+
+def _relationship_map_payload(relationship_map: RelationshipMap) -> dict[str, object]:
+    """
+    Convert the host-independent relationship projection for the HTML palette.
+    """
+    return {
+        "nodes": [
+            {
+                "nodeId": node.node_id,
+                "kind": node.kind.value,
+                "memberId": str(node.member_id),
+                "label": node.label,
+                "missing": node.missing,
+            }
+            for node in relationship_map.nodes
+        ],
+        "edges": [
+            {
+                "edgeId": edge.edge_id,
+                "wireId": str(edge.wire_id),
+                "sourceNodeId": edge.source_node_id,
+                "targetNodeId": edge.target_node_id,
+                "sequence": edge.sequence,
+            }
+            for edge in relationship_map.edges
+        ],
+        "routes": [
+            {
+                "routeId": route.route_id,
+                "wireId": str(route.wire_id),
+                "wireNumber": route.wire_number,
+                "label": route.label,
+                "nodeIds": list(route.node_ids),
+                "edgeIds": list(route.edge_ids),
+            }
+            for route in relationship_map.routes
+        ],
+        "pathwayOccupancy": [
+            {
+                "pathwayId": str(occupancy.pathway_id),
+                "wireIds": [str(wire_id) for wire_id in occupancy.wire_ids],
+            }
+            for occupancy in relationship_map.pathway_occupancy
+        ],
+        "connectionUsage": [
+            {
+                "connectionId": str(usage.connection_id),
+                "endpoints": [
+                    {"wireId": str(wire_id), "end": endpoint}
+                    for wire_id, endpoint in usage.endpoints
+                ],
+            }
+            for usage in relationship_map.connection_usage
+        ],
+        "auditIssues": [
+            {
+                "code": issue.code,
+                "message": issue.message,
+                "memberType": issue.member_type,
+                "memberId": issue.member_id,
+            }
+            for issue in relationship_map.audit_issues
+        ],
+    }
 
 
 def _color_payload(color: WireColor) -> dict[str, object]:

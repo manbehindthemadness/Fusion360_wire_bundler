@@ -298,6 +298,160 @@
     .validation-list { margin: 0; padding-left: 20px; }
     .validation-list li + li { margin-top: 6px; }
     .validation-list.errors { color: var(--danger); }
+    .relationship-audit {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid #a9c9a9;
+      border-radius: 5px;
+      padding: 8px 10px;
+      background: #f2faf2;
+      color: #226b22;
+    }
+    .relationship-audit::before { content: "✓"; font-weight: 800; }
+    .relationship-audit.findings {
+      border-color: #d9a4a4;
+      background: #fff7f7;
+      color: var(--danger);
+    }
+    .relationship-audit.findings::before { content: "!"; }
+    .relationship-map { display: grid; gap: 9px; }
+    .relationship-map-toolbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+    }
+    .relationship-map-settings {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .relationship-map-settings input { width: 64px; padding: 5px 7px; }
+    .relationship-map-summary { color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .relationship-map-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px 14px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .relationship-map-legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .relationship-map-legend i { display: inline-block; width: 11px; height: 11px; }
+    .relationship-map-legend .connection { border: 1px solid #6887a0; border-radius: 3px; background: #eef5fa; }
+    .relationship-map-legend .pathway { border: 1px solid #b07b2e; transform: rotate(45deg); background: #fff7e8; }
+    .relationship-map-legend .wire { width: 18px; height: 5px; border-radius: 3px; background: var(--accent); }
+    .relationship-map-viewport {
+      max-height: 430px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: auto;
+      background: linear-gradient(#fff, #fbfcfd);
+    }
+    .relationship-pathway-stack { display: grid; gap: 10px; min-width: 760px; padding: 10px; }
+    .relationship-pathway-card {
+      display: grid;
+      grid-template-columns: minmax(210px, 1fr) 54px 170px 54px minmax(210px, 1fr);
+      align-items: stretch;
+      gap: 4px;
+      border: 1px solid #d5dde4;
+      border-radius: 7px;
+      padding: 10px;
+      background: var(--surface);
+    }
+    .relationship-end-list {
+      align-self: center;
+      margin: 0;
+      border: 1px solid #d9e1e7;
+      border-radius: 5px;
+    }
+    .relationship-end-list[open] {
+      align-self: stretch;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+    .relationship-end-list > summary {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 7px 8px;
+      cursor: pointer;
+      font-weight: 700;
+      background: var(--surface-subtle);
+    }
+    .relationship-end-items {
+      display: grid;
+      align-content: space-around;
+      gap: 5px;
+      padding: 7px;
+    }
+    .relationship-end-entry {
+      width: 100%;
+      display: grid;
+      gap: 2px;
+      border: 1px solid #9eb5c6;
+      border-radius: 5px;
+      padding: 6px 7px;
+      text-align: left;
+      background: #eef5fa;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .relationship-end-entry:hover, .relationship-end-entry:focus { border-color: var(--accent); }
+    .relationship-end-entry small { color: var(--muted); }
+    .relationship-pathway-hub {
+      align-self: center;
+      min-height: 92px;
+      display: grid;
+      place-content: center;
+      gap: 5px;
+      border: 1px solid #b07b2e;
+      border-radius: 7px;
+      padding: 10px;
+      background: #fff7e8;
+      text-align: center;
+      color: var(--text);
+      cursor: pointer;
+    }
+    .relationship-pathway-hub strong { font-size: 12px; }
+    .relationship-pathway-hub small { color: var(--muted); }
+    .relationship-connector {
+      align-self: stretch;
+      width: 54px;
+      min-height: 92px;
+      overflow: visible;
+      pointer-events: none;
+    }
+    .relationship-connector path {
+      fill: none;
+      stroke: #7b9ab2;
+      stroke-width: 1.5;
+      vector-effect: non-scaling-stroke;
+    }
+    .wire-relationship-graphic {
+      border: 1px solid #d9e1e7;
+      border-radius: 5px;
+      overflow-x: auto;
+      background: var(--surface);
+    }
+    .relationship-map-svg { display: block; min-width: 100%; }
+    .relationship-route-row { cursor: pointer; }
+    .relationship-route-row .row-background { fill: transparent; }
+    .relationship-route-row:hover .row-background,
+    .relationship-route-row:focus .row-background { fill: #edf6fd; }
+    .relationship-route-row:focus { outline: none; }
+    .relationship-route-label { fill: var(--text); font-size: 12px; font-weight: 700; }
+    .relationship-route-meta { fill: var(--muted); font-size: 10px; }
+    .relationship-link { stroke-linecap: round; }
+    .relationship-node.connection { fill: #eef5fa; stroke: #6887a0; }
+    .relationship-node.pathway { fill: #fff7e8; stroke: #b07b2e; }
+    .relationship-node.missing { fill: #fff2f2; stroke: var(--danger); stroke-dasharray: 3 2; }
+    .relationship-node-label { fill: var(--text); font-size: 10px; text-anchor: middle; }
+    .relationship-node-kind { fill: var(--muted); font-size: 8px; text-anchor: middle; text-transform: uppercase; }
+    .relationship-map-empty { padding: 18px; text-align: center; }
     .empty { margin: 0; color: var(--muted); }
     .error-panel {
       border: 1px solid var(--danger);
@@ -383,6 +537,11 @@
     let currentState = { harnesses: [], notice: "" };
     let selectedHarnessKey = readSession("wireBundler.selectedHarness") || "";
     const routeFilters = new Map();
+    const relationshipFilters = new Map();
+    const relationshipEndListOverrides = new Map();
+    const DEFAULT_RELATIONSHIP_COLLAPSE_LIMIT = 7;
+    const MIN_RELATIONSHIP_COLLAPSE_LIMIT = 1;
+    const MAX_RELATIONSHIP_COLLAPSE_LIMIT = 999;
     const storedExpandedSections = readSession("wireBundler.expandedSections");
     let hasStoredExpansionState = storedExpandedSections !== null;
     let expandedSectionIds = [];
@@ -396,6 +555,26 @@
 
     function harnessKey(harness) {
       return harness.harnessId || `component:${harness.componentName}`;
+    }
+
+    function relationshipCollapseStorageKey(harness) {
+      return `wireBundler.relationshipCollapseLimit:${harnessKey(harness)}`;
+    }
+
+    function clampRelationshipCollapseLimit(value) {
+      const parsed = Math.round(Number(value));
+      if (!Number.isFinite(parsed)) return DEFAULT_RELATIONSHIP_COLLAPSE_LIMIT;
+      return Math.min(
+        MAX_RELATIONSHIP_COLLAPSE_LIMIT,
+        Math.max(MIN_RELATIONSHIP_COLLAPSE_LIMIT, parsed),
+      );
+    }
+
+    function relationshipCollapseLimit(harness) {
+      const stored = readSession(relationshipCollapseStorageKey(harness));
+      return stored === null
+        ? DEFAULT_RELATIONSHIP_COLLAPSE_LIMIT
+        : clampRelationshipCollapseLimit(stored);
     }
 
     function emptyMessage(text) {
@@ -1593,6 +1772,7 @@
             harness, [wire], connections, "end", `end-b-${wire.wireId}`,
           );
           card.className = "wire-route";
+          card.dataset.wireId = wire.wireId;
           flow.className = "route-flow";
           flow.append(endRouteNode(
             "End A", start, endAEditor, endBEditor, wire.startEndName,
@@ -1645,7 +1825,14 @@
           materialNode.style.borderLeft = `8px solid ${wire.materials.mainColor.hex}`;
           materialNode.title = "Edit inherited and per-wire material options";
           materialNode.addEventListener("click", () => openMaterialOptions(harness, wire));
-          details.append(flow, profileNode, materialNode, endAEditor, endBEditor);
+          details.append(
+            renderWireRelationshipGraphic(harness, wire, connections, pathways),
+            flow,
+            profileNode,
+            materialNode,
+            endAEditor,
+            endBEditor,
+          );
           card.append(wireHeader(
             harness, wire, details, !start?.hasLinkedGeometry || !end?.hasLinkedGeometry,
           ), details);
@@ -1655,6 +1842,404 @@
       filter.addEventListener("input", renderRoutes);
       container.append(filter, routes);
       renderRoutes();
+      return container;
+    }
+
+    function relationshipAuditIssues(harness) {
+      const projection = harness.relationshipMap || {};
+      const issues = [...(projection.auditIssues || [])];
+      const routes = new Map((projection.routes || []).map((route) => [route.wireId, route]));
+      const occupancy = new Map(
+        (projection.pathwayOccupancy || []).map((item) => [item.pathwayId, item.wireIds || []]),
+      );
+      const usage = new Map(
+        (projection.connectionUsage || []).map((item) => [item.connectionId, item.endpoints || []]),
+      );
+      const addIssue = (code, message, memberType = "", memberId = "") => {
+        if (!issues.some((issue) => issue.code === code && issue.memberId === memberId)) {
+          issues.push({ code, message, memberType, memberId });
+        }
+      };
+      harness.wires.forEach((wire) => {
+        const route = routes.get(wire.wireId);
+        const expectedNodes = [
+          `connection:${wire.startConnectionId}`,
+          ...wire.orderedPathwayIds.map((id) => `pathway:${id}`),
+          `connection:${wire.endConnectionId}`,
+        ];
+        if (!route || JSON.stringify(route.nodeIds || []) !== JSON.stringify(expectedNodes)) {
+          addIssue(
+            "palette_wire_route_mismatch",
+            `${wireLabel(wire)} does not match its master-graphic route.`,
+            "wire",
+            wire.wireId,
+          );
+        }
+      });
+      if (routes.size !== harness.wires.length) {
+        addIssue(
+          "palette_wire_count_mismatch",
+          "Master graphic wire count disagrees with Wire Routes.",
+        );
+      }
+      harness.pathways.forEach((pathway) => {
+        const expected = harness.wires
+          .filter((wire) => wire.orderedPathwayIds.includes(pathway.pathwayId))
+          .map((wire) => wire.wireId);
+        if (JSON.stringify(occupancy.get(pathway.pathwayId) || []) !== JSON.stringify(expected)) {
+          addIssue(
+            "palette_pathway_occupancy_mismatch",
+            `${pathway.name} occupancy disagrees with Wire Routes.`,
+            "pathway",
+            pathway.pathwayId,
+          );
+        }
+      });
+      harness.connections.forEach((connection) => {
+        const expected = [];
+        harness.wires.forEach((wire) => {
+          if (wire.startConnectionId === connection.connectionId) {
+            expected.push(`${wire.wireId}:start`);
+          }
+          if (wire.endConnectionId === connection.connectionId) {
+            expected.push(`${wire.wireId}:end`);
+          }
+        });
+        const actual = (usage.get(connection.connectionId) || []).map(
+          (endpoint) => `${endpoint.wireId}:${endpoint.end}`,
+        );
+        if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+          addIssue(
+            "palette_connection_usage_mismatch",
+            `${connection.name} usage disagrees with Wire Routes.`,
+            "connection",
+            connection.connectionId,
+          );
+        }
+      });
+      return issues;
+    }
+
+    function svgElement(tag, attributes = {}) {
+      const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+      Object.entries(attributes).forEach(([name, value]) => node.setAttribute(name, `${value}`));
+      return node;
+    }
+
+    function truncateGraphicLabel(value, length = 22) {
+      const text = value || "Unnamed";
+      return text.length > length ? `${text.slice(0, length - 1)}…` : text;
+    }
+
+    function navigateToWire(wireId) {
+      const section = ui.editor.querySelector('[data-section="wire-routes"]');
+      const card = ui.editor.querySelector(`[data-wire-id="${wireId}"]`);
+      if (section) {
+        section.open = true;
+        expandedSections.add("wire-routes");
+      }
+      if (!card) return;
+      const details = card.querySelector(".wire-details");
+      if (details) details.hidden = false;
+      card.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
+    function renderWireRelationshipGraphic(harness, wire, connections, pathways) {
+      const container = document.createElement("div");
+      const nodeItems = [
+        {
+          kind: "connection",
+          label: wire.startEndName
+            || connections.get(wire.startConnectionId)?.name
+            || "Missing End A",
+          missing: !connections.has(wire.startConnectionId),
+        },
+        ...wire.orderedPathwayIds.map((pathwayId) => ({
+          kind: "pathway",
+          label: pathways.get(pathwayId)?.name || "Missing pathway",
+          missing: !pathways.has(pathwayId),
+        })),
+        {
+          kind: "connection",
+          label: wire.endEndName
+            || connections.get(wire.endConnectionId)?.name
+            || "Missing End B",
+          missing: !connections.has(wire.endConnectionId),
+        },
+      ];
+      const width = Math.max(560, 100 + (nodeItems.length - 1) * 180);
+      const y = 44;
+      const startX = 70;
+      const step = (width - 140) / Math.max(1, nodeItems.length - 1);
+      const points = nodeItems.map((_item, index) => startX + index * step);
+      const svg = svgElement("svg", {
+        class: "relationship-map-svg",
+        width,
+        height: 88,
+        viewBox: `0 0 ${width} 88`,
+        role: "img",
+        "aria-label": `${wireLabel(wire)} relationship route`,
+      });
+      for (let index = 0; index < points.length - 1; index += 1) {
+        svg.append(svgElement("line", {
+          class: "relationship-link",
+          x1: points[index], y1: y, x2: points[index + 1], y2: y,
+          stroke: wire.materials?.mainColor?.hex || "#1777c8", "stroke-width": 9,
+        }));
+        (wire.materials?.stripes || []).slice(0, 3).forEach((stripe, stripeIndex) => {
+          svg.append(svgElement("line", {
+            class: "relationship-link",
+            x1: points[index], y1: y - 3 + stripeIndex * 3,
+            x2: points[index + 1], y2: y - 3 + stripeIndex * 3,
+            stroke: stripe.color?.hex || "#fff", "stroke-width": 1.7,
+            "stroke-dasharray": stripe.pattern === "solid" ? "none" : "8 5",
+          }));
+        });
+      }
+      nodeItems.forEach((item, index) => {
+        const x = points[index];
+        const shape = item.kind === "pathway"
+          ? svgElement("rect", {
+            class: `relationship-node pathway${item.missing ? " missing" : ""}`,
+            x: x - 75, y: y - 18, width: 150, height: 36, rx: 18,
+          })
+          : svgElement("rect", {
+            class: `relationship-node connection${item.missing ? " missing" : ""}`,
+            x: x - 52, y: y - 16, width: 104, height: 32, rx: 7,
+          });
+        const label = svgElement("text", { class: "relationship-node-label", x, y: y + 3 });
+        const kind = svgElement("text", { class: "relationship-node-kind", x, y: y - 22 });
+        const title = svgElement("title");
+        label.textContent = truncateGraphicLabel(item.label, item.kind === "pathway" ? 21 : 18);
+        kind.textContent = item.kind;
+        title.textContent = `${item.kind}: ${item.label}`;
+        shape.append(title);
+        svg.append(shape, label, kind);
+      });
+      container.className = "wire-relationship-graphic";
+      hoverHighlight(container, () => highlightMember(harness, "preview_wire", wire.wireId));
+      container.append(svg);
+      return container;
+    }
+
+    function relationshipEndGroups(harness, pathway, endpoint, connections) {
+      const connectionField = endpoint === "start" ? "startConnectionId" : "endConnectionId";
+      const endpointNameField = endpoint === "start" ? "startEndName" : "endEndName";
+      const groups = new Map();
+      harness.wires
+        .filter((wire) => wire.orderedPathwayIds.includes(pathway.pathwayId))
+        .forEach((wire) => {
+          const connectionId = wire[connectionField] || "";
+          const groupKey = connectionId || `missing:${wire.wireId}`;
+          if (!groups.has(groupKey)) {
+            groups.set(groupKey, {
+              connectionId,
+              connectionName: connections.get(connectionId)?.name || "",
+              endpointNames: new Set(),
+              wires: [],
+            });
+          }
+          const group = groups.get(groupKey);
+          if (wire[endpointNameField]) group.endpointNames.add(wire[endpointNameField]);
+          group.wires.push(wire);
+        });
+      return [...groups.values()].map((group) => {
+        const endpointNames = [...group.endpointNames];
+        const label = endpointNames.length === 1
+          ? endpointNames[0]
+          : group.connectionName || `Missing End ${endpoint === "start" ? "A" : "B"}`;
+        const wireSearch = group.wires.map((wire) => (
+          `${wireLabel(wire)} ${wire.wireNumber} ${wire.materials?.insulationMaterial || ""} ${wire.materials?.mainColor?.name || ""}`
+        )).join(" ");
+        return {
+          ...group,
+          label,
+          searchable: `${label} ${group.connectionName} ${endpointNames.join(" ")} ${wireSearch}`
+            .toLocaleLowerCase(),
+        };
+      });
+    }
+
+    function renderRelationshipConnector(connectionCount, fromEndList, expanded) {
+      const svg = svgElement("svg", {
+        class: "relationship-connector",
+        viewBox: "0 0 54 100",
+        preserveAspectRatio: "none",
+        "aria-hidden": "true",
+      });
+      const redraw = (isExpanded) => {
+        svg.replaceChildren();
+        const curveCount = connectionCount ? (isExpanded ? connectionCount : 1) : 0;
+        for (let index = 0; index < curveCount; index += 1) {
+          const listY = isExpanded
+            ? 20 + 75 * ((index + 0.5) / curveCount)
+            : 50;
+          const pathData = fromEndList
+            ? `M 0 ${listY} C 24 ${listY}, 30 50, 54 50`
+            : `M 0 50 C 24 50, 30 ${listY}, 54 ${listY}`;
+          svg.append(svgElement("path", { d: pathData }));
+        }
+      };
+      svg.redraw = redraw;
+      redraw(expanded);
+      return svg;
+    }
+
+    function renderRelationshipEndList(
+      harness, pathway, endpoint, groups, visibleGroups, query, collapseLimit,
+    ) {
+      const side = endpoint === "start" ? "A" : "B";
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      const label = document.createElement("span");
+      const count = document.createElement("span");
+      const items = document.createElement("div");
+      const overrideKey = `${harnessKey(harness)}:${pathway.pathwayId}:${endpoint}`;
+      const override = relationshipEndListOverrides.get(overrideKey);
+      details.className = "relationship-end-list";
+      details.dataset.endpoint = endpoint;
+      details.open = query
+        ? visibleGroups.length > 0
+        : override ?? groups.length <= collapseLimit;
+      label.textContent = `End ${side}`;
+      count.textContent = query && visibleGroups.length !== groups.length
+        ? `${visibleGroups.length} of ${groups.length}`
+        : `${groups.length}`;
+      summary.append(label, count);
+      hoverHighlight(summary, () => highlightMember(harness, "pathway_wires", pathway.pathwayId));
+      items.className = "relationship-end-items";
+      visibleGroups.forEach((group) => {
+        const button = document.createElement("button");
+        const name = document.createElement("strong");
+        const meta = document.createElement("small");
+        button.type = "button";
+        button.className = "relationship-end-entry";
+        button.dataset.connectionId = group.connectionId;
+        name.textContent = group.label;
+        const connectionContext = group.connectionName && group.connectionName !== group.label
+          ? `${group.connectionName} · ` : "";
+        meta.textContent = `${connectionContext}${group.wires.length} ${group.wires.length === 1 ? "wire" : "wires"}`;
+        button.append(name, meta);
+        hoverHighlight(button, () => group.connectionId
+          ? highlightMember(harness, "connection", group.connectionId)
+          : highlightMember(harness, "preview_wire", group.wires[0].wireId));
+        button.addEventListener("click", () => navigateToWire(group.wires[0].wireId));
+        items.append(button);
+      });
+      if (!visibleGroups.length) items.append(emptyMessage(`No matching End ${side} connections.`));
+      details.addEventListener("toggle", () => {
+        if (!query) relationshipEndListOverrides.set(overrideKey, details.open);
+        if (details.redrawConnector) details.redrawConnector(details.open);
+      });
+      details.append(summary, items);
+      return details;
+    }
+
+    function renderRelationshipMap(harness, auditIssues) {
+      const connections = new Map(
+        harness.connections.map((connection) => [connection.connectionId, connection]),
+      );
+      const container = document.createElement("div");
+      const toolbar = document.createElement("div");
+      const filter = document.createElement("input");
+      const summary = document.createElement("span");
+      const settings = document.createElement("label");
+      const collapseInput = document.createElement("input");
+      const viewport = document.createElement("div");
+      container.className = "section-content relationship-map";
+      toolbar.className = "relationship-map-toolbar";
+      filter.className = "filter";
+      filter.type = "search";
+      filter.placeholder = "Find a wire, connection, or pathway…";
+      filter.setAttribute("aria-label", "Filter master relationship graphic");
+      filter.autocomplete = "off";
+      filter.value = relationshipFilters.get(harnessKey(harness)) || "";
+      summary.className = "relationship-map-summary";
+      summary.textContent = auditIssues.length ? `${auditIssues.length} cross-check findings` : "Cross-check clear";
+      toolbar.append(filter, summary);
+      settings.className = "relationship-map-settings";
+      settings.textContent = "Collapse end lists above";
+      collapseInput.type = "number";
+      collapseInput.min = `${MIN_RELATIONSHIP_COLLAPSE_LIMIT}`;
+      collapseInput.max = `${MAX_RELATIONSHIP_COLLAPSE_LIMIT}`;
+      collapseInput.step = "1";
+      collapseInput.value = `${relationshipCollapseLimit(harness)}`;
+      collapseInput.setAttribute("aria-label", "Connections before end lists collapse");
+      settings.append(collapseInput, "connections");
+      viewport.className = "relationship-map-viewport";
+
+      const draw = () => {
+        const query = filter.value.trim().toLocaleLowerCase();
+        const collapseLimit = clampRelationshipCollapseLimit(collapseInput.value);
+        relationshipFilters.set(harnessKey(harness), query);
+        viewport.replaceChildren();
+        const stack = document.createElement("div");
+        let visiblePathways = 0;
+        stack.className = "relationship-pathway-stack";
+        harness.pathways.forEach((pathway) => {
+          const startGroups = relationshipEndGroups(harness, pathway, "start", connections);
+          const endGroups = relationshipEndGroups(harness, pathway, "end", connections);
+          const pathwayMatches = `${pathway.name} ${pathway.startName || ""} ${pathway.endName || ""}`
+            .toLocaleLowerCase().includes(query);
+          const visibleStart = !query || pathwayMatches
+            ? startGroups : startGroups.filter((group) => group.searchable.includes(query));
+          const visibleEnd = !query || pathwayMatches
+            ? endGroups : endGroups.filter((group) => group.searchable.includes(query));
+          if (query && !pathwayMatches && !visibleStart.length && !visibleEnd.length) return;
+          const card = document.createElement("div");
+          const hub = document.createElement("button");
+          const hubName = document.createElement("strong");
+          const hubDirection = document.createElement("small");
+          const startList = renderRelationshipEndList(
+            harness, pathway, "start", startGroups, visibleStart, query, collapseLimit,
+          );
+          const endList = renderRelationshipEndList(
+            harness, pathway, "end", endGroups, visibleEnd, query, collapseLimit,
+          );
+          const startConnector = renderRelationshipConnector(
+            visibleStart.length, true, startList.open,
+          );
+          const endConnector = renderRelationshipConnector(
+            visibleEnd.length, false, endList.open,
+          );
+          card.className = "relationship-pathway-card";
+          card.dataset.pathwayId = pathway.pathwayId;
+          hub.type = "button";
+          hub.className = "relationship-pathway-hub";
+          hubName.textContent = pathway.name || "Unnamed pathway";
+          hubDirection.textContent = pathwayDirection(pathway);
+          hub.append(hubName, hubDirection);
+          hoverHighlight(hub, () => highlightMember(harness, "pathway", pathway.pathwayId));
+          startList.redrawConnector = startConnector.redraw;
+          endList.redrawConnector = endConnector.redraw;
+          card.append(startList, startConnector, hub, endConnector, endList);
+          stack.append(card);
+          visiblePathways += 1;
+        });
+        if (!visiblePathways) {
+          const message = emptyMessage(
+            harness.pathways.length
+              ? "No relationships match this filter."
+              : "No pathways to display yet.",
+          );
+          message.className = "empty relationship-map-empty";
+          viewport.append(message);
+          return;
+        }
+        viewport.append(stack);
+      };
+      filter.addEventListener("input", draw);
+      collapseInput.addEventListener("change", () => {
+        const limit = clampRelationshipCollapseLimit(collapseInput.value);
+        collapseInput.value = `${limit}`;
+        writeSession(relationshipCollapseStorageKey(harness), `${limit}`);
+        [...relationshipEndListOverrides.keys()]
+          .filter((key) => key.startsWith(`${harnessKey(harness)}:`))
+          .forEach((key) => relationshipEndListOverrides.delete(key));
+        draw();
+      });
+      container.append(toolbar, settings, viewport);
+      draw();
       return container;
     }
 
@@ -1702,19 +2287,45 @@
       ui.editor.append(overview);
 
       const validation = document.createElement("div");
+      const auditIssues = relationshipAuditIssues(harness);
+      const audit = document.createElement("div");
       validation.className = "section-content";
+      audit.className = `relationship-audit${auditIssues.length ? " findings" : ""}`;
+      audit.textContent = auditIssues.length
+        ? `Relationship cross-check found ${auditIssues.length} ${auditIssues.length === 1 ? "inconsistency" : "inconsistencies"}.`
+        : "Relationship cross-check agrees with wire routes, pathway occupancy, and connection usage.";
+      validation.append(audit);
       if (harness.validationMessages.length) {
         const list = document.createElement("ul");
         list.className = "validation-list errors";
         harness.validationMessages.forEach((message) => {
           const item = document.createElement("li");
-          item.textContent = message;
+          item.textContent = String(message);
           list.append(item);
         });
         validation.append(list);
       } else {
         validation.append(emptyMessage("No logical validation findings."));
       }
+      if (auditIssues.length) {
+        const list = document.createElement("ul");
+        list.className = "validation-list errors";
+        auditIssues.forEach((issue) => {
+          const item = document.createElement("li");
+          item.textContent = issue.message;
+          if (issue.memberType && issue.memberId) {
+            hoverHighlight(item, () => highlightMember(
+              harness,
+              issue.memberType === "wire" ? "preview_wire" : issue.memberType,
+              issue.memberId,
+            ));
+          }
+          list.append(item);
+        });
+        validation.append(list);
+      }
+
+      const findingCount = harness.validationMessages.length + auditIssues.length;
 
       ui.editor.append(
         editorSection(
@@ -1734,9 +2345,16 @@
         editorSection(
           "validation",
           "Validation",
-          harness.validationMessages.length ? `${harness.validationMessages.length} findings` : "Clear",
+          findingCount ? `${findingCount} findings` : "Clear",
           validation,
-          harness.validationMessages.length > 0,
+          findingCount > 0,
+        ),
+        editorSection(
+          "master-relationship-graphic",
+          "Master Relationship Graphic",
+          auditIssues.length ? `${auditIssues.length} findings` : `${harness.pathways.length} pathways`,
+          renderRelationshipMap(harness, auditIssues),
+          true,
         ),
       );
     }

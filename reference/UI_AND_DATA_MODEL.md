@@ -1163,18 +1163,55 @@ future extension once intersection geometry exists.
 
 ### Master relationship graphic
 
-The selected-harness editor reserves a top-level Master Relationship Graphic as
+The selected-harness editor presents a top-level Master Relationship Graphic as
 the final section in its vertical stack, immediately below the Validation section.
 It is not placed beside the event console and is not nested inside Wire Routes or
 Pathways & Occupancy. Its expansion state follows the same retained section-state
-behavior as the other top-level editor sections.
+behavior as the other top-level editor sections. The resizable floating palette
+initially opens at 840 by 760 pixels, giving the standard graphic width room while
+allowing users to resize or dock it afterward.
 
 The initial graphic derives only relationships supported by the current model:
-stable connections, physical wires, and their ordered pathway memberships. It
-must not infer Y-junction, ribbon, shielding, or extended-branch behavior before
-those concepts have defined domain semantics. Its presentation model should use
-stable typed nodes and relationship edges so later milestones can add those
-elements without replacing the master graphic or disturbing existing identities.
+stable connections, physical wires, and their ordered pathway memberships. Each
+wire's expanded Wire Routes entry contains its detailed SVG from its assigned End
+A name, through the named ordered pathways, to its assigned End B name. It uses
+the wire's resolved material color and stripe cues, and hover highlights that
+wire's available preview/generated geometry. Pathway names sit inside wide opaque
+rounded nodes so the colored route cannot obscure their text.
+
+The master graphic aggregates the same data into one card per pathway. Its End A
+and End B columns group wires by connection, show assigned endpoint and connection
+names, and navigate to a participating wire when clicked. A search filters pathway,
+connection, endpoint, wire, and material labels. Matching end lists open while a
+search is active and show filtered and total counts. Each end list starts open when
+its connection count is at or below a retained per-harness threshold and collapsed
+when its count is above that threshold. The numeric setting is clamped from 1 to
+999 and defaults to 7, allowing simple harnesses to appear in full without letting
+large connector lists dominate the palette. A manual disclosure choice lasts for
+the current palette session until the threshold changes. Hovering a pathway hub,
+end-list heading, or connection entry highlights the pathway, its occupying wires,
+or that connection respectively. The viewport scrolls so large relationship sets
+do not compress their labels into unreadability. The pathway hub is vertically
+centered against the full height of both end columns. Smooth SVG curves join each
+visible connection to that hub; expanding an end fans one curve per connection,
+while collapsing it replaces the hidden fan with one aggregate curve. Open end
+columns distribute their entries across the available card height so unequal End
+A and End B counts remain visually aligned with the centered hub.
+
+The application builds stable typed nodes, ordered segments, wire routes,
+pathway-occupancy indexes, and connection-usage indexes without Fusion API
+dependencies. A separate audit reconstructs all five projections from the harness
+definition and reports mismatches in Validation. The palette repeats route,
+occupancy, and connection-use checks at the display boundary so a stale or
+malformed payload is visible rather than silently diagrammed. Missing references
+remain explicit typed nodes for diagnosis. The graphic does not infer Y-junction,
+ribbon, shielding, or extended-branch behavior before those concepts have defined
+domain semantics; later milestones can add node and edge kinds without replacing
+existing identities.
+
+Cross-check comparisons operate on endpoint field values rather than serialized
+object-key order. Fusion state payloads use sorted JSON keys, which must not create
+findings when `{end, wireId}` and `{wireId, end}` carry identical values.
 
 ### Smooth centerline milestone
 
