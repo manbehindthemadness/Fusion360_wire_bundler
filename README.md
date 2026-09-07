@@ -143,7 +143,9 @@ model-space stripe bands belong to each generated wire component, so they move a
 are deleted with their solid. Generated metadata retains the exact component-local
 curve controls so Apply and Save can refresh stripe patterns without following a
 newer, unreconstructed preview route. Existing generated wires from before this
-metadata require one rebuild before stripes can be applied.
+metadata require one rebuild before stripes can be applied. Apply keeps Wire options
+open for visual inspection; Save commits the displayed settings, while Cancel or Escape
+restores the diameter, materials, and solid-owned stripes present when the dialog opened.
 
 Diameter-aware center drift, bounded oval deformation, and circular-envelope
 packing are parallel round-wire behavior. Ribbon routing remains a separate

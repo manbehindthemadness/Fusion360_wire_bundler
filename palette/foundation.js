@@ -246,7 +246,16 @@ function createOptionsDialog(className) {
   cancel.type = "button";
   cancel.className = "button";
   cancel.textContent = "Cancel";
-  cancel.addEventListener("click", () => dialog.close());
+  cancel.addEventListener("click", () => {
+    if (typeof dialog.cancelOptions === "function") return dialog.cancelOptions();
+    dialog.close();
+    return undefined;
+  });
+  dialog.addEventListener("cancel", (event) => {
+    if (typeof dialog.cancelOptions !== "function") return;
+    event.preventDefault();
+    void dialog.cancelOptions();
+  });
   save.type = "submit";
   save.className = "button primary";
   save.textContent = "Save";

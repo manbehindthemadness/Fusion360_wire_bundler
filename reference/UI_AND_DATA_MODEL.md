@@ -178,11 +178,12 @@ in the row tooltip. IDs follow members through reorder and replacement; legacy
 definitions derive deterministic IDs until an edit saves them explicitly. Each
 wire has one clearly labeled Wire options button beneath its relationship graphic.
 The shared dialog edits the finished circular diameter in millimeters together with
-the wire's inherited or overridden material fields. Apply and Save persist a valid
-diameter before applying the material settings; Apply keeps the dialog open and Save
-closes it. Diameter edits copy any shared profile first so other wires retain their
-sizes. Invalid diameters are rejected, Cancel discards unsaved edits, and diameter
-changes refresh affected routing groups in an active preview.
+the wire's inherited or overridden material fields. Apply renders the current valid
+diameter and material settings while keeping the dialog open. Save commits the current
+settings and closes it; Cancel or Escape restores the values from when the dialog opened,
+including any diameter, body appearance, and stripe changes rendered by Apply. Diameter
+edits copy any shared profile first so other wires retain their sizes. Invalid diameters
+are rejected; diameter changes refresh affected routing groups in an active preview.
 
 End sequences provide per-member Add, Replace, and Remove controls. Dragging a row
 onto another reorders it within the same end, with a visible drop indicator. Add
@@ -977,8 +978,9 @@ textures to persist with that document. Route previews contain colored centerlin
 without stripe geometry. Longitudinal, dashed, and helical stripe bands are owned by
 the corresponding generated wire component and use its component-local exact route,
 so occurrence transforms and solid deletion carry the pattern with the wire. Apply
-persists and renders without closing the material dialog; Save performs the same
-operation and closes it. Both actions recolor existing generated bodies and refresh
+renders without closing the material dialog; Save commits the current settings and
+closes it. Cancel or Escape restores the opening settings after any number of Apply
+operations. Apply and Save recolor existing generated bodies and refresh
 their component-owned stripes without rebuilding the solid. Generated wires created
 before component-local route metadata was introduced require one rebuild before a
 stripe pattern can be applied. Stripe graphics are two-sided model-space surface

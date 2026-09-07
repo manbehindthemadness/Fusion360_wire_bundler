@@ -12,9 +12,13 @@ function openMaterialOptions(harness, wire = null) {
   const isWire = wire !== null;
   const settings = isWire ? wire.materials : harness.materialDefaults;
   const overrides = isWire ? wire.materialOverrides : null;
+  const originalMaterials = JSON.parse(JSON.stringify(isWire ? overrides : settings));
   const profile = isWire
     ? harness.profiles.find((candidate) => candidate.profileId === wire.profileId) : null;
-  let savedDiameterMm = profile?.diameterMm ?? null;
+  const originalDiameterMm = profile?.diameterMm ?? null;
+  let savedDiameterMm = originalDiameterMm;
+  let hasAppliedChanges = false;
+  let cancelInProgress = false;
   const catalog = currentState.catalog || {
     insulationMaterials: [], conductorMaterials: [], colors: [], stripePatterns: [],
   };
@@ -436,6 +440,7 @@ function openMaterialOptions(harness, wire = null) {
         return;
       }
       apply.disabled = true;
+      cancel.disabled = true;
       save.disabled = true;
       if (isWire && profile && diameterMm !== savedDiameterMm) {
         const diameterResponse = await send("set_wire_diameter", {
@@ -446,6 +451,7 @@ function openMaterialOptions(harness, wire = null) {
           return;
         }
         savedDiameterMm = diameterMm;
+        hasAppliedChanges = true;
       }
       const response = await send(
         isWire ? "set_wire_material_overrides" : "set_harness_material_defaults",
@@ -454,6 +460,7 @@ function openMaterialOptions(harness, wire = null) {
           : { harnessId: harness.harnessId, materials },
       );
       if (response.ok) {
+        hasAppliedChanges = !closeAfter;
         error.textContent = closeAfter ? "" : "Applied.";
         if (closeAfter) dialog.close();
       }
@@ -462,6 +469,52 @@ function openMaterialOptions(harness, wire = null) {
       error.textContent = failure.message;
     } finally {
       apply.disabled = false;
+      cancel.disabled = false;
+      save.disabled = false;
+    }
+  };
+  dialog.cancelOptions = async () => {
+    if (cancelInProgress) return;
+    if (!hasAppliedChanges) {
+      dialog.close();
+      return;
+    }
+    cancelInProgress = true;
+    apply.disabled = true;
+    cancel.disabled = true;
+    save.disabled = true;
+    error.textContent = "Restoring saved options…";
+    try {
+      if (isWire && profile && savedDiameterMm !== originalDiameterMm) {
+        const diameterResponse = await send("set_wire_diameter", {
+          harnessId: harness.harnessId,
+          wireId: wire.wireId,
+          diameterMm: originalDiameterMm,
+        });
+        if (!diameterResponse.ok) {
+          error.textContent = diameterResponse.error || "Could not restore wire diameter.";
+          return;
+        }
+        savedDiameterMm = originalDiameterMm;
+      }
+      const response = await send(
+        isWire ? "set_wire_material_overrides" : "set_harness_material_defaults",
+        isWire
+          ? { harnessId: harness.harnessId, wireId: wire.wireId, overrides: originalMaterials }
+          : { harnessId: harness.harnessId, materials: originalMaterials },
+      );
+      if (!response.ok) {
+        error.textContent = response.error || "Could not restore wire materials.";
+        return;
+      }
+      hasAppliedChanges = false;
+      dialog.close();
+    } catch (failure) {
+      error.textContent = failure.message;
+    } finally {
+      cancelInProgress = false;
+      apply.disabled = false;
+      cancel.disabled = false;
       save.disabled = false;
     }
   };
