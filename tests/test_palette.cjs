@@ -312,21 +312,59 @@ test('master and per-wire graphics preserve scoped Fusion highlighting', () => {
     context.renderWireRoutes(definition),
     (node) => node.className === 'wire-relationship-graphic',
   )[0];
-  wireGraphic.events.mouseenter();
+  descendants(wireGraphic, (node) => node.dataset.endpoint === 'start')[0]
+    .events.mouseenter();
+  assert.deepEqual(calls.pop(), { type: 'connection', id: 'a1' });
+  descendants(wireGraphic, (node) => node.className === 'wire-relationship-route')[0]
+    .events.mouseenter();
   assert.deepEqual(calls.pop(), { type: 'preview_wire', id: 'w1' });
 });
 
-test('route labels use precise names and fallbacks', () => {
+test('interactive wire diagram replaces the old node strip and uses precise names', () => {
   const { context } = palette();
   const definition = harness();
   const rendered = context.renderWireRoutes(definition);
-  const labels = descendants(rendered, (node) => node.className?.startsWith('route-node'))
+  const labels = descendants(rendered, (node) => node.tag === 'text')
     .map((node) => node.textContent);
-  assert.ok(labels.includes('End A: Data input'));
-  assert.ok(labels.includes('End B: Data output'));
-  assert.ok(labels.includes('End A: a2'));
-  assert.ok(labels.includes('lower fuse box path from O2-sensor to CAN_BUS-ctrl'));
-  assert.equal(context.pathwayRouteLabel({ name: 'Pathway 01' }), 'Pathway 01 from A to B');
+  assert.ok(labels.includes('Data input'));
+  assert.ok(labels.includes('Data output'));
+  assert.ok(labels.includes('a2'));
+  assert.ok(labels.includes('lower fuse box path'));
+  assert.equal(descendants(rendered, (node) => node.className === 'route-flow').length, 0);
+  assert.equal(descendants(rendered, (node) => node.className === 'route-node').length, 6);
+});
+
+test('wire diagram nodes configure ends and navigate to pathways by mouse or keyboard', () => {
+  const storage = new Map();
+  const { context } = palette(storage);
+  const definition = harness();
+  context.renderEditor(definition);
+  const startNode = descendants(context.ui.editor, (node) => (
+    node.dataset.editorId === 'end-a-w1'
+  ))[0];
+  const endNode = descendants(context.ui.editor, (node) => (
+    node.dataset.editorId === 'end-b-w1'
+  ))[0];
+  const startEditor = descendants(context.ui.editor, (node) => node.id === 'end-a-w1')[0];
+  const endEditor = descendants(context.ui.editor, (node) => node.id === 'end-b-w1')[0];
+  assert.equal(startEditor.hidden, true);
+  startNode.events.keydown({ key: 'Enter', preventDefault() {} });
+  assert.equal(startEditor.hidden, false);
+  assert.equal(startNode.attributes['aria-expanded'], 'true');
+  endNode.events.click();
+  assert.equal(startEditor.hidden, true);
+  assert.equal(endEditor.hidden, false);
+  assert.equal(startNode.attributes['aria-expanded'], 'false');
+  const pathwayNode = descendants(context.ui.editor, (node) => (
+    node.className === 'wire-relationship-node pathway' && node.dataset.pathwayId === 'p'
+  ))[0];
+  pathwayNode.events.keydown({ key: ' ', preventDefault() {} });
+  const pathwaysSection = context.ui.editor.querySelector('[data-section="pathways"]');
+  const pathwaySection = context.ui.editor.querySelector('[data-section="pathway:p"]');
+  assert.equal(pathwaysSection.open, true);
+  assert.equal(pathwaySection.open, true);
+  assert.equal(pathwaySection.scrolledIntoView, true);
+  assert.match(storage.get('wireBundler.expandedSections'), /pathway:p/);
 });
 
 test('each end editor contains only its own profile and sends its wire identity', () => {
@@ -406,7 +444,8 @@ test('hover scopes distinguish pathway nodes, group headings, and members', () =
   definition.controls = [{ controlId: 'g1', name: 'Gate 1', hasLinkedGeometry: true }];
   definition.pathways[0].orderedControlIds = ['g1'];
   const routes = context.renderWireRoutes(definition);
-  descendants(routes, (node) => node.className === 'route-node pathway')[0].events.mouseenter();
+  descendants(routes, (node) => node.className === 'wire-relationship-node pathway')[0]
+    .events.mouseenter();
   assert.equal(calls.pop().type, 'pathway_gates');
   const pathways = context.renderPathways(definition);
   const sections = descendants(pathways, (node) => node.tag === 'details');
@@ -440,7 +479,7 @@ test('end member controls target one member and warn before deleting the last', 
   assert.equal(calls.pop().payload.editAction, 'add');
   definition.connections = definition.connections.filter((connection) => connection.connectionId !== 'a1');
   const missing = context.renderWireRoutes(definition);
-  descendants(missing, (node) => node.textContent === '+ Add End A')[0].events.click();
+  descendants(missing, (node) => node.dataset.editorId === 'end-a-w1')[0].events.click();
   assert.equal(calls.pop().payload.expectedMembers, 0);
 });
 

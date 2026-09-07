@@ -1177,7 +1177,14 @@ wire's expanded Wire Routes entry contains its detailed SVG from its assigned En
 A name, through the named ordered pathways, to its assigned End B name. It uses
 the wire's resolved material color and stripe cues, and hover highlights that
 wire's available preview/generated geometry. Pathway names sit inside wide opaque
-rounded nodes so the colored route cannot obscure their text.
+rounded nodes so the colored route cannot obscure their text. This SVG is also the
+wire's route-configuration surface; no duplicate route-node strip is shown. End A
+and End B nodes toggle their existing ordering editors, or start native profile
+selection when their connection is missing. Pathway nodes expand and navigate to
+the matching Pathways & Occupancy configuration. The colored wire line and each
+typed node retain their scoped Fusion highlighting. Mouse clicks plus Enter and
+Space activate the nodes, while wire specification and material controls remain
+as compact controls beneath the graphic.
 
 The master graphic aggregates the same data into one card per pathway. Its End A
 and End B columns group wires by connection, show assigned endpoint and connection

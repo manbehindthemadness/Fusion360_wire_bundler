@@ -268,7 +268,6 @@
       background: var(--surface-subtle);
     }
     .wire-route + .wire-route { margin-top: 8px; }
-    .route-flow { display: flex; align-items: center; gap: 5px; overflow-x: auto; padding-bottom: 2px; }
     .route-node {
       flex: 0 0 auto;
       max-width: 170px;
@@ -281,10 +280,7 @@
       white-space: nowrap;
     }
     button.route-node:hover { border-color: var(--accent); color: var(--accent); }
-    button.route-node[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
-    .route-node.pathway { max-width: none; border-color: #9ebed8; background: #edf6fd; }
     .route-node.missing { border-color: var(--danger); background: #fff8f8; color: var(--danger); }
-    .route-arrow { flex: 0 0 auto; color: var(--muted); }
     .end-editor {
       display: grid;
       gap: 7px;
@@ -436,6 +432,13 @@
       border-radius: 5px;
       overflow-x: auto;
       background: var(--surface);
+    }
+    .wire-relationship-route { cursor: pointer; }
+    .wire-relationship-node { cursor: pointer; outline: none; }
+    .wire-relationship-node:focus .relationship-node,
+    .wire-relationship-node:hover .relationship-node {
+      stroke: var(--accent);
+      stroke-width: 2;
     }
     .relationship-map-svg { display: block; min-width: 100%; }
     .relationship-route-row { cursor: pointer; }
@@ -720,13 +723,6 @@
       return `${start} → ${end}`;
     }
 
-    function pathwayRouteLabel(pathway) {
-      if (!pathway) return "Missing pathway";
-      const start = pathway.startName || "A";
-      const end = pathway.endName || "B";
-      return `${pathway.name} from ${start} to ${end}`;
-    }
-
     function renderPathways(harness) {
       const container = document.createElement("div");
       const controls = new Map(
@@ -962,42 +958,6 @@
         });
       });
       return sequence;
-    }
-
-    function routeNode(label, className = "") {
-      const node = document.createElement("span");
-      node.className = `route-node${className ? ` ${className}` : ""}`;
-      node.textContent = label;
-      node.title = label;
-      return node;
-    }
-
-    function endRouteNode(label, connection, editor, otherEditor, name, onHover, onAdd) {
-      const node = document.createElement("button");
-      node.type = "button";
-      node.className = `route-node${connection?.hasLinkedGeometry ? "" : " missing"}`;
-      node.textContent = connection ? `${label}: ${name || connection.name}` : `+ Add ${label}`;
-      node.title = `Open ${label} ordering`;
-      node.setAttribute("aria-expanded", `${!editor.hidden}`);
-      node.setAttribute("aria-controls", editor.id);
-      node.addEventListener("click", () => {
-        if (!connection) { onAdd(); return; }
-        const willOpen = editor.hidden;
-        editor.hidden = !willOpen;
-        otherEditor.hidden = true;
-        if (willOpen) expandedSections.add(editor.dataset.stateKey);
-        else expandedSections.delete(editor.dataset.stateKey);
-        expandedSections.delete(otherEditor.dataset.stateKey);
-        writeSession("wireBundler.expandedSections", JSON.stringify([...expandedSections]));
-        node.setAttribute("aria-expanded", `${willOpen}`);
-        const otherNode = node.parentElement.querySelector(
-          `.route-node[data-editor-id="${otherEditor.id}"]`,
-        );
-        if (otherNode) otherNode.setAttribute("aria-expanded", "false");
-      });
-      node.dataset.editorId = editor.id;
-      if (connection) hoverHighlight(node, onHover);
-      return node;
     }
 
     function renderEndEditor(harness, wires, connections, endpoint, id) {
@@ -1761,7 +1721,6 @@
         }
         visibleWires.forEach((wire) => {
           const card = document.createElement("div");
-          const flow = document.createElement("div");
           const profile = profiles.get(wire.profileId);
           const start = connections.get(wire.startConnectionId);
           const end = connections.get(wire.endConnectionId);
@@ -1773,38 +1732,6 @@
           );
           card.className = "wire-route";
           card.dataset.wireId = wire.wireId;
-          flow.className = "route-flow";
-          flow.append(endRouteNode(
-            "End A", start, endAEditor, endBEditor, wire.startEndName,
-            () => highlightMember(harness, "connection", wire.startConnectionId),
-            () => mutate("edit_end_members", {
-              harnessId: harness.harnessId, wireId: wire.wireId, endpoint: "start",
-              editAction: "add", expectedMembers: 0,
-            }, "Select End A profiles…"),
-          ));
-          wire.orderedPathwayIds.forEach((pathwayId) => {
-            const arrow = document.createElement("span");
-            const pathway = pathways.get(pathwayId);
-            arrow.className = "route-arrow";
-            arrow.textContent = "→";
-            const pathwayNode = routeNode(
-                pathwayRouteLabel(pathway),
-                pathway ? "pathway" : "missing",
-            );
-            hoverHighlight(pathwayNode, () => highlightMember(harness, "pathway_gates", pathwayId));
-            flow.append(arrow, pathwayNode);
-          });
-          const finalArrow = document.createElement("span");
-          finalArrow.className = "route-arrow";
-          finalArrow.textContent = "→";
-          flow.append(finalArrow, endRouteNode(
-            "End B", end, endBEditor, endAEditor, wire.endEndName,
-            () => highlightMember(harness, "connection", wire.endConnectionId),
-            () => mutate("edit_end_members", {
-              harnessId: harness.harnessId, wireId: wire.wireId, endpoint: "end",
-              editAction: "add", expectedMembers: 0,
-            }, "Select End B profiles…"),
-          ));
           const details = document.createElement("div");
           details.className = "wire-details";
           details.id = `wire-details-${wire.wireId}`;
@@ -1826,8 +1753,14 @@
           materialNode.title = "Edit inherited and per-wire material options";
           materialNode.addEventListener("click", () => openMaterialOptions(harness, wire));
           details.append(
-            renderWireRelationshipGraphic(harness, wire, connections, pathways),
-            flow,
+            renderWireRelationshipGraphic(
+              harness,
+              wire,
+              connections,
+              pathways,
+              endAEditor,
+              endBEditor,
+            ),
             profileNode,
             materialNode,
             endAEditor,
@@ -1944,27 +1877,62 @@
       card.scrollIntoView({ behavior: "smooth", block: "center" });
     }
 
-    function renderWireRelationshipGraphic(harness, wire, connections, pathways) {
+    function navigateToPathway(pathwayId) {
+      const section = ui.editor.querySelector('[data-section="pathways"]');
+      const pathway = ui.editor.querySelector(`[data-section="pathway:${pathwayId}"]`);
+      if (section) {
+        section.open = true;
+        expandedSections.add("pathways");
+      }
+      if (!pathway) return;
+      pathway.open = true;
+      expandedSections.add(`pathway:${pathwayId}`);
+      writeSession("wireBundler.expandedSections", JSON.stringify([...expandedSections]));
+      pathway.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
+    function renderWireRelationshipGraphic(
+      harness, wire, connections, pathways, endAEditor, endBEditor,
+    ) {
       const container = document.createElement("div");
+      const startConnection = connections.get(wire.startConnectionId);
+      const endConnection = connections.get(wire.endConnectionId);
       const nodeItems = [
         {
           kind: "connection",
+          kindLabel: "End A",
+          endpoint: "start",
+          connection: startConnection,
+          connectionId: wire.startConnectionId,
+          editor: endAEditor,
+          otherEditor: endBEditor,
           label: wire.startEndName
-            || connections.get(wire.startConnectionId)?.name
-            || "Missing End A",
-          missing: !connections.has(wire.startConnectionId),
+            || startConnection?.name
+            || "+ Add End A",
+          missing: !startConnection?.hasLinkedGeometry,
         },
-        ...wire.orderedPathwayIds.map((pathwayId) => ({
-          kind: "pathway",
-          label: pathways.get(pathwayId)?.name || "Missing pathway",
-          missing: !pathways.has(pathwayId),
-        })),
+        ...wire.orderedPathwayIds.map((pathwayId) => {
+          const pathway = pathways.get(pathwayId);
+          return {
+            kind: "pathway",
+            kindLabel: "Pathway",
+            pathwayId,
+            label: pathway?.name || "Missing pathway",
+            missing: !pathway,
+          };
+        }),
         {
           kind: "connection",
+          kindLabel: "End B",
+          endpoint: "end",
+          connection: endConnection,
+          connectionId: wire.endConnectionId,
+          editor: endBEditor,
+          otherEditor: endAEditor,
           label: wire.endEndName
-            || connections.get(wire.endConnectionId)?.name
-            || "Missing End B",
-          missing: !connections.has(wire.endConnectionId),
+            || endConnection?.name
+            || "+ Add End B",
+          missing: !endConnection?.hasLinkedGeometry,
         },
       ];
       const width = Math.max(560, 100 + (nodeItems.length - 1) * 180);
@@ -1977,17 +1945,21 @@
         width,
         height: 88,
         viewBox: `0 0 ${width} 88`,
-        role: "img",
+        role: "group",
         "aria-label": `${wireLabel(wire)} relationship route`,
       });
+      const routeGroup = svgElement("g", {
+        class: "wire-relationship-route",
+        "aria-label": `Highlight ${wireLabel(wire)}`,
+      });
       for (let index = 0; index < points.length - 1; index += 1) {
-        svg.append(svgElement("line", {
+        routeGroup.append(svgElement("line", {
           class: "relationship-link",
           x1: points[index], y1: y, x2: points[index + 1], y2: y,
           stroke: wire.materials?.mainColor?.hex || "#1777c8", "stroke-width": 9,
         }));
         (wire.materials?.stripes || []).slice(0, 3).forEach((stripe, stripeIndex) => {
-          svg.append(svgElement("line", {
+          routeGroup.append(svgElement("line", {
             class: "relationship-link",
             x1: points[index], y1: y - 3 + stripeIndex * 3,
             x2: points[index + 1], y2: y - 3 + stripeIndex * 3,
@@ -1996,8 +1968,41 @@
           }));
         });
       }
+      hoverHighlight(routeGroup, () => highlightMember(harness, "preview_wire", wire.wireId));
+      svg.append(routeGroup);
+      const nodeGroups = new Map();
+      const activateEnd = (item) => {
+        if (!item.connection) {
+          mutate("edit_end_members", {
+            harnessId: harness.harnessId,
+            wireId: wire.wireId,
+            endpoint: item.endpoint,
+            editAction: "add",
+            expectedMembers: 0,
+          }, `Select ${item.kindLabel} profiles…`);
+          return;
+        }
+        const willOpen = item.editor.hidden;
+        item.editor.hidden = !willOpen;
+        item.otherEditor.hidden = true;
+        if (willOpen) expandedSections.add(item.editor.dataset.stateKey);
+        else expandedSections.delete(item.editor.dataset.stateKey);
+        expandedSections.delete(item.otherEditor.dataset.stateKey);
+        writeSession("wireBundler.expandedSections", JSON.stringify([...expandedSections]));
+        nodeGroups.get(item.endpoint)?.setAttribute("aria-expanded", `${willOpen}`);
+        const otherEndpoint = item.endpoint === "start" ? "end" : "start";
+        nodeGroups.get(otherEndpoint)?.setAttribute("aria-expanded", "false");
+      };
       nodeItems.forEach((item, index) => {
         const x = points[index];
+        const group = svgElement("g", {
+          class: `wire-relationship-node ${item.kind}${item.missing ? " missing" : ""}`,
+          tabindex: "0",
+          role: "button",
+          "aria-label": item.kind === "pathway"
+            ? `Open pathway ${item.label}`
+            : `Configure ${item.kindLabel}: ${item.label}`,
+        });
         const shape = item.kind === "pathway"
           ? svgElement("rect", {
             class: `relationship-node pathway${item.missing ? " missing" : ""}`,
@@ -2011,13 +2016,40 @@
         const kind = svgElement("text", { class: "relationship-node-kind", x, y: y - 22 });
         const title = svgElement("title");
         label.textContent = truncateGraphicLabel(item.label, item.kind === "pathway" ? 21 : 18);
-        kind.textContent = item.kind;
-        title.textContent = `${item.kind}: ${item.label}`;
+        kind.textContent = item.kindLabel;
+        title.textContent = item.kind === "pathway"
+          ? `Open pathway configuration: ${item.label}`
+          : `Configure ${item.kindLabel}: ${item.label}`;
         shape.append(title);
-        svg.append(shape, label, kind);
+        group.append(shape, label, kind);
+        if (item.kind === "pathway") {
+          group.dataset.pathwayId = item.pathwayId;
+          hoverHighlight(group, () => highlightMember(
+            harness, "pathway_gates", item.pathwayId,
+          ));
+          group.addEventListener("click", () => navigateToPathway(item.pathwayId));
+        } else {
+          group.dataset.editorId = item.editor.id;
+          group.dataset.endpoint = item.endpoint;
+          group.setAttribute("aria-controls", item.editor.id);
+          group.setAttribute("aria-expanded", `${!item.editor.hidden}`);
+          nodeGroups.set(item.endpoint, group);
+          if (item.connection) {
+            hoverHighlight(group, () => highlightMember(
+              harness, "connection", item.connectionId,
+            ));
+          }
+          group.addEventListener("click", () => activateEnd(item));
+        }
+        group.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          if (item.kind === "pathway") navigateToPathway(item.pathwayId);
+          else activateEnd(item);
+        });
+        svg.append(group);
       });
       container.className = "wire-relationship-graphic";
-      hoverHighlight(container, () => highlightMember(harness, "preview_wire", wire.wireId));
       container.append(svg);
       return container;
     }
