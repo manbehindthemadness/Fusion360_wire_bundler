@@ -42,6 +42,9 @@ class _PreviewModule(Protocol):
     _preview_states: dict[str, object]
     _PreviewState: Callable[..., object]
     _solve_definition_routes: Callable[..., tuple[RoutePreview, ...]]
+    _fairing_failure_diagnostic: Callable[
+        [RoutePreview, tuple[Vector3, ...], tuple[TransitionLengths, ...], float], str
+    ]
     _add_route_graphics: Callable[..., None]
     _stripe_mesh: Callable[..., tuple[tuple[Vector3, ...], list[int]]]
     _stripe_paths: Callable[..., tuple[tuple[Vector3, ...], ...]]
@@ -332,6 +335,33 @@ def test_procedural_stripe_paths_support_longitudinal_dashed_and_helical(
     assert len(helical) == 1
     assert longitudinal[0][0].x == pytest.approx(longitudinal[0][-1].x)
     assert helical[0][0].x != pytest.approx(helical[0][3].x)
+
+
+def test_fairing_failure_diagnostic_preserves_solver_inputs(scenario: _Scenario) -> None:
+    """
+    Record host geometry precisely enough to reproduce a live fairing failure.
+    """
+    route = RoutePreview(
+        UUID(int=42),
+        "001",
+        (
+            Vector3(1.234567890123, -2.5, 0.0),
+            Vector3(4.0, 5.0, 6.0),
+        ),
+    )
+    diagnostic = scenario.module._fairing_failure_diagnostic(
+        route,
+        (Vector3(0.0, 0.707106781187, 0.707106781187), Vector3(1.0, 0.0, 0.0)),
+        (TransitionLengths(None, 3.25), TransitionLengths(4.5, None)),
+        0.7875,
+    )
+
+    assert diagnostic == (
+        "wire=001; minimum_bend_radius_mm=0.7875; "
+        "points_mm=[(1.23456789012, -2.5, 0), (4, 5, 6)]; "
+        "normals=[(0, 0.707106781187, 0.707106781187), (1, 0, 0)]; "
+        "transitions_mm=[(None, 3.25), (4.5, None)]"
+    )
 
 
 def test_stripe_mesh_has_physical_width_and_angular_placement(scenario: _Scenario) -> None:

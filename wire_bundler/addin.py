@@ -104,6 +104,18 @@ COMMAND_RESOURCE_FOLDER = str(ADDIN_ROOT / "resources" / "open_harness_builder")
 ADD_PATHWAY_RESOURCE_FOLDER = str(ADDIN_ROOT / "resources" / "add_routing_gate")
 ADD_WIRES_RESOURCE_FOLDER = str(ADDIN_ROOT / "resources" / "add_harness_wire")
 PALETTE_HTML_FILE = ADDIN_ROOT / "palette.html"
+PALETTE_RESOURCE_FILES = (
+    PALETTE_HTML_FILE,
+    ADDIN_ROOT / "palette" / "styles.css",
+    ADDIN_ROOT / "palette" / "foundation.js",
+    ADDIN_ROOT / "palette" / "route-editors.js",
+    ADDIN_ROOT / "palette" / "materials.js",
+    ADDIN_ROOT / "palette" / "relationship-audit.js",
+    ADDIN_ROOT / "palette" / "wire-graphic.js",
+    ADDIN_ROOT / "palette" / "master-graphic.js",
+    ADDIN_ROOT / "palette" / "editor.js",
+    ADDIN_ROOT / "palette" / "host.js",
+)
 
 _ROUTING_MODE_LABELS = {
     RoutingMode.ROUTING_GATES: "Routing Gates",
@@ -1322,8 +1334,10 @@ def _show_palette(application: adsk.core.Application) -> None:
     user_interface = application.userInterface
     palette = user_interface.palettes.itemById(PALETTE_ID)
     if palette is None:
-        if not PALETTE_HTML_FILE.is_file():
-            raise RuntimeError(f"Harness Builder palette file is missing: {PALETTE_HTML_FILE}")
+        missing_resources = [path for path in PALETTE_RESOURCE_FILES if not path.is_file()]
+        if missing_resources:
+            missing_list = ", ".join(str(path) for path in missing_resources)
+            raise RuntimeError(f"Harness Builder palette resources are missing: {missing_list}")
         palette = user_interface.palettes.add(
             PALETTE_ID,
             COMMAND_NAME,

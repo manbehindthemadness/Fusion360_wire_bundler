@@ -150,3 +150,19 @@ def lerp(left: Vector3, right: Vector3, fraction: float) -> Vector3:
         left.y * (1.0 - fraction) + right.y * fraction,
         left.z * (1.0 - fraction) + right.z * fraction,
     )
+
+
+def linear_combination(
+    left: Vector3,
+    left_scale: float,
+    right: Vector3,
+    right_scale: float,
+) -> Vector3:
+    """
+    Combine two vectors with independent scalar weights.
+    """
+    return Vector3(
+        left.x * left_scale + right.x * right_scale,
+        left.y * left_scale + right.y * right_scale,
+        left.z * left_scale + right.z * right_scale,
+    )

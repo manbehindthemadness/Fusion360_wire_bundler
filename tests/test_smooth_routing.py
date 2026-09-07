@@ -143,6 +143,104 @@ def test_crowded_profile_span_uses_direct_dynamic_transition() -> None:
     assert bend is not None and bend.radius_mm >= minimum_radius - 1e-9
 
 
+def test_asymmetric_crowded_span_optimizes_endpoint_handles_independently() -> None:
+    """
+    Fit the reported 1.5 mm wire span when its profile turns are asymmetric.
+    """
+    distance = 4.912
+    departure_angle = math.radians(45)
+    approach_angle = math.radians(80)
+    approach_azimuth = math.radians(45)
+    departure_normal = Vector3(math.sin(departure_angle), 0, math.cos(departure_angle))
+    approach_normal = Vector3(
+        math.sin(approach_angle) * math.cos(approach_azimuth),
+        math.sin(approach_angle) * math.sin(approach_azimuth),
+        math.cos(approach_angle),
+    )
+    route = _route((Vector3(0, 0, 0), Vector3(0, 0, distance)))
+    minimum_radius = 0.7875
+    limits = transition_limits(route, (departure_normal, approach_normal), minimum_radius)
+    assert limits[0].departure_mm + limits[1].approach_mm == pytest.approx(7.956, abs=0.002)
+
+    adjustments: list[TransitionAdjustment] = []
+    smooth = fair_route(
+        route,
+        (departure_normal, approach_normal),
+        minimum_bend_radius_mm=minimum_radius,
+        adjustments=adjustments,
+    )
+
+    assert len(smooth.curves) == 1
+    assert len(adjustments) == 1
+    curve = smooth.curves[0]
+    departure_handle = magnitude(difference(curve.control_a, curve.start))
+    approach_handle = magnitude(difference(curve.end, curve.control_b))
+    assert departure_handle != pytest.approx(approach_handle)
+    bend = tightest_bend(smooth, 1024)
+    assert bend is not None and bend.radius_mm >= minimum_radius - 1e-9
+
+
+def test_live_offset_equal_tangent_span_uses_s_bend() -> None:
+    """
+    Fit the complete 1.5 mm VCC route captured from Fusion.
+    """
+    route = _route(
+        (
+            Vector3(-16.6122925879, 29.3518725382, -6.0),
+            Vector3(-16.6122925879, 29.3518725382, -2.0),
+            Vector3(-12.7865552365, 31.984260039, 0.0),
+            Vector3(-9.81461301949, 31.984260039, 14.1037396157),
+            Vector3(1.34289390301, 35.266768325, 18.9097140137),
+            Vector3(2.93184323646, 42.9180665072, 18.9097140137),
+            Vector3(2.93184323646, 46.9180665072, 12.9097140137),
+            Vector3(2.93184323646, 47.9180665072, -0.0902859863298),
+            Vector3(3.23942610649, 47.5214505077, -6.0),
+        )
+    )
+    normals = (
+        Vector3(0.0, 0.0, 1.0),
+        Vector3(0.0, 0.0, 1.0),
+        Vector3(0.0, 0.0, 1.0),
+        Vector3(0.573576436351, 0.0, 0.819152044289),
+        Vector3(0.707106781187, 0.707106781187, 1.17756934401e-16),
+        Vector3(-1.30860675791e-16, 0.906307787037, -0.422618261741),
+        Vector3(1.25445795328e-16, 0.173648177667, -0.984807753012),
+        Vector3(1.66533453694e-16, -4.99600361081e-16, -1.0),
+        Vector3(0.0, 0.0, 1.0),
+    )
+    transitions = (
+        TransitionLengths(1.0, 1.0),
+        TransitionLengths(50.0, 50.0),
+        TransitionLengths(100.0, 110.0),
+        TransitionLengths(20.0, 20.0),
+        TransitionLengths(20.0, 20.0),
+        TransitionLengths(20.0, 20.0),
+        TransitionLengths(20.0, 20.0),
+        TransitionLengths(20.0, 20.0),
+        TransitionLengths(20.0, 20.0),
+    )
+    adjustments: list[TransitionAdjustment] = []
+
+    smooth = fair_route(
+        route,
+        normals,
+        transitions,
+        minimum_bend_radius_mm=0.7875,
+        adjustments=adjustments,
+    )
+
+    s_bend = tuple(curve for curve in smooth.curves if curve.start == route.points[1])
+    assert len(s_bend) == 1
+    second_curve_index = smooth.curves.index(s_bend[0]) + 1
+    assert smooth.curves[second_curve_index - 1].end == smooth.curves[second_curve_index].start
+    middle_departure = unit(smooth.curves[second_curve_index - 1].derivative(1.0))
+    middle_approach = unit(smooth.curves[second_curve_index].derivative(0.0))
+    assert dot(middle_departure, middle_approach) == pytest.approx(1.0)
+    bend = tightest_bend(smooth, 1024)
+    assert bend is not None and bend.radius_mm >= 0.7875 - 1e-9
+    assert adjustments
+
+
 def test_matching_profile_normals_still_respect_off_axis_curvature() -> None:
     """
     Require bend space when equal endpoint normals are not aligned with the span.

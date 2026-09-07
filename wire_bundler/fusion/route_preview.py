@@ -37,7 +37,7 @@ from ..routing import (
     sample_centerline,
     solve_parallel_routes,
 )
-from ..routing.geometry import cross, difference, dot, magnitude, unit
+from ..routing.geometry import cross, difference, dot, linear_combination, magnitude, unit
 
 PREVIEW_GROUP_ID = "kev0.wire_bundler.route_preview"
 _PREVIEW_COLORS = (
@@ -568,18 +568,67 @@ def _solve_definition_routes(
         routes = solve_parallel_routes(tuple(route_inputs), gates, clearance_mm)
         for wire, route in zip(untyped_wires, routes):
             adjustments: list[TransitionAdjustment] = []
-            solved_by_id[route.wire_id] = fair_route(
-                route,
-                route_normals[route.wire_id],
-                route_transitions[route.wire_id],
-                minimum_bend_radius_mm=minimum_circular_bend_radius(
-                    profiles[wire.profile_id].diameter_mm
-                ),
-                adjustments=adjustments,
+            normals = route_normals[route.wire_id]
+            transitions = route_transitions[route.wire_id]
+            minimum_bend_radius_mm = minimum_circular_bend_radius(
+                profiles[wire.profile_id].diameter_mm
             )
+            try:
+                solved_by_id[route.wire_id] = fair_route(
+                    route,
+                    normals,
+                    transitions,
+                    minimum_bend_radius_mm=minimum_bend_radius_mm,
+                    adjustments=adjustments,
+                )
+            except ValueError as error:
+                diagnostic = _fairing_failure_diagnostic(
+                    route,
+                    normals,
+                    transitions,
+                    minimum_bend_radius_mm,
+                )
+                raise ValueError(f"{error} Routing diagnostic: {diagnostic}") from error
             if notices is not None:
                 notices.extend(_adjustment_notice(item) for item in adjustments)
     return tuple(solved_by_id[wire.wire_id] for wire in definition.wires)
+
+
+def _fairing_failure_diagnostic(
+    route: RoutePreview,
+    normals: tuple[Vector3, ...],
+    transitions: tuple[TransitionLengths, ...],
+    minimum_bend_radius_mm: float,
+) -> str:
+    """
+    Preserve the exact host-derived inputs needed to reproduce a fairing failure.
+    """
+    points_text = ", ".join(_vector_diagnostic(point) for point in route.points)
+    normals_text = ", ".join(_vector_diagnostic(normal) for normal in normals)
+    transitions_text = ", ".join(
+        f"({_optional_float_diagnostic(item.approach_mm)}, "
+        f"{_optional_float_diagnostic(item.departure_mm)})"
+        for item in transitions
+    )
+    return (
+        f"wire={route.wire_number}; minimum_bend_radius_mm={minimum_bend_radius_mm:.12g}; "
+        f"points_mm=[{points_text}]; normals=[{normals_text}]; "
+        f"transitions_mm=[{transitions_text}]"
+    )
+
+
+def _vector_diagnostic(vector: Vector3) -> str:
+    """
+    Format one routing vector without discarding useful floating-point precision.
+    """
+    return f"({vector.x:.12g}, {vector.y:.12g}, {vector.z:.12g})"
+
+
+def _optional_float_diagnostic(value: Optional[float]) -> str:
+    """
+    Format an optional transition value for a reproducible diagnostic.
+    """
+    return "None" if value is None else f"{value:.12g}"
 
 
 def _adjustment_notice(adjustment: TransitionAdjustment) -> str:
@@ -854,11 +903,7 @@ def _stripe_radial(tangent: Vector3, frame_normal: Vector3, angle: float) -> Vec
     Rotate one transported frame normal around its centerline tangent.
     """
     binormal = unit(cross(tangent, frame_normal))
-    return Vector3(
-        frame_normal.x * math.cos(angle) + binormal.x * math.sin(angle),
-        frame_normal.y * math.cos(angle) + binormal.y * math.sin(angle),
-        frame_normal.z * math.cos(angle) + binormal.z * math.sin(angle),
-    )
+    return linear_combination(frame_normal, math.cos(angle), binormal, math.sin(angle))
 
 
 def _stripe_frame_samples(

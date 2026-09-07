@@ -8,7 +8,17 @@ import math
 from dataclasses import dataclass, replace
 from typing import Optional
 
-from .geometry import CubicBezier, Vector3, cross, difference, dot, lerp, magnitude, unit
+from .geometry import (
+    CubicBezier,
+    Vector3,
+    cross,
+    difference,
+    dot,
+    lerp,
+    linear_combination,
+    magnitude,
+    unit,
+)
 from .parallel import RoutePreview
 
 CIRCULAR_SWEEP_BEND_FACTOR = 1.05
@@ -122,7 +132,7 @@ def fair_route(
                 minimum_bend_radius_mm,
             )
             if direct is not None:
-                curves.append(direct)
+                curves.extend(direct)
                 if adjustments is not None:
                     adjustments.append(
                         TransitionAdjustment(
@@ -167,37 +177,188 @@ def _direct_span_transition(
     start_tangent: Vector3,
     end_tangent: Vector3,
     minimum_bend_radius_mm: float,
-) -> Optional[CubicBezier]:
+) -> Optional[tuple[CubicBezier, ...]]:
     """
-    Fit one cubic across a crowded span without an artificial middle tangent.
+    Fit a crowded span without imposing an artificial chord tangent.
 
     The localized construction normally turns each profile tangent toward the
-    span direction independently. When those two regions do not fit, a direct
-    Hermite-style cubic can use the complete span and still retain both profile
-    tangents and the circular sweep radius.
+    span direction independently. Prefer one direct Hermite-style cubic across
+    the complete span; use a two-arc S-bend only for an equal-tangent offset
+    that one cubic cannot fit safely.
     """
     delta = difference(end, start)
     distance = magnitude(delta)
     direction = unit(delta)
-    best_curve: Optional[CubicBezier] = None
-    best_radius = -1.0
-    for step in range(5, 101):
-        handle_length = distance * step / 100.0
-        candidate = CubicBezier(
+    balanced_steps = tuple((step, step) for step in range(5, 101))
+    best_curve, best_radius, best_steps = _best_direct_span_candidate(
+        start,
+        end,
+        start_tangent,
+        end_tangent,
+        direction,
+        distance,
+        balanced_steps,
+        128,
+    )
+    if best_curve is not None:
+        best_radius = _minimum_sampled_radius(best_curve, 1024)
+        if best_radius + 1e-9 >= minimum_bend_radius_mm:
+            return (best_curve,)
+
+    coarse_steps = tuple(
+        (departure_step, approach_step)
+        for departure_step in range(5, 101, 5)
+        for approach_step in range(5, 101, 5)
+    )
+    best_curve, best_radius, best_steps = _best_direct_span_candidate(
+        start,
+        end,
+        start_tangent,
+        end_tangent,
+        direction,
+        distance,
+        coarse_steps,
+        64,
+    )
+    if best_steps is not None:
+        departure_step, approach_step = best_steps
+        refined_steps = tuple(
+            (refined_departure, refined_approach)
+            for refined_departure in range(
+                max(5, departure_step - 5), min(100, departure_step + 5) + 1
+            )
+            for refined_approach in range(
+                max(5, approach_step - 5), min(100, approach_step + 5) + 1
+            )
+        )
+        best_curve, best_radius, _ = _best_direct_span_candidate(
+            start,
+            end,
+            start_tangent,
+            end_tangent,
+            direction,
+            distance,
+            refined_steps,
+            256,
+        )
+    if best_curve is not None:
+        best_radius = _minimum_sampled_radius(best_curve, 1024)
+    if best_curve is not None and best_radius + 1e-9 >= minimum_bend_radius_mm:
+        return (best_curve,)
+    return _equal_tangent_span_transition(
+        start,
+        end,
+        start_tangent,
+        end_tangent,
+        minimum_bend_radius_mm,
+    )
+
+
+def _equal_tangent_span_transition(
+    start: Vector3,
+    end: Vector3,
+    start_tangent: Vector3,
+    end_tangent: Vector3,
+    minimum_bend_radius_mm: float,
+) -> Optional[tuple[CubicBezier, CubicBezier]]:
+    """
+    Join offset profiles with equal tangents using two opposing circular-arc cubics.
+
+    One cubic cannot efficiently translate sideways while leaving both profiles
+    with the same tangent. A symmetric S-bend uses the span midpoint and reverses
+    curvature there, preserving tangent continuity while using the full chord.
+    """
+    if dot(start_tangent, end_tangent) < 1.0 - 1e-9:
+        return None
+    delta = difference(end, start)
+    axial_distance = dot(delta, start_tangent)
+    lateral = Vector3(
+        delta.x - start_tangent.x * axial_distance,
+        delta.y - start_tangent.y * axial_distance,
+        delta.z - start_tangent.z * axial_distance,
+    )
+    lateral_distance = magnitude(lateral)
+    if axial_distance <= 1e-9 or lateral_distance <= 1e-9:
+        return None
+    lateral_direction = unit(lateral)
+    half_angle = math.atan2(lateral_distance, axial_distance)
+    angle = 2.0 * half_angle
+    radius = (axial_distance * axial_distance + lateral_distance * lateral_distance) / (
+        4.0 * lateral_distance
+    )
+    handle_length = 4.0 * radius * math.tan(angle / 4.0) / 3.0
+    middle = lerp(start, end, 0.5)
+    middle_tangent = linear_combination(
+        start_tangent,
+        math.cos(angle),
+        lateral_direction,
+        math.sin(angle),
+    )
+    curves = (
+        CubicBezier(
             start,
             start.translated(start_tangent, handle_length),
+            middle.translated(middle_tangent, -handle_length),
+            middle,
+        ),
+        CubicBezier(
+            middle,
+            middle.translated(middle_tangent, handle_length),
             end.translated(end_tangent, -handle_length),
+            end,
+        ),
+    )
+    if min(_minimum_sampled_radius(curve, 1024) for curve in curves) + 1e-9 < (
+        minimum_bend_radius_mm
+    ):
+        return None
+    chord_direction = unit(delta)
+    if any(
+        dot(curve.derivative(sample / 64.0), chord_direction) < -1e-9
+        for curve in curves
+        for sample in range(65)
+    ):
+        return None
+    return curves
+
+
+def _best_direct_span_candidate(
+    start: Vector3,
+    end: Vector3,
+    start_tangent: Vector3,
+    end_tangent: Vector3,
+    direction: Vector3,
+    distance: float,
+    handle_steps: tuple[tuple[int, int], ...],
+    radius_samples: int,
+) -> tuple[Optional[CubicBezier], float, Optional[tuple[int, int]]]:
+    """
+    Find the safest forward-moving cubic over independent endpoint handles.
+
+    A coarse two-dimensional search finds the useful handle neighborhood, then
+    the caller refines it with denser radius sampling. Independent handles are
+    required when adjacent profile normals turn by different amounts.
+    """
+    best_curve: Optional[CubicBezier] = None
+    best_radius = -1.0
+    best_steps: Optional[tuple[int, int]] = None
+    for departure_step, approach_step in handle_steps:
+        departure_length = distance * departure_step / 100.0
+        approach_length = distance * approach_step / 100.0
+        candidate = CubicBezier(
+            start,
+            start.translated(start_tangent, departure_length),
+            end.translated(end_tangent, -approach_length),
             end,
         )
         if any(dot(candidate.derivative(sample / 64.0), direction) < -1e-9 for sample in range(65)):
             continue
-        radius = _minimum_sampled_radius(candidate, 1024)
+        radius = _minimum_sampled_radius(candidate, radius_samples)
         if radius > best_radius:
             best_curve = candidate
             best_radius = radius
-    if best_curve is None or best_radius + 1e-9 < minimum_bend_radius_mm:
-        return None
-    return best_curve
+            best_steps = departure_step, approach_step
+    return best_curve, best_radius, best_steps
 
 
 def transition_limits(

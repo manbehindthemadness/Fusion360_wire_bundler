@@ -95,7 +95,9 @@ function palette(storage = new Map()) {
     } },
   };
   const html = readFileSync(join(__dirname, '..', 'palette.html'), 'utf8');
-  runInNewContext(html.match(/<script>([\s\S]*?)<\/script>/)[1], context);
+  const scripts = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)]
+    .map((match) => readFileSync(join(__dirname, '..', match[1]), 'utf8'));
+  runInNewContext(scripts.join('\n'), context);
   context.ui = runInNewContext('ui', context);
   context.mutate = (action, payload) => calls.push({ action, payload });
   return { context, calls };
@@ -204,6 +206,25 @@ test('master relationship graphic is last and independently cross-checked', () =
   assert.equal(sections[3].open, true);
 });
 
+test('palette entry point loads organized local style and script resources', () => {
+  const html = readFileSync(join(__dirname, '..', 'palette.html'), 'utf8');
+  assert.match(html, /<link rel="stylesheet" href="palette\/styles\.css">/);
+  assert.deepEqual(
+    [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map((match) => match[1]),
+    [
+      'palette/foundation.js',
+      'palette/route-editors.js',
+      'palette/materials.js',
+      'palette/relationship-audit.js',
+      'palette/wire-graphic.js',
+      'palette/master-graphic.js',
+      'palette/editor.js',
+      'palette/host.js',
+    ],
+  );
+  assert.doesNotMatch(html, /<style>|<script>/);
+});
+
 test('master relationship filtering, hover, navigation, and mismatch reporting work', () => {
   const { context, calls } = palette();
   const definition = harness();
@@ -228,6 +249,53 @@ test('master relationship filtering, hover, navigation, and mismatch reporting w
   assert.equal(wireCard.querySelector('.wire-details').hidden, false);
   const validation = context.ui.editor.querySelector('[data-section="validation"]');
   assert.ok(descendants(validation, (node) => node.textContent?.includes('does not match')).length);
+});
+
+test('expanded master traces use wire colors and stripes while pathway hubs navigate', () => {
+  const storage = new Map();
+  const { context } = palette(storage);
+  const definition = harness();
+  definition.wires[0].materials = {
+    ...definition.materialDefaults,
+    mainColor: { name: 'Red', hex: '#cc1122' },
+    stripes: [
+      { color: { name: 'White', hex: '#ffffff' }, pattern: 'solid' },
+      { color: { name: 'Blue', hex: '#2255cc' }, pattern: 'dashed' },
+    ],
+  };
+  definition.wires[1].materials = {
+    ...definition.materialDefaults,
+    mainColor: { name: 'Green', hex: '#228844' },
+  };
+  definition.wires[2].materials = {
+    ...definition.materialDefaults,
+    mainColor: { name: 'Yellow', hex: '#e8c51c' },
+  };
+  definition.wires[1].startConnectionId = 'a1';
+  context.renderEditor(definition);
+  const master = context.ui.editor.querySelector('[data-section="master-relationship-graphic"]');
+  const connectors = descendants(master, (node) => node.className === 'relationship-connector');
+  const wireTraces = descendants(connectors[0], (node) => node.className === 'wire-trace');
+  assert.deepEqual(wireTraces.map((trace) => trace.attributes.stroke), [
+    '#cc1122', '#228844', '#e8c51c',
+  ]);
+  assert.deepEqual(wireTraces.map((trace) => trace.attributes['data-wire-id']), ['w1', 'w2', 'w3']);
+  const stripes = descendants(connectors[0], (node) => node.className === 'stripe-trace');
+  assert.deepEqual(stripes.map((stripe) => stripe.attributes.stroke), ['#ffffff', '#2255cc']);
+  assert.deepEqual(stripes.map((stripe) => stripe.attributes['stroke-dasharray']), ['none', '8 5']);
+  const endList = descendants(master, (node) => node.className === 'relationship-end-list')[0];
+  endList.open = false;
+  endList.events.toggle();
+  const collapsedTraces = descendants(connectors[0], (node) => node.tag === 'path');
+  assert.equal(collapsedTraces.length, 1);
+  assert.equal(collapsedTraces[0].className, 'aggregate-trace');
+
+  const pathwaySection = context.ui.editor.querySelector('[data-section="pathway:p"]');
+  descendants(master, (node) => node.className === 'relationship-pathway-hub')[0].events.click();
+  assert.equal(context.ui.editor.querySelector('[data-section="pathways"]').open, true);
+  assert.equal(pathwaySection.open, true);
+  assert.equal(pathwaySection.scrolledIntoView, true);
+  assert.match(storage.get('wireBundler.expandedSections'), /pathway:p/);
 });
 
 test('master collapse limit defaults to seven, clamps, persists, and search reveals matches', () => {
@@ -301,7 +369,7 @@ test('master and per-wire graphics preserve scoped Fusion highlighting', () => {
   const master = context.renderRelationshipMap(definition, []);
   descendants(master, (node) => node.className === 'relationship-pathway-hub')[0]
     .events.mouseenter();
-  assert.deepEqual(calls.pop(), { type: 'pathway', id: 'p' });
+  assert.deepEqual(calls.pop(), { type: 'pathway_gates', id: 'p' });
   const endList = descendants(master, (node) => node.className === 'relationship-end-list')[0];
   endList.children[0].events.mouseenter();
   assert.deepEqual(calls.pop(), { type: 'pathway_wires', id: 'p' });
@@ -331,7 +399,7 @@ test('interactive wire diagram replaces the old node strip and uses precise name
   assert.ok(labels.includes('a2'));
   assert.ok(labels.includes('lower fuse box path'));
   assert.equal(descendants(rendered, (node) => node.className === 'route-flow').length, 0);
-  assert.equal(descendants(rendered, (node) => node.className === 'route-node').length, 6);
+  assert.equal(descendants(rendered, (node) => node.className?.split(' ').includes('route-node')).length, 3);
 });
 
 test('wire diagram nodes configure ends and navigate to pathways by mouse or keyboard', () => {
@@ -426,15 +494,57 @@ test('wire header collapses details and highlights only on hover', () => {
   assert.equal(descendants(rendered, (node) => node.textContent === '↔').length, 0);
 });
 
-test('profile node opens wire-wide diameter popup', () => {
+test('clearly labeled wire options combine diameter and material controls', () => {
   const { context } = palette();
   const rendered = context.renderWireRoutes(harness());
-  descendants(rendered, (node) => node.title === 'Edit wire-wide options')[0].events.click();
+  const button = descendants(rendered, (node) => (
+    node.title === 'Edit wire diameter and material options'
+  ))[0];
+  assert.match(button.textContent, /^Wire options · 1\.5 mm · Black PVC/);
+  button.events.click();
   const dialog = context.document.body.children[0];
   assert.equal(dialog.open, true);
-  assert.equal(descendants(dialog, (node) => node.tag === 'input')[0].value, '1.5');
+  assert.equal(descendants(dialog, (node) => node.tag === 'h2')[0].textContent, 'Wire options · Wire #001');
+  const diameter = descendants(dialog, (node) => node.type === 'number')[0];
+  assert.equal(diameter.value, '1.5');
   descendants(dialog, (node) => node.textContent === 'Cancel')[0].events.click();
   assert.equal(context.document.body.children.length, 0);
+});
+
+test('diagram stripe cues stay centered within each wire trace', () => {
+  const { context } = palette();
+  const definition = harness();
+  definition.wires[0].materials = {
+    ...definition.materialDefaults,
+    stripes: [{ color: { name: 'White', hex: '#ffffff' }, pattern: 'solid' }],
+  };
+  const graphic = descendants(
+    context.renderWireRoutes(definition),
+    (node) => node.className === 'wire-relationship-graphic',
+  )[0];
+  const stripeLines = descendants(graphic, (node) => (
+    node.tag === 'line' && node.attributes.stroke === '#ffffff'
+  ));
+  const baseLines = descendants(graphic, (node) => (
+    node.tag === 'line' && node.attributes.stroke === '#202020'
+  ));
+  assert.ok(stripeLines.length > 0);
+  assert.equal(stripeLines.length, baseLines.length);
+  assert.ok(stripeLines.every((line, index) => (
+    line.attributes.y1 === baseLines[index].attributes.y1
+      && line.attributes.y2 === baseLines[index].attributes.y2
+  )));
+  const master = context.renderRelationshipMap(definition, []);
+  const connector = descendants(master, (node) => node.className === 'relationship-connector')[0];
+  const base = descendants(connector, (node) => (
+    node.className === 'wire-trace' && node.attributes['data-wire-id'] === 'w1'
+  ))[0];
+  const stripe = descendants(connector, (node) => (
+    node.className === 'stripe-trace' && node.attributes['data-wire-id'] === 'w1'
+  ))[0];
+  assert.equal(stripe.attributes.d, base.attributes.d);
+  assert.equal(context.centeredStripeOffset(0, 2, 2), -1);
+  assert.equal(context.centeredStripeOffset(1, 2, 2), 1);
 });
 
 test('hover scopes distinguish pathway nodes, group headings, and members', () => {
@@ -723,6 +833,23 @@ test('event console retains messages and marks failures', () => {
   assert.equal(entries[2].className, 'notice-entry error');
 });
 
+test('event console hides diagnostics until verbose output is enabled', () => {
+  const storage = new Map();
+  const { context } = palette(storage);
+  const message = 'Wire 001 failed. Routing diagnostic: points_mm=[(1, 2, 3)]';
+  context.appendNotice(message, true);
+  const entry = runInNewContext('ui.notice.children[0]', context);
+  assert.equal(entry.textContent, 'Wire 001 failed.');
+  runInNewContext('ui.verboseDiagnostics.checked = true; ui.verboseDiagnostics.events.change();', context);
+  assert.equal(entry.textContent, message);
+  assert.equal(storage.get('wireBundler.verboseDiagnostics'), 'true');
+});
+
+test('event console exposes a bounded vertical resize control', () => {
+  const styles = readFileSync(join(__dirname, '..', 'palette', 'styles.css'), 'utf8');
+  assert.match(styles, /#notice \{[^}]*min-height: 72px;[^}]*max-height: 60vh;[^}]*resize: vertical;/s);
+});
+
 test('material text fields use controlled autocomplete instead of native datalists', () => {
   const { context } = palette();
   const definition = harness();
@@ -749,7 +876,12 @@ test('material text fields use controlled autocomplete instead of native datalis
 });
 
 test('material dialog constrains library controls to its horizontal bounds', () => {
-  const html = readFileSync(join(__dirname, '..', 'palette.html'), 'utf8');
-  assert.match(html, /\.material-options \{[^}]*overflow-x: hidden;/);
-  assert.match(html, /\.material-options select, \.material-options textarea \{[^}]*max-width: 100%;/s);
+  const styles = readFileSync(join(__dirname, '..', 'palette', 'styles.css'), 'utf8');
+  assert.match(styles, /\.material-options \{[^}]*overflow-x: hidden;/);
+  assert.match(styles, /\.material-options select, \.material-options textarea \{[^}]*max-width: 100%;/s);
+});
+
+test('master relationship viewport uses a distinct darker backdrop', () => {
+  const styles = readFileSync(join(__dirname, '..', 'palette', 'styles.css'), 'utf8');
+  assert.match(styles, /\.relationship-map-viewport \{[^}]*background: #dfe5ea;/s);
 });

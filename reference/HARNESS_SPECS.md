@@ -195,6 +195,16 @@ Gate A                                      Gate B
 
 The result remains deterministic and geometrically valid without allowing one transition region to extend through or beyond the neighboring gate.
 
+When the safe localized regions still overlap, the solver may use the complete span
+as one profile-to-profile cubic. It optimizes the two endpoint handles independently
+so asymmetric profile orientations can retain their ordered crossing tangents and the
+diameter-derived minimum bend radius.
+
+If laterally offset profiles have equal tangents and one cubic cannot retain that
+radius, the solver uses two opposing circular-arc cubic approximations. They meet at
+the chord midpoint with a shared tangent, creating a smooth S-bend while preserving
+the exact ordered profile crossings and endpoint directions.
+
 Procedurally derived transition, center-drift, and profile-deformation values are
 projected to the closest feasible result within the wire's physical limits and the
 allowed routing corridor. User-facing controls expose the corresponding feasible

@@ -175,11 +175,14 @@ affect geometry. Future automatic naming may use this metadata.
 
 Endpoint sequence members display a stable shortened UUID, with the full identity
 in the row tooltip. IDs follow members through reorder and replacement; legacy
-definitions derive deterministic IDs until an edit saves them explicitly. The wire-profile node
-opens a Wire Options popup, currently editing the finished circular diameter in
-millimeters. Saving applies across that wire and copies any shared profile first,
-so other wires retain their sizes. Invalid diameters are rejected; Cancel discards
-the popup edit. Diameter changes refresh affected routing groups in an active preview.
+definitions derive deterministic IDs until an edit saves them explicitly. Each
+wire has one clearly labeled Wire options button beneath its relationship graphic.
+The shared dialog edits the finished circular diameter in millimeters together with
+the wire's inherited or overridden material fields. Apply and Save persist a valid
+diameter before applying the material settings; Apply keeps the dialog open and Save
+closes it. Diameter edits copy any shared profile first so other wires retain their
+sizes. Invalid diameters are rejected, Cancel discards unsaved edits, and diameter
+changes refresh affected routing groups in an active preview.
 
 End sequences provide per-member Add, Replace, and Remove controls. Dragging a row
 onto another reorders it within the same end, with a visible drop indicator. Add
@@ -1183,8 +1186,9 @@ and End B nodes toggle their existing ordering editors, or start native profile
 selection when their connection is missing. Pathway nodes expand and navigate to
 the matching Pathways & Occupancy configuration. The colored wire line and each
 typed node retain their scoped Fusion highlighting. Mouse clicks plus Enter and
-Space activate the nodes, while wire specification and material controls remain
-as compact controls beneath the graphic.
+Space activate the nodes, while one labeled Wire options control remains beneath
+the graphic. Stripe cues are centered as a group within the base trace: a single
+stripe occupies its centerline and two or three stripes use symmetric offsets.
 
 The master graphic aggregates the same data into one card per pathway. Its End A
 and End B columns group wires by connection, show assigned endpoint and connection
@@ -1195,15 +1199,27 @@ its connection count is at or below a retained per-harness threshold and collaps
 when its count is above that threshold. The numeric setting is clamped from 1 to
 999 and defaults to 7, allowing simple harnesses to appear in full without letting
 large connector lists dominate the palette. A manual disclosure choice lasts for
-the current palette session until the threshold changes. Hovering a pathway hub,
-end-list heading, or connection entry highlights the pathway, its occupying wires,
-or that connection respectively. The viewport scrolls so large relationship sets
-do not compress their labels into unreadability. The pathway hub is vertically
-centered against the full height of both end columns. Smooth SVG curves join each
-visible connection to that hub; expanding an end fans one curve per connection,
-while collapsing it replaces the hidden fan with one aggregate curve. Open end
-columns distribute their entries across the available card height so unequal End
-A and End B counts remain visually aligned with the centered hub.
+the current palette session until the threshold changes. Hovering a pathway hub
+highlights only its gates, while an end-list heading highlights the occupying wires
+and a connection entry highlights that connection. Activating a pathway hub expands
+and scrolls to its matching Pathways & Occupancy configuration. The viewport uses a
+darker neutral backdrop to distinguish its light pathway cards and end-list buckets,
+and scrolls so large relationship sets do not compress their labels. The pathway hub
+is vertically centered against the full height of both end columns. Smooth SVG
+curves join each visible connection to that hub. Expanding an end fans one trace
+per participating wire, using the wire's resolved base color and up to three solid
+or dashed stripe cues centered within the base trace; wires sharing one connection
+remain parallel at that entry. Collapsing the end replaces the hidden material
+traces with one neutral aggregate curve. Open end columns distribute their entries
+across the available card height so unequal End A and End B counts remain visually
+aligned with the centered hub.
+
+The palette is delivered as a small `palette.html` entry shell plus local packaged
+resources under `palette/`: `styles.css`, `foundation.js`, `route-editors.js`,
+`materials.js`, `relationship-audit.js`, `wire-graphic.js`, `master-graphic.js`,
+`editor.js`, and `host.js`. Scripts load in that explicit order so shared state and
+utilities exist before the final host bridge initializes. Fusion palette creation
+validates the complete resource set before opening.
 
 The application builds stable typed nodes, ordered segments, wire routes,
 pathway-occupancy indexes, and connection-usage indexes without Fusion API

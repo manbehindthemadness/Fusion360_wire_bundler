@@ -9,6 +9,7 @@ import json
 import sys
 from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Optional, Protocol, cast
 from unittest.mock import Mock
@@ -26,6 +27,7 @@ class _PaletteLifecycleModule(Protocol):
     """
 
     _handlers: list[object]
+    PALETTE_RESOURCE_FILES: tuple[Path, ...]
     _PaletteIncomingHandler: type
     _PaletteEditExecuteHandler: type
     _PaletteEditDestroyedHandler: type
@@ -202,6 +204,13 @@ def test_palette_opens_at_relationship_graphic_working_size(
     addin_module._show_palette(application)
 
     assert palettes.add.call_args.args[6:8] == (840, 760)
+
+
+def test_all_palette_resources_are_packaged(addin_module: _PaletteLifecycleModule) -> None:
+    """
+    Keep every stylesheet and ordered script beside the palette entry point.
+    """
+    assert all(path.is_file() for path in addin_module.PALETTE_RESOURCE_FILES)
 
 
 def test_palette_state_contains_complete_editor_definition(
