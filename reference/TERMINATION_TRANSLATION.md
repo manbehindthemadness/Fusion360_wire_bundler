@@ -1,6 +1,6 @@
 # Terminator Sections
 
-> **Document status:** Future M1/M2 geometry reference. The current implementation has
+> **Document status:** Future M2/M3 geometry reference. The current implementation has
 > symmetric End A/End B profiles and smooth end transitions, but the complete terminator
 > and per-member guide system described here is not implemented. Milestone status is in
 > `../README.md`; persistent contracts belong in `UI_AND_DATA_MODEL.md`.

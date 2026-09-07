@@ -78,6 +78,9 @@ The following rules apply across every milestone:
   rating computation and means unlimited flexibility within solver feasibility.
 - Every harness-definition edit uses Fusion change tracking. Packaging and installer
   work begins only after the feature set is complete and live behavior is proven stable.
+- Every acceptance criterion is automated at the lowest reliable boundary available.
+  Manual verification remains only where Fusion exposes no stable control or observable
+  result, and each such exception records its reason and evidence.
 
 ## Delivery roadmap
 
@@ -88,12 +91,45 @@ dependencies are settled.
 | Milestone | Scope | Completion gate |
 | --- | --- | --- |
 | **M0 · Round-wire foundation** *(current closeout)* | Stable round-wire data, gates and ends, smooth previews, material/stripe presentation, persistent sweeps, relationship graphics, diagnostics, and explicit clear/rebuild behavior. | Full local checks; live reference harness; Preview/Save/Reload/Clear; Generate/Rebuild/Clear; material Apply/Save/Cancel; and Fusion Undo/Redo all pass without ghosts or stale projections. |
-| **M1 · Topology and terminators** | Explicit Y junctions, arbitrary branching, recombination, extensions, open exits, loops, ground straps, end transitions, per-member guide faces, and target-face/object connection naming with provenance. Assembly nesting remains organizational and does not substitute for route topology. | Stable branch-leg identities and per-span membership survive edit/reload; capacity and relationship audits cover complex graphs; target-derived names never overwrite custom names; terminator and branch geometry pass focused live scenarios. |
-| **M2 · Profile gates and ribbons** | Open profile gates, non-circular cross-sections, ribbon ordering, banking, twist, curl, deformation, and transitions between loose, ribbon, and terminated members. | Deterministic correspondence and non-crossing validation pass local fixtures and Fusion loft/sweep experiments across representative deformations. |
-| **M3 · Routed members and composites** | Electrical conductors, optical fiber, coolant tubing, shields, and recursively nested composite members; optional child insulation; per-kind technical data; recursive fit checks; sparse child geometry; reusable complex-wire definitions; and extension of M1 target naming to nested members. | Schema migration, recursive containment and fit validation, breakout identity, sparse realization, saved-definition round trips, and scalable diagram drill-down pass before Fusion generation is enabled. |
-| **M4 · Flex, pull, and operating modes** | Constrained and unconstrained operation, optional manufacturer flex ratings, least-flexible rated-member propagation, kink highlighting, generated reference lengths, and animation/test pull inspection. | Rating-free spans skip analysis; rated violations remain non-blocking; exact-route bend and positive-length-growth findings navigate to the responsible member and controls; no advisory input can fail generation. |
-| **M5 · Wrappings and restraints** | Slice-plane, guide-body, and incremental placement; material-aware heat-shrink and tape prefabs; selected-member wraps; and scalable custom buckles with named Band Start/Band End interfaces. | Deterministic placement/regeneration, envelope and collision contribution, material behavior, buckle scaling, and repairable missing-interface handling pass circular and non-circular live cases. |
-| **M6 · Stability and delivery** | Performance work, theme/accessibility polish, selective regeneration, migration hardening, complete reference experiments, Autodesk-compliant packaging, resources, and one-click installation. | The complete feature set is live-proven stable; supported schema migrations and packaging are repeatable on a clean Fusion installation. |
+| **M1 · Automated Fusion QA foundation** | Audit every current and planned acceptance criterion against host-independent tests, mocked palette tests, registered Fusion scripts, supported Fusion command execution, API state inspection, and development-only MCP orchestration. Build reusable fixtures, lifecycle drivers, assertions, cleanup, timeouts, screenshots where useful, and machine-readable reports. | Every M0 QA target has an automated test wherever Fusion exposes reliable control and observation; one repeatable suite reports local and in-host results; remaining manual checks are listed with the specific missing capability, required evidence, and a review trigger. Development-only automation is separable from the production package. |
+| **M2 · Topology and terminators** | Explicit Y junctions, arbitrary branching, recombination, extensions, open exits, loops, ground straps, end transitions, per-member guide faces, and target-face/object connection naming with provenance. Assembly nesting remains organizational and does not substitute for route topology. | Stable branch-leg identities and per-span membership survive edit/reload; capacity and relationship audits cover complex graphs; target-derived names never overwrite custom names; terminator and branch geometry pass focused automated and live scenarios. |
+| **M3 · Profile gates and ribbons** | Open profile gates, non-circular cross-sections, ribbon ordering, banking, twist, curl, deformation, and transitions between loose, ribbon, and terminated members. | Deterministic correspondence and non-crossing validation pass local fixtures and automated Fusion loft/sweep experiments across representative deformations. |
+| **M4 · Routed members and composites** | Electrical conductors, optical fiber, coolant tubing, shields, and recursively nested composite members; optional child insulation; per-kind technical data; recursive fit checks; sparse child geometry; reusable complex-wire definitions; and extension of M2 target naming to nested members. | Schema migration, recursive containment and fit validation, breakout identity, sparse realization, saved-definition round trips, and scalable diagram drill-down pass before Fusion generation is enabled. |
+| **M5 · Flex, pull, and operating modes** | Constrained and unconstrained operation, optional manufacturer flex ratings, least-flexible rated-member propagation, kink highlighting, generated reference lengths, and animation/test pull inspection. | Rating-free spans skip analysis; rated violations remain non-blocking; exact-route bend and positive-length-growth findings navigate to the responsible member and controls; no advisory input can fail generation. |
+| **M6 · Wrappings and restraints** | Slice-plane, guide-body, and incremental placement; material-aware heat-shrink and tape prefabs; selected-member wraps; and scalable custom buckles with named Band Start/Band End interfaces. | Deterministic placement/regeneration, envelope and collision contribution, material behavior, buckle scaling, and repairable missing-interface handling pass circular and non-circular live cases. |
+| **M7 · Stability and delivery** | Performance work, theme/accessibility polish, selective regeneration, migration hardening, complete reference experiments, optional user-facing self-diagnostics, Autodesk-compliant packaging, resources, and one-click installation. | The complete feature set is live-proven stable; the automated regression suite passes; production packaging excludes development-only automation; supported schema migrations, diagnostics, and one-click installation are repeatable on a clean Fusion installation. |
+
+### M1 automated Fusion QA foundation
+
+M1 begins with a coverage ledger containing every current QA target, its fixture, the
+action that drives it, the state or artifact that proves the result, its automation
+layer, and its cleanup requirements. Discovery must exercise candidate Fusion commands,
+registered scripts, API calls, application-log inspection, document lifecycle actions,
+and MCP capabilities rather than assuming that an advertised or undocumented hook is
+reliable.
+
+The suite has three layers: fast host-independent Python and palette tests; deterministic
+in-host Fusion scenarios that assert document, component, body, feature, attribute,
+appearance, graphics, selection, history, persistence, and error state; and optional
+development orchestration that starts scenarios, inspects Fusion, captures evidence,
+and collects reports through the local MCP server. MCP and developer tools remain test
+infrastructure and never become add-in runtime dependencies.
+
+The automation architecture must keep development runners, fixtures, MCP adapters, and
+large regression assets separable from the production package. A shipped diagnostic
+command may reuse small, read-only assertions through stable application interfaces to
+check installation resources, schema readability, linked-reference health, generated
+ownership, and projection consistency. It must not require MCP, developer tools, test
+dependencies, sample documents, or destructive fixture creation. Diagnostics produce
+an exportable report and never silently modify the active design. This optional surface
+adds no extra installation steps and is verified against the final package contents.
+
+Automation must cover success, failure, cancellation, rollback, Undo/Redo, save/reload,
+rebuild, clear, lost references, and repeated execution wherever Fusion provides stable
+control and observation. Visual evidence may supplement structural assertions but does
+not replace them. A check remains manual only when the audit identifies the exact
+unavailable control or observable result; the ledger records how a person verifies it
+and when a new Fusion release or test adapter should trigger another automation attempt.
 
 Detailed future contracts live in [UI and data model](reference/UI_AND_DATA_MODEL.md),
 including [recursive composites](reference/UI_AND_DATA_MODEL.md#planned-recursive-composite-wire-and-shielding-milestone),
@@ -104,8 +140,9 @@ and [wrappings and restraints](reference/UI_AND_DATA_MODEL.md#planned-wrappings-
 
 For each milestone:
 
-1. Define terminology, identities, relationships, invariants, failure behavior, and
-   backward-compatible schema changes before building UI or Fusion geometry.
+1. Define terminology, identities, relationships, invariants, failure behavior,
+   acceptance criteria, and backward-compatible schema changes before building UI or
+   Fusion geometry. Add each criterion to the automation coverage ledger.
 2. Implement host-independent models, migrations, parsers, projections, validation,
    and solver behavior with deterministic fixtures. Ambiguous legacy relationships are
    reported and repaired explicitly rather than guessed.
@@ -120,11 +157,14 @@ For each milestone:
 6. Generate persistent geometry only through explicit commands and only after complete
    replacement output succeeds. Preview, Apply, Save, Cancel, rebuild, clear, Undo, Redo,
    save/reload, and missing-reference behavior are part of the feature contract.
-7. Extend the shared reference-harness experiment and add focused live Fusion scenarios
-   for kernel-dependent behavior. Record diagnostics under `artifacts/verification/`.
+7. Automate each reachable criterion through local tests, mocked palette tests,
+   registered Fusion scripts, supported command execution, API assertions, or
+   development-only MCP orchestration. Extend the shared reference-harness experiment
+   and add focused in-host scenarios for kernel-dependent behavior. Record diagnostics
+   under `artifacts/verification/` and document every remaining manual exception.
 8. Exit the milestone only after focused and full local checks, clean IDE inspection,
-   live happy-path and failure-path verification, documentation updates, and a factual
-   operational note in `summary.txt`.
+   automated in-host happy-path and failure-path verification, required residual manual
+   checks, documentation updates, and a factual operational note in `summary.txt`.
 
 ## Documentation roles
 
@@ -133,8 +173,8 @@ For each milestone:
 | `README.md` | Authoritative current implementation status, milestone order, development procedure, and live verification instructions. |
 | `reference/UI_AND_DATA_MODEL.md` | Authoritative product data, identity, validation, persistence, and UI interaction contracts. Sections marked **Planned** are future requirements. |
 | `reference/HARNESS_SPECS.md` | Routing-gate geometry and solver design reference. |
-| `reference/RIBBON_SPECS.md` | Future profile-gate and ribbon geometry reference for M2. |
-| `reference/TERMINATION_TRANSLATION.md` | Future terminator and guide-transition geometry reference for M1 and M2. |
+| `reference/RIBBON_SPECS.md` | Future profile-gate and ribbon geometry reference for M3. |
+| `reference/TERMINATION_TRANSLATION.md` | Future terminator and guide-transition geometry reference for M2 and M3. |
 | `reference/UI_WORKFLOW.md` | Broad UX vision and illustrative flows. When an older illustration conflicts with current behavior or the authoritative contracts above, follow `README.md` and `UI_AND_DATA_MODEL.md`. |
 
 New requirements enter the roadmap once and receive detailed contracts in the relevant

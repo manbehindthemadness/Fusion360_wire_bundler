@@ -65,7 +65,7 @@ Each completed wire is therefore a complete modeling object rather than merely o
 A harness may itself become the parent of another generated harness.
 
 This provides organizational assembly nesting. Physical branching, recombination,
-loops, and per-span membership use the explicit pathway topology planned in M1;
+loops, and per-span membership use the explicit pathway topology planned in M2;
 nested harness components do not substitute for those route relationships.
 
 ```text
@@ -1324,7 +1324,7 @@ migration, duplicate handling, template updates versus instance overrides, and c
 versus linked-instance behavior must be decided before persistence is implemented.
 Fusion document history continues to version placed instances.
 
-M1 establishes target-derived naming for top-level connections. This milestone extends
+M2 establishes target-derived naming for top-level connections. This milestone extends
 the same rule to nested members: Harness Builder offers a name from the most specific
 stable metadata available, including explicit connection or pin metadata, a user-named
 target face, its owning body/component/occurrence, and finally the existing generated

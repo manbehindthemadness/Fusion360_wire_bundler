@@ -1,6 +1,6 @@
 # Profile-Gate Ribbon Routing
 
-> **Document status:** Future M2 geometry reference. Profile-gate and ribbon behavior is
+> **Document status:** Future M3 geometry reference. Profile-gate and ribbon behavior is
 > not part of the current round-wire implementation. Milestone order and exit criteria
 > are recorded in `../README.md`; persistent contracts belong in
 > `UI_AND_DATA_MODEL.md` before implementation.
