@@ -909,6 +909,12 @@ downstream. The resulting route topology is a directed graph rather than a singl
 linear chain. Initial implementation should reject cycles so a route cannot
 eventually feed back into an earlier pathway.
 
+The Wire Routes and Pathways & Occupancy presentations should not depend on a
+strictly tree-shaped screen layout. Reserve a compact cross-link or loop indicator
+so a future relationship model can display an intentional cycle without redesigning
+both views. This is a presentation allowance only; it does not change the current
+route schema, generation behavior, or initial cycle validation.
+
 ---
 
 # Recommended Add-In Workflow
@@ -1154,6 +1160,21 @@ occupying previews. Individual gate and endpoint members highlight only their ow
 profiles. Mouse-out clears both sketch selection and preview emphasis. End nodes
 highlight their connection profiles. Intersection slice highlighting remains a
 future extension once intersection geometry exists.
+
+### Master relationship graphic
+
+The selected-harness editor reserves a top-level Master Relationship Graphic as
+the final section in its vertical stack, immediately below the Validation section.
+It is not placed beside the event console and is not nested inside Wire Routes or
+Pathways & Occupancy. Its expansion state follows the same retained section-state
+behavior as the other top-level editor sections.
+
+The initial graphic derives only relationships supported by the current model:
+stable connections, physical wires, and their ordered pathway memberships. It
+must not infer Y-junction, ribbon, shielding, or extended-branch behavior before
+those concepts have defined domain semantics. Its presentation model should use
+stable typed nodes and relationship edges so later milestones can add those
+elements without replacing the master graphic or disturbing existing identities.
 
 ### Smooth centerline milestone
 
