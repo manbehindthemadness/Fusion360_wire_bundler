@@ -46,6 +46,7 @@ MAXIMUM_STABLE_DESKTOP_CHANGE = 0.02
 MCP_PROTOCOL_VERSION = "2025-03-26"
 FUSION_RESULT_PREFIX = "WIRE_BUNDLER_QA_RESULT="
 VISUAL_RESULT_PREFIX = "WIRE_BUNDLER_VISUAL_RESULT="
+GENERATED_VISUAL_RESULT_PREFIX = "WIRE_BUNDLER_GENERATED_VISUAL_RESULT="
 PALETTE_BOUNDS_RESULT_PREFIX = "WIRE_BUNDLER_PALETTE_BOUNDS_RESULT="
 VISUAL_WIDTH = 640
 VISUAL_HEIGHT = 480
@@ -443,6 +444,10 @@ def _run_fusion_suite(endpoint: str, timeout_seconds: float) -> dict[str, object
         suite_result["visualOracle"] = visual_result
         if visual_result.get("status") != "passed":
             suite_result["status"] = "failed"
+        generated_visual_result = _run_generated_visual_oracle(client)
+        suite_result["generatedVisualOracle"] = generated_visual_result
+        if generated_visual_result.get("status") != "passed":
+            suite_result["status"] = "failed"
     except (ConnectionError, OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         suite_result = {"status": "failed", "error": str(error)}
     finally:
@@ -526,6 +531,7 @@ def _read_palette_bounds(endpoint: str, timeout_seconds: float) -> PaletteBounds
         Validated visible palette bounds used only to select a Fusion-owned window.
     """
     client = McpClient(endpoint, timeout_seconds)
+    payload: dict[str, object] = {}
     try:
         client.initialize()
         tool_result = client.call_tool(
@@ -608,7 +614,7 @@ def _run_preview_visual_oracle(client: McpClient) -> dict[str, object]:
     """
     images: dict[str, bytes] = {}
     phases: list[dict[str, object]] = []
-    cleanup: dict[str, object] = {"clean": False}
+    differences: dict[str, dict[str, object]] = {}
     error = ""
     try:
         phases.append(_call_visual_phase(client, "begin", reload_module=True))
@@ -634,7 +640,6 @@ def _run_preview_visual_oracle(client: McpClient) -> dict[str, object]:
         status = "passed"
     except (OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError) as failure:
         status = "failed"
-        differences = {}
         error = str(failure)
     finally:
         try:
@@ -655,6 +660,179 @@ def _run_preview_visual_oracle(client: McpClient) -> dict[str, object]:
     }
 
 
+def _run_generated_visual_oracle(client: McpClient) -> dict[str, object]:
+    """
+    Compare striped-wire presentation across visibility, viewpoint, and lifecycle phases.
+
+    Args:
+        client: Initialized MCP client shared with the structural Fusion suite.
+
+    Returns:
+        JSON-safe comparison metrics, phase state, and status.
+    """
+    images: dict[str, bytes] = {}
+    phases: list[dict[str, object]] = []
+    differences: dict[str, dict[str, object]] = {}
+    error = ""
+    try:
+        phases.append(_call_generated_visual_phase(client, "begin", reload_module=True))
+        images["baseline"] = _capture_generated_viewport(client, phases, "iso-top-right")
+        phases.append(_call_generated_visual_phase(client, "generate"))
+        images["stripedIso"] = _capture_generated_viewport(client, phases, "iso-top-right")
+        phases.append(_call_generated_visual_phase(client, "hide-stripes"))
+        images["plainIso"] = _capture_generated_viewport(client, phases, "iso-top-right")
+        phases.append(_call_generated_visual_phase(client, "show-stripes"))
+        images["stripedTop"] = _capture_generated_viewport(client, phases, "top")
+        phases.append(_call_generated_visual_phase(client, "rebuild"))
+        images["rebuiltIso"] = _capture_generated_viewport(client, phases, "iso-top-right")
+        phases.append(_call_generated_visual_phase(client, "move"))
+        images["movedIso"] = _capture_generated_viewport(client, phases, "iso-top-right")
+        phases.append(_call_generated_visual_phase(client, "reset-position"))
+        images["restoredIso"] = _capture_generated_viewport(client, phases, "iso-top-right")
+        phases.append(_call_generated_visual_phase(client, "clear"))
+        images["cleared"] = _capture_generated_viewport(client, phases, "iso-top-right")
+
+        differences = {
+            "baselineToStriped": asdict(compare_pngs(images["baseline"], images["stripedIso"])),
+            "stripedToPlain": asdict(compare_pngs(images["stripedIso"], images["plainIso"])),
+            "stripedIsoToTop": asdict(compare_pngs(images["stripedIso"], images["stripedTop"])),
+            "stripedToRebuilt": asdict(compare_pngs(images["stripedIso"], images["rebuiltIso"])),
+            "stripedToMoved": asdict(compare_pngs(images["stripedIso"], images["movedIso"])),
+            "stripedToRestored": asdict(compare_pngs(images["stripedIso"], images["restoredIso"])),
+            "stripedToCleared": asdict(compare_pngs(images["stripedIso"], images["cleared"])),
+        }
+        _assert_generated_visual_differences(differences)
+        status = "passed"
+    except (OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError) as failure:
+        status = "failed"
+        error = str(failure)
+    finally:
+        try:
+            cleanup = _call_generated_visual_phase(client, "cleanup")
+        except (RuntimeError, ValueError, json.JSONDecodeError) as failure:
+            cleanup = {"clean": False, "error": str(failure)}
+            status = "failed"
+            error = f"{error} Cleanup failed: {failure}".strip()
+    return {
+        "status": status,
+        "dimensions": {"width": VISUAL_WIDTH, "height": VISUAL_HEIGHT},
+        "cameras": ["iso-top-right", "top"],
+        "captures": {"count": len(images), "storage": "memory-only", "purged": True},
+        "differences": differences,
+        "phases": phases,
+        "cleanup": cleanup,
+        "error": error,
+    }
+
+
+def _capture_generated_viewport(
+    client: McpClient,
+    phases: list[dict[str, object]],
+    direction: str,
+) -> bytes:
+    """
+    Establish a requested camera, fit the generated fixture, and capture its viewport.
+    """
+    screenshot_arguments: dict[str, object] = {
+        "queryType": "screenshot",
+        "width": VISUAL_WIDTH,
+        "height": VISUAL_HEIGHT,
+        "antiAliasing": True,
+        "transparentBackground": False,
+    }
+    phases.append(_call_generated_visual_phase(client, "normalize"))
+    tool_result = client.call_tool(
+        "fusion_mcp_read",
+        {**screenshot_arguments, "direction": direction},
+    )
+    return _extract_screenshot_png(tool_result)
+
+
+def _call_generated_visual_phase(
+    client: McpClient,
+    action: str,
+    reload_module: bool = False,
+) -> dict[str, object]:
+    """
+    Execute one generated-wire visual fixture phase inside Fusion.
+    """
+    tool_result = client.call_tool(
+        "fusion_mcp_execute",
+        {
+            "featureType": "script",
+            "object": {"script": _generated_visual_phase_script(action, reload_module)},
+        },
+    )
+    return _parse_execute_result(tool_result, GENERATED_VISUAL_RESULT_PREFIX)
+
+
+def _generated_visual_phase_script(action: str, reload_module: bool = False) -> str:
+    """
+    Build the in-host bootstrap for one generated-wire visual fixture phase.
+    """
+    root = json.dumps(str(PROJECT_ROOT))
+    encoded_action = json.dumps(action)
+    reload_statement = "module = importlib.reload(module)" if reload_module else ""
+    return f'''import importlib
+import json
+import sys
+
+
+def run(_context: str):
+    root = {root}
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    import experiments.experiment_generated_visual as module
+
+    {reload_statement}
+    result = module.dispatch({encoded_action})
+    print("{GENERATED_VISUAL_RESULT_PREFIX}" + json.dumps(result, sort_keys=True))
+'''
+
+
+def _assert_generated_visual_differences(
+    differences: dict[str, dict[str, object]],
+) -> None:
+    """
+    Enforce visible stripes/view changes and stable regenerated or cleared states.
+    """
+    minimum_visible_change = 0.0001
+    maximum_stable_change = 0.02
+    for name in (
+        "baselineToStriped",
+        "stripedToPlain",
+        "stripedIsoToTop",
+        "stripedToMoved",
+        "stripedToCleared",
+    ):
+        changed = _difference_fraction(differences, name)
+        if changed < minimum_visible_change:
+            raise RuntimeError(f"Generated visual comparison {name} changed only {changed:.6f}.")
+    for name in ("stripedToRebuilt", "stripedToRestored"):
+        changed = _difference_fraction(differences, name)
+        if changed > maximum_stable_change:
+            raise RuntimeError(
+                f"Generated visual comparison {name} changed {changed:.2%}; "
+                f"maximum is {maximum_stable_change:.2%}."
+            )
+
+
+def _difference_fraction(
+    differences: dict[str, dict[str, object]],
+    name: str,
+) -> float:
+    """
+    Validate and return one changed-pixel fraction from a comparison mapping.
+    """
+    value = differences[name].get("changed_pixel_fraction")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise RuntimeError(f"Visual comparison {name} has no numeric changed-pixel fraction.")
+    fraction = float(value)
+    if not math.isfinite(fraction):
+        raise RuntimeError(f"Visual comparison {name} has a non-finite changed-pixel fraction.")
+    return fraction
+
+
 def _capture_normalized_viewport(
     client: McpClient,
     phases: list[dict[str, object]],
@@ -669,14 +847,10 @@ def _capture_normalized_viewport(
         "antiAliasing": True,
         "transparentBackground": False,
     }
-    client.call_tool(
-        "fusion_mcp_read",
-        {**screenshot_arguments, "direction": "iso-top-right"},
-    )
     phases.append(_call_visual_phase(client, "normalize"))
     tool_result = client.call_tool(
         "fusion_mcp_read",
-        {**screenshot_arguments, "direction": "current"},
+        {**screenshot_arguments, "direction": "iso-top-right"},
     )
     return _extract_screenshot_png(tool_result)
 
@@ -775,11 +949,11 @@ def _assert_visual_differences(differences: dict[str, dict[str, object]]) -> Non
     minimum_visible_change = 0.0001
     maximum_stable_change = 0.02
     for name in ("baselineToPreview",):
-        changed = float(differences[name]["changed_pixel_fraction"])
+        changed = _difference_fraction(differences, name)
         if changed < minimum_visible_change:
             raise RuntimeError(f"Visual oracle did not detect the route preview: {changed:.6f}.")
     for name in ("baselineToReloaded", "previewToFreshPreview", "baselineToCleared"):
-        changed = float(differences[name]["changed_pixel_fraction"])
+        changed = _difference_fraction(differences, name)
         if changed > maximum_stable_change:
             raise RuntimeError(
                 f"Visual oracle comparison {name} changed {changed:.2%}; "

@@ -342,3 +342,52 @@ def test_visual_phase_script_dispatches_requested_action() -> None:
 
     assert "module = importlib.reload(module)" in script
     assert 'module.dispatch("show-preview")' in script
+
+
+def test_generated_visual_phase_script_dispatches_requested_action() -> None:
+    """
+    Keep the generated-wire checkpoint bootstrap small and deterministic.
+    """
+    script = qa_orchestrator._generated_visual_phase_script(
+        "hide-stripes",
+        reload_module=True,
+    )
+
+    assert "module = importlib.reload(module)" in script
+    assert "import experiments.experiment_generated_visual as module" in script
+    assert 'module.dispatch("hide-stripes")' in script
+
+
+def test_generated_visual_difference_contract_accepts_expected_states() -> None:
+    """
+    Accept visible presentation changes and stable generated lifecycle comparisons.
+    """
+    differences = {
+        "baselineToStriped": {"changed_pixel_fraction": 0.08},
+        "stripedToPlain": {"changed_pixel_fraction": 0.01},
+        "stripedIsoToTop": {"changed_pixel_fraction": 0.06},
+        "stripedToRebuilt": {"changed_pixel_fraction": 0.0},
+        "stripedToMoved": {"changed_pixel_fraction": 0.08},
+        "stripedToCleared": {"changed_pixel_fraction": 0.08},
+        "stripedToRestored": {"changed_pixel_fraction": 0.01},
+    }
+
+    qa_orchestrator._assert_generated_visual_differences(differences)
+
+
+def test_generated_visual_difference_contract_rejects_missing_stripes() -> None:
+    """
+    Fail when hiding stripe graphics makes no rendered difference.
+    """
+    differences = {
+        "baselineToStriped": {"changed_pixel_fraction": 0.08},
+        "stripedToPlain": {"changed_pixel_fraction": 0.0},
+        "stripedIsoToTop": {"changed_pixel_fraction": 0.06},
+        "stripedToRebuilt": {"changed_pixel_fraction": 0.0},
+        "stripedToMoved": {"changed_pixel_fraction": 0.08},
+        "stripedToCleared": {"changed_pixel_fraction": 0.08},
+        "stripedToRestored": {"changed_pixel_fraction": 0.0},
+    }
+
+    with pytest.raises(RuntimeError, match="stripedToPlain"):
+        qa_orchestrator._assert_generated_visual_differences(differences)

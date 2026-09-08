@@ -133,10 +133,10 @@
       "id": "M0-VIS-001",
       "area": "visual-presentation",
       "behavior": "Wire stripes conform to curved solids, remain centered, and retain useful contrast at representative viewpoints.",
-      "status": "partial",
-      "layers": ["pytest", "palette", "mcp"],
-      "evidence": ["tests/test_wire_solids.py", "tests/test_palette.cjs", "tests/test_png_oracle.py", "experiments/png_oracle.py", "experiments/qa_orchestrator.py", "experiments/fusion_mcp_capabilities.json"],
-      "capabilities": ["stripe-visual-fixture", "representative-viewpoint-comparison"]
+      "status": "automated",
+      "layers": ["pytest", "palette", "fusion-api", "mcp"],
+      "evidence": ["tests/test_wire_solids.py", "tests/test_palette.cjs", "tests/test_png_oracle.py", "experiments/experiment_generated_visual.py", "experiments/png_oracle.py", "experiments/qa_orchestrator.py", "experiments/fusion_mcp_capabilities.json"],
+      "capabilities": []
     },
     {
       "id": "M0-UI-001",

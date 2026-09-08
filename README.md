@@ -115,6 +115,12 @@ development orchestration that starts scenarios, inspects Fusion, captures evide
 and collects reports through the local MCP server. MCP and developer tools remain test
 infrastructure and never become add-in runtime dependencies.
 
+The viewport layer includes a deterministic generated-wire oracle. It builds an
+isolated striped wire, verifies that hiding the component-owned stripe meshes changes
+the rendered result, compares isometric and top views, and checks rebuild, parent
+movement, position restoration, and clear behavior against structural state and pixel
+differences. Screenshots remain in memory and are discarded after each run.
+
 macOS and Windows are required test platforms. Fixtures, paths, script bundles, report
 formats, and cleanup behavior remain platform-neutral. The coverage ledger records both
 platforms at its root. The applicable suite runs on every platform currently available;
