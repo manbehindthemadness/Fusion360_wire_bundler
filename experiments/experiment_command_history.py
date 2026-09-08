@@ -13,6 +13,7 @@ import json
 import sys
 import traceback
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic, sleep
 from typing import Optional
@@ -33,8 +34,14 @@ import adsk.fusion  # noqa: E402
 
 from experiments.experiment_reference_harness import _create_circular_profile  # noqa: E402
 from experiments.scenario_report import ScenarioReport  # noqa: E402
-from wire_bundler.application import add_pathway, add_wire_batch, create_empty_harness  # noqa: E402
-from wire_bundler.domain import RoutingMode, loads  # noqa: E402
+from wire_bundler.application import (  # noqa: E402
+    add_pathway,
+    add_wire_batch,
+    append_pathway_gates,
+    create_empty_harness,
+)
+from wire_bundler.application.edit_harness import edit_end_members  # noqa: E402
+from wire_bundler.domain import HarnessDefinition, RoutingMode, loads  # noqa: E402
 from wire_bundler.fusion import FusionHarnessGateway  # noqa: E402
 from wire_bundler.fusion.route_preview import has_route_previews  # noqa: E402
 from wire_bundler.fusion.wire_solids import generated_wire_occurrences  # noqa: E402
@@ -44,11 +51,28 @@ ARTIFACT_ROOT = ADDIN_ROOT / "artifacts" / "verification"
 HARNESS_ID = UUID("81000000-0000-0000-0000-000000000001")
 PATHWAY_ID = UUID("82000000-0000-0000-0000-000000000001")
 CONTROL_ID = UUID("83000000-0000-0000-0000-000000000001")
+SECOND_CONTROL_ID = UUID("83000000-0000-0000-0000-000000000002")
 WIRE_PROFILE_ID = UUID("84000000-0000-0000-0000-000000000001")
+SECOND_WIRE_PROFILE_ID = UUID("84000000-0000-0000-0000-000000000002")
 SOURCE_CONNECTION_ID = UUID("85000000-0000-0000-0000-000000000001")
+SECOND_SOURCE_CONNECTION_ID = UUID("85000000-0000-0000-0000-000000000002")
 DESTINATION_CONNECTION_ID = UUID("86000000-0000-0000-0000-000000000001")
+SECOND_DESTINATION_CONNECTION_ID = UUID("86000000-0000-0000-0000-000000000002")
 WIRE_ID = UUID("87000000-0000-0000-0000-000000000001")
+SECOND_WIRE_ID = UUID("87000000-0000-0000-0000-000000000002")
 RENAMED_WIRE = "QA Command History Wire"
+
+
+@dataclass(frozen=True)
+class _PersistentEditCase:
+    """
+    Describe one palette edit and its expected persisted result.
+    """
+
+    name: str
+    action: str
+    payload: dict[str, object]
+    matches_expected: Callable[[HarnessDefinition], bool]
 
 
 def run(_context: object) -> None:
@@ -109,27 +133,13 @@ def verify_command_history(
             design.designIntent = adsk.fusion.DesignIntentTypes.HybridDesignIntentType
             gateway = build_single_wire_fixture(application, design)
             harness = gateway.harness_component(HARNESS_ID)
+            if harness is None:
+                raise AssertionError("Command-history harness was not created.")
             if _wire_name(gateway):
                 raise AssertionError("Command-history wire unexpectedly started with a name.")
+            _augment_command_fixture(design, gateway)
 
-        with report.step("Rename wire through palette command transaction"):
-            payload = json.dumps(
-                {
-                    "harnessId": str(HARNESS_ID),
-                    "wireId": str(WIRE_ID),
-                    "name": RENAMED_WIRE,
-                }
-            )
-            execute_palette_action(application, "rename_wire", payload)
-            wait_for(application, lambda: _wire_name(gateway) == RENAMED_WIRE, "wire rename")
-
-        with report.step("Undo restores original harness definition"):
-            _execute_native_history_command(application, "UndoCommand")
-            wait_for(application, lambda: _wire_name(gateway) == "", "wire rename Undo")
-
-        with report.step("Redo restores renamed harness definition"):
-            _execute_native_history_command(application, "RedoCommand")
-            wait_for(application, lambda: _wire_name(gateway) == RENAMED_WIRE, "wire rename Redo")
+        edit_actions = _verify_persistent_edit_matrix(application, gateway, report)
 
         harness_payload = json.dumps({"harnessId": str(HARNESS_ID)})
         with report.step("Preview participates in native Undo and Redo"):
@@ -229,12 +239,19 @@ def verify_command_history(
                 "wire solid clear Redo",
             )
 
+        with report.step("Persistent edit history: reorder wire endpoints"):
+            _verify_multi_wire_endpoint_history(application, design, gateway)
+        edit_actions.append("move_wire_endpoint")
+
         report.record_observation(
             "fusion.commandHistory",
             {
                 "paletteAction": "rename_wire",
                 "undoRestoredOriginal": True,
                 "redoRestoredEdit": True,
+                "persistentEditActions": edit_actions,
+                "persistentEditCount": len(edit_actions),
+                "paletteProjectionUndoRedo": True,
                 "previewUndoRedo": True,
                 "generateUndoRedo": True,
                 "rebuildUndoRedo": True,
@@ -307,6 +324,437 @@ def build_single_wire_fixture(
         id_factory=lambda: next(wire_identifiers),
     )
     return gateway
+
+
+def _augment_command_fixture(
+    design: adsk.fusion.Design,
+    gateway: FusionHarnessGateway,
+) -> None:
+    """
+    Add a second gate and endpoint guides for order and removal history cases.
+
+    Args:
+        design: Isolated command-history design.
+        gateway: Persistence gateway bound to the fixture.
+    """
+    root = design.rootComponent
+    second_gate = _create_circular_profile(root, 7.5, 0.0, 0.0, 0.8, "QA Gate 2")
+    start_guide = _create_circular_profile(root, 1.5, 0.0, 0.0, 0.12, "QA Start Guide")
+    end_guide = _create_circular_profile(root, 8.5, 0.0, 0.0, 0.12, "QA End Guide")
+    append_pathway_gates(
+        HARNESS_ID,
+        PATHWAY_ID,
+        (second_gate.entityToken,),
+        gateway,
+        id_factory=lambda: SECOND_CONTROL_ID,
+    )
+    edit_end_members(
+        HARNESS_ID,
+        WIRE_ID,
+        "start",
+        "add",
+        gateway,
+        (start_guide.entityToken,),
+        expected_members=1,
+    )
+    edit_end_members(
+        HARNESS_ID,
+        WIRE_ID,
+        "end",
+        "add",
+        gateway,
+        (end_guide.entityToken,),
+        expected_members=1,
+    )
+
+
+def _verify_multi_wire_endpoint_history(
+    application: adsk.core.Application,
+    design: adsk.fusion.Design,
+    gateway: FusionHarnessGateway,
+) -> None:
+    """
+    Add a second fixture wire and verify endpoint-sequence history for the first.
+
+    Args:
+        application: Active Fusion application.
+        design: Isolated command-history design.
+        gateway: Persistence gateway bound to the fixture.
+    """
+    root = design.rootComponent
+    source = _create_circular_profile(root, 0.0, 0.3, 0.0, 0.12, "QA Source 2")
+    destination = _create_circular_profile(root, 10.0, 0.3, 0.0, 0.12, "QA Destination 2")
+    identifiers = iter(
+        (
+            SECOND_WIRE_PROFILE_ID,
+            SECOND_SOURCE_CONNECTION_ID,
+            SECOND_DESTINATION_CONNECTION_ID,
+            SECOND_WIRE_ID,
+        )
+    )
+    add_wire_batch(
+        HARNESS_ID,
+        PATHWAY_ID,
+        (source.entityToken,),
+        (destination.entityToken,),
+        1.0,
+        gateway,
+        id_factory=lambda: next(identifiers),
+    )
+    case = _PersistentEditCase(
+        "reorder wire endpoints",
+        "move_wire_endpoint",
+        {
+            "harnessId": str(HARNESS_ID),
+            "wireId": str(WIRE_ID),
+            "endpoint": "start",
+            "offset": 1,
+        },
+        lambda current: (
+            current.wires[0].start_connection_id == SECOND_SOURCE_CONNECTION_ID
+            and current.wires[1].start_connection_id == SOURCE_CONNECTION_ID
+        ),
+    )
+    _verify_persistent_edit_case(application, gateway, case)
+
+
+def _verify_persistent_edit_matrix(
+    application: adsk.core.Application,
+    gateway: FusionHarnessGateway,
+    report: ScenarioReport,
+) -> list[str]:
+    """
+    Verify one native transaction and palette projection for every matrix edit.
+
+    Args:
+        application: Active Fusion application.
+        gateway: Persistence gateway bound to the command fixture.
+        report: Scenario report receiving named edit steps.
+
+    Returns:
+        Ordered palette action names exercised by the matrix.
+    """
+    actions: list[str] = []
+    for case in _persistent_edit_cases(gateway):
+        with report.step(f"Persistent edit history: {case.name}"):
+            _verify_persistent_edit_case(application, gateway, case)
+        actions.append(case.action)
+    return actions
+
+
+def _verify_persistent_edit_case(
+    application: adsk.core.Application,
+    gateway: FusionHarnessGateway,
+    case: _PersistentEditCase,
+) -> None:
+    """
+    Prove one edit, Undo, Redo, and final restoration against data and palette state.
+
+    Args:
+        application: Active Fusion application.
+        gateway: Persistence gateway bound to the command fixture.
+        case: Action payload and expected-state predicate.
+    """
+    before = _read_definition(gateway)
+    before_palette = _palette_harness_projection(application)
+    execute_palette_action(application, case.action, json.dumps(case.payload))
+    wait_for(
+        application,
+        lambda: _matches_edit(gateway, before, case.matches_expected),
+        case.name,
+    )
+    after = _read_definition(gateway)
+    after_palette = _palette_harness_projection(application)
+    if after_palette == before_palette:
+        raise AssertionError(f"Palette projection did not change after {case.name}.")
+
+    _execute_native_history_command(application, "UndoCommand")
+    wait_for(application, lambda: _read_definition(gateway) == before, f"{case.name} Undo")
+    wait_for(
+        application,
+        lambda: _palette_harness_projection(application) == before_palette,
+        f"{case.name} palette Undo",
+    )
+
+    _execute_native_history_command(application, "RedoCommand")
+    wait_for(application, lambda: _read_definition(gateway) == after, f"{case.name} Redo")
+    wait_for(
+        application,
+        lambda: _palette_harness_projection(application) == after_palette,
+        f"{case.name} palette Redo",
+    )
+
+    _execute_native_history_command(application, "UndoCommand")
+    wait_for(
+        application,
+        lambda: _read_definition(gateway) == before,
+        f"{case.name} final restoration",
+    )
+    wait_for(
+        application,
+        lambda: _palette_harness_projection(application) == before_palette,
+        f"{case.name} final palette restoration",
+    )
+
+
+def _matches_edit(
+    gateway: FusionHarnessGateway,
+    before: HarnessDefinition,
+    matches_expected: Callable[[HarnessDefinition], bool],
+) -> bool:
+    """
+    Report whether an edit changed the definition and reached its intended result.
+    """
+    current = _read_definition(gateway)
+    return current != before and matches_expected(current)
+
+
+def _persistent_edit_cases(gateway: FusionHarnessGateway) -> tuple[_PersistentEditCase, ...]:
+    """
+    Build deterministic action payloads from the enriched one-wire fixture.
+    """
+    definition = _read_definition(gateway)
+    wire = definition.wires[0]
+    pathway = definition.pathways[0]
+    source = next(
+        item for item in definition.connections if item.connection_id == wire.start_connection_id
+    )
+    first_member_id = source.member_identities[0]
+    harness_id = str(HARNESS_ID)
+    wire_id = str(WIRE_ID)
+    pathway_id = str(PATHWAY_ID)
+    interpolation = {"approach_mm": 2.0, "departure_mm": 3.0}
+    material_defaults = {
+        "insulationMaterial": "QA ETFE",
+        "mainColor": {"name": "QA Blue", "red": 30, "green": 90, "blue": 210},
+        "appearance": None,
+        "stripes": [],
+        "conductorMaterial": "Copper",
+        "manufacturer": "Wire Bundler QA",
+        "partNumber": "QA-HISTORY-001",
+        "notes": "Command history fixture",
+    }
+    material_overrides = {
+        "insulationMaterial": None,
+        "mainColor": {"name": "QA Red", "red": 200, "green": 38, "blue": 38},
+        "appearance": None,
+        "stripes": [],
+        "conductorMaterial": None,
+        "manufacturer": None,
+        "partNumber": "QA-WIRE-HISTORY-001",
+        "notes": None,
+    }
+    return (
+        _PersistentEditCase(
+            "rename wire",
+            "rename_wire",
+            {"harnessId": harness_id, "wireId": wire_id, "name": RENAMED_WIRE},
+            lambda current: current.wires[0].display_name == RENAMED_WIRE,
+        ),
+        _PersistentEditCase(
+            "rename pathway",
+            "rename_pathway",
+            {
+                "harnessId": harness_id,
+                "pathwayId": pathway_id,
+                "field": "name",
+                "name": "QA Renamed Pathway",
+            },
+            lambda current: current.pathways[0].name == "QA Renamed Pathway",
+        ),
+        _PersistentEditCase(
+            "rename pathway start",
+            "rename_pathway",
+            {
+                "harnessId": harness_id,
+                "pathwayId": pathway_id,
+                "field": "start_name",
+                "name": "QA Pathway Start",
+            },
+            lambda current: current.pathways[0].start_name == "QA Pathway Start",
+        ),
+        _PersistentEditCase(
+            "rename pathway end",
+            "rename_pathway",
+            {
+                "harnessId": harness_id,
+                "pathwayId": pathway_id,
+                "field": "end_name",
+                "name": "QA Pathway End",
+            },
+            lambda current: current.pathways[0].end_name == "QA Pathway End",
+        ),
+        _PersistentEditCase(
+            "rename wire start",
+            "rename_route_end",
+            {
+                "harnessId": harness_id,
+                "wireId": wire_id,
+                "endpoint": "start",
+                "name": "QA Wire Start",
+            },
+            lambda current: current.wires[0].start_end_name == "QA Wire Start",
+        ),
+        _PersistentEditCase(
+            "rename wire end",
+            "rename_route_end",
+            {
+                "harnessId": harness_id,
+                "wireId": wire_id,
+                "endpoint": "end",
+                "name": "QA Wire End",
+            },
+            lambda current: current.wires[0].end_end_name == "QA Wire End",
+        ),
+        _PersistentEditCase(
+            "set wire diameter",
+            "set_wire_diameter",
+            {"harnessId": harness_id, "wireId": wire_id, "diameterMm": 1.25},
+            lambda current: current.profiles[-1].diameter_mm == 1.25,
+        ),
+        _PersistentEditCase(
+            "set gate interpolation",
+            "set_interpolation",
+            {
+                "harnessId": harness_id,
+                "target": "gate",
+                "targetId": str(CONTROL_ID),
+                "settings": interpolation,
+            },
+            lambda current: current.controls[0].interpolation.approach_mm == 2.0,
+        ),
+        _PersistentEditCase(
+            "set end-member interpolation",
+            "set_interpolation",
+            {
+                "harnessId": harness_id,
+                "target": "end",
+                "targetId": str(source.connection_id),
+                "memberId": str(first_member_id),
+                "settings": interpolation,
+            },
+            lambda current: current.connections[0].member_settings[0].departure_mm == 3.0,
+        ),
+        _PersistentEditCase(
+            "set interpolation defaults",
+            "set_interpolation",
+            {
+                "harnessId": harness_id,
+                "target": "defaults",
+                "settings": interpolation,
+                "endDefaults": {"approach_mm": 4.0, "departure_mm": 5.0},
+                "applyExisting": False,
+            },
+            lambda current: (
+                current.gate_defaults.approach_mm == 2.0
+                and current.end_defaults.departure_mm == 5.0
+            ),
+        ),
+        _PersistentEditCase(
+            "set harness material defaults",
+            "set_harness_material_defaults",
+            {"harnessId": harness_id, "materials": material_defaults},
+            lambda current: current.material_defaults.part_number == "QA-HISTORY-001",
+        ),
+        _PersistentEditCase(
+            "set wire material overrides",
+            "set_wire_material_overrides",
+            {"harnessId": harness_id, "wireId": wire_id, "overrides": material_overrides},
+            lambda current: (
+                current.wires[0].material_overrides.part_number == "QA-WIRE-HISTORY-001"
+            ),
+        ),
+        _PersistentEditCase(
+            "reorder pathway gates",
+            "move_pathway_gate",
+            {
+                "harnessId": harness_id,
+                "pathwayId": pathway_id,
+                "controlId": str(pathway.ordered_control_ids[0]),
+                "offset": 1,
+            },
+            lambda current: (
+                current.pathways[0].ordered_control_ids
+                == tuple(reversed(pathway.ordered_control_ids))
+            ),
+        ),
+        _PersistentEditCase(
+            "remove pathway gate",
+            "remove_pathway_gate",
+            {
+                "harnessId": harness_id,
+                "pathwayId": pathway_id,
+                "controlId": str(SECOND_CONTROL_ID),
+            },
+            lambda current: current.pathways[0].ordered_control_ids == (CONTROL_ID,),
+        ),
+        _PersistentEditCase(
+            "reorder end members",
+            "move_end_member",
+            {
+                "harnessId": harness_id,
+                "wireId": wire_id,
+                "endpoint": "start",
+                "memberIndex": 1,
+                "expectedMembers": 2,
+                "targetIndex": 0,
+            },
+            lambda current: (
+                current.connections[0].member_identities[0] == source.member_identities[1]
+            ),
+        ),
+        _PersistentEditCase(
+            "remove end member",
+            "remove_end_member",
+            {
+                "harnessId": harness_id,
+                "wireId": wire_id,
+                "endpoint": "start",
+                "memberIndex": 1,
+                "expectedMembers": 2,
+            },
+            lambda current: len(current.connections[0].member_tokens) == 1,
+        ),
+        _PersistentEditCase(
+            "remove wire",
+            "remove_wire",
+            {"harnessId": harness_id, "wireId": wire_id},
+            lambda current: not current.wires,
+        ),
+    )
+
+
+def _read_definition(gateway: FusionHarnessGateway) -> HarnessDefinition:
+    """
+    Read the current command fixture definition.
+    """
+    return loads(gateway.read_harness_definition(HARNESS_ID))
+
+
+def _palette_harness_projection(application: adsk.core.Application) -> dict[str, object]:
+    """
+    Read the serialized palette projection for the command fixture.
+    """
+    current_addin = importlib.import_module("wire_bundler.addin")
+    serialize_palette_state = vars(current_addin)["_serialize_palette_state"]
+    serialized = serialize_palette_state(application)
+    payload = json.loads(serialized)
+    if not isinstance(payload, dict):
+        raise AssertionError("Palette state is not an object.")
+    harnesses = payload.get("harnesses")
+    if not isinstance(harnesses, list):
+        raise AssertionError("Palette state omitted its harness collection.")
+    projection = next(
+        (
+            item
+            for item in harnesses
+            if isinstance(item, dict) and item.get("harnessId") == str(HARNESS_ID)
+        ),
+        None,
+    )
+    if projection is None:
+        raise AssertionError("Palette state omitted the command-history harness.")
+    return projection
 
 
 def _wire_name(gateway: FusionHarnessGateway) -> str:
@@ -411,10 +859,9 @@ def execute_palette_action(
         lambda: str(application.userInterface.activeCommand) == "SelectCommand",
         f"Fusion default command before {action}",
     )
-    # The experiment intentionally verifies this internal production boundary.
-    # noinspection PyProtectedMember
     current_addin = importlib.import_module("wire_bundler.addin")
-    current_addin._open_palette_edit(application, action, payload)
+    open_palette_edit = vars(current_addin)["_open_palette_edit"]
+    open_palette_edit(application, action, payload)
 
 
 def _clear_transient_preview(application: adsk.core.Application) -> int:
@@ -427,10 +874,9 @@ def _clear_transient_preview(application: adsk.core.Application) -> int:
     Returns:
         Number of removed top-level preview graphics groups.
     """
-    # The experiment intentionally verifies this internal production boundary.
-    # noinspection PyProtectedMember
     current_addin = importlib.import_module("wire_bundler.addin")
-    return current_addin._clear_preview(application)
+    clear_preview = vars(current_addin)["_clear_preview"]
+    return clear_preview(application)
 
 
 def _execute_native_history_command(
@@ -487,14 +933,10 @@ def wait_for(
         adsk.doEvents()
         if condition():
             return
-        # The scenario intentionally observes the running add-in's command boundary.
-        # noinspection PyProtectedMember
         current_addin = importlib.import_module("wire_bundler.addin")
-        if current_addin._last_command_error:
-            # noinspection PyProtectedMember
-            raise RuntimeError(
-                f"Fusion command failed during {description}: {current_addin._last_command_error}"
-            )
+        last_command_error = vars(current_addin)["_last_command_error"]
+        if last_command_error:
+            raise RuntimeError(f"Fusion command failed during {description}: {last_command_error}")
         sleep(0.01)
     active_command = application.userInterface.activeCommand
     raise RuntimeError(
