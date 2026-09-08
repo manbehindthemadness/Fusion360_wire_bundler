@@ -34,6 +34,15 @@ import adsk.fusion  # noqa: E402
 
 from experiments.experiment_reference_harness import _create_circular_profile  # noqa: E402
 from experiments.scenario_report import ScenarioReport  # noqa: E402
+from wire_bundler.addin import (  # noqa: E402
+    ADD_PATHWAY_COMMAND_ID,
+    ADD_WIRES_COMMAND_ID,
+    APPEND_GATES_COMMAND_ID,
+    DESTINATION_CONNECTIONS_INPUT_ID,
+    EDIT_END_COMMAND_ID,
+    PATHWAY_GATES_INPUT_ID,
+    SOURCE_CONNECTIONS_INPUT_ID,
+)
 from wire_bundler.application import (  # noqa: E402
     add_pathway,
     add_wire_batch,
@@ -73,6 +82,42 @@ class _PersistentEditCase:
     action: str
     payload: dict[str, object]
     matches_expected: Callable[[HarnessDefinition], bool]
+
+
+@dataclass(frozen=True)
+class _NativeSelectionCase:
+    """
+    Describe one selection-backed command and its expected persisted result.
+    """
+
+    name: str
+    command_id: str
+    open_command: Callable[[], None]
+    configure_inputs: Callable[[adsk.core.CommandInputs], None]
+    matches_expected: Callable[[HarnessDefinition], bool]
+    palette_changes: bool = True
+
+
+class _CommandCaptureHandler(adsk.core.CommandCreatedEventHandler):
+    """
+    Retain the real command created by one production command definition.
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialize an empty capture slot.
+        """
+        super().__init__()
+        self.command: Optional[adsk.core.Command] = None
+
+    def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
+        """
+        Capture the live command after its production creation handlers run.
+
+        Args:
+            args: Fusion command-created event arguments.
+        """
+        self.command = args.command
 
 
 def run(_context: object) -> None:
@@ -140,6 +185,12 @@ def verify_command_history(
             _augment_command_fixture(design, gateway)
 
         edit_actions = _verify_persistent_edit_matrix(application, gateway, report)
+        selection_actions = _verify_selection_backed_history(
+            application,
+            design,
+            gateway,
+            report,
+        )
 
         harness_payload = json.dumps({"harnessId": str(HARNESS_ID)})
         with report.step("Preview participates in native Undo and Redo"):
@@ -251,6 +302,9 @@ def verify_command_history(
                 "redoRestoredEdit": True,
                 "persistentEditActions": edit_actions,
                 "persistentEditCount": len(edit_actions),
+                "selectionBackedActions": selection_actions,
+                "selectionBackedCount": len(selection_actions),
+                "nativeSelectionInputs": True,
                 "paletteProjectionUndoRedo": True,
                 "previewUndoRedo": True,
                 "generateUndoRedo": True,
@@ -368,6 +422,365 @@ def _augment_command_fixture(
     )
 
 
+def _verify_selection_backed_history(
+    application: adsk.core.Application,
+    design: adsk.fusion.Design,
+    gateway: FusionHarnessGateway,
+    report: ScenarioReport,
+) -> list[str]:
+    """
+    Exercise every selection-backed production command through Undo and Redo.
+
+    Args:
+        application: Active Fusion application.
+        design: Isolated command-history design.
+        gateway: Persistence gateway bound to the fixture.
+        report: Scenario report receiving named command steps.
+
+    Returns:
+        Ordered native command operations exercised by the driver.
+    """
+    root = design.rootComponent
+    pathway_gate = _create_circular_profile(root, 6.0, 1.5, 0.0, 0.7, "QA New Path Gate")
+    appended_gate = _create_circular_profile(root, 6.5, -1.5, 0.0, 0.7, "QA Appended Gate")
+    added_member = _create_circular_profile(root, 1.0, 1.5, 0.0, 0.12, "QA Added Member")
+    replaced_member = _create_circular_profile(
+        root,
+        1.0,
+        -1.5,
+        0.0,
+        0.12,
+        "QA Replacement Member",
+    )
+    wire_source = _create_circular_profile(root, 0.0, 0.6, 0.0, 0.12, "QA Native Source")
+    wire_destination = _create_circular_profile(
+        root,
+        10.0,
+        0.6,
+        0.0,
+        0.12,
+        "QA Native Destination",
+    )
+    baseline = _read_definition(gateway)
+    source_tokens = _connection_member_tokens(baseline, SOURCE_CONNECTION_ID)
+    current_addin = importlib.import_module("wire_bundler.addin")
+    open_add_pathway = vars(current_addin)["_open_add_pathway_command"]
+    open_append_gates = vars(current_addin)["_open_append_gates_command"]
+    open_end_edit = vars(current_addin)["_open_end_member_edit"]
+    open_add_wires = vars(current_addin)["_open_add_wires_command"]
+    harness_payload = json.dumps({"harnessId": str(HARNESS_ID)})
+    pathway_payload = json.dumps({"harnessId": str(HARNESS_ID), "pathwayId": str(PATHWAY_ID)})
+    cases = (
+        _NativeSelectionCase(
+            "add pathway",
+            ADD_PATHWAY_COMMAND_ID,
+            lambda: open_add_pathway(application, harness_payload),
+            lambda inputs: _set_profile_selections(
+                inputs,
+                ((PATHWAY_GATES_INPUT_ID, (pathway_gate,)),),
+            ),
+            lambda current: _has_distinct_pathway_gate(
+                current,
+                PATHWAY_ID,
+                pathway_gate.entityToken,
+            ),
+        ),
+        _NativeSelectionCase(
+            "append pathway gate",
+            APPEND_GATES_COMMAND_ID,
+            lambda: open_append_gates(application, pathway_payload),
+            lambda inputs: _set_profile_selections(
+                inputs,
+                ((PATHWAY_GATES_INPUT_ID, (appended_gate,)),),
+            ),
+            lambda current: (
+                _pathway_last_gate_token(current, PATHWAY_ID) == appended_gate.entityToken
+            ),
+        ),
+        _NativeSelectionCase(
+            "add end member",
+            EDIT_END_COMMAND_ID,
+            lambda: open_end_edit(
+                application,
+                json.dumps(
+                    {
+                        "harnessId": str(HARNESS_ID),
+                        "wireId": str(WIRE_ID),
+                        "endpoint": "start",
+                        "editAction": "add",
+                        "memberIndex": 1,
+                        "expectedMembers": len(source_tokens),
+                        "targetIndex": 2,
+                    }
+                ),
+            ),
+            lambda inputs: _set_profile_selections(
+                inputs,
+                ((PATHWAY_GATES_INPUT_ID, (added_member,)),),
+            ),
+            lambda current: (
+                _connection_member_tokens(current, SOURCE_CONNECTION_ID)
+                == (*source_tokens, added_member.entityToken)
+            ),
+        ),
+        _NativeSelectionCase(
+            "replace end member",
+            EDIT_END_COMMAND_ID,
+            lambda: open_end_edit(
+                application,
+                json.dumps(
+                    {
+                        "harnessId": str(HARNESS_ID),
+                        "wireId": str(WIRE_ID),
+                        "endpoint": "start",
+                        "editAction": "replace",
+                        "memberIndex": 0,
+                        "expectedMembers": len(source_tokens),
+                        "targetIndex": 0,
+                    }
+                ),
+            ),
+            lambda inputs: _set_profile_selections(
+                inputs,
+                ((PATHWAY_GATES_INPUT_ID, (replaced_member,)),),
+            ),
+            lambda current: (
+                _connection_member_tokens(current, SOURCE_CONNECTION_ID)
+                == (replaced_member.entityToken, *source_tokens[1:])
+            ),
+            False,
+        ),
+        _NativeSelectionCase(
+            "add wire",
+            ADD_WIRES_COMMAND_ID,
+            lambda: open_add_wires(application, pathway_payload),
+            lambda inputs: _set_profile_selections(
+                inputs,
+                (
+                    (SOURCE_CONNECTIONS_INPUT_ID, (wire_source,)),
+                    (DESTINATION_CONNECTIONS_INPUT_ID, (wire_destination,)),
+                ),
+            ),
+            lambda current: _has_wire_between_tokens(
+                current,
+                wire_source.entityToken,
+                wire_destination.entityToken,
+            ),
+        ),
+    )
+    actions: list[str] = []
+    for case in cases:
+        with report.step(f"Selection-backed history: {case.name}"):
+            _verify_native_selection_case(application, gateway, case)
+        actions.append(case.name.replace(" ", "_"))
+    return actions
+
+
+def _verify_native_selection_case(
+    application: adsk.core.Application,
+    gateway: FusionHarnessGateway,
+    case: _NativeSelectionCase,
+) -> None:
+    """
+    Execute one real selection command and verify its complete history cycle.
+
+    Args:
+        application: Active Fusion application.
+        gateway: Persistence gateway bound to the fixture.
+        case: Native command, input population, and expected result.
+    """
+    _verify_definition_history(
+        application,
+        gateway,
+        case.name,
+        lambda: _execute_native_input_command(application, case),
+        case.matches_expected,
+        palette_must_change=case.palette_changes,
+    )
+
+
+def _execute_native_input_command(
+    application: adsk.core.Application,
+    case: _NativeSelectionCase,
+) -> None:
+    """
+    Populate and accept one production command after its dialog is active.
+
+    Autodesk permits programmatic selection population after ``commandCreated``;
+    the captured command is therefore configured only after the production opener
+    returns and Fusion has activated the dialog.
+
+    Args:
+        application: Active Fusion application.
+        case: Command opener and input configuration.
+    """
+    user_interface = application.userInterface
+    wait_for(
+        application,
+        lambda: str(user_interface.activeCommand) == "SelectCommand",
+        f"Fusion default command before {case.name}",
+    )
+    definition = user_interface.commandDefinitions.itemById(case.command_id)
+    if definition is None:
+        raise RuntimeError(f"Native command is unavailable: {case.command_id}")
+    capture = _CommandCaptureHandler()
+    if not definition.commandCreated.add(capture):
+        raise RuntimeError(f"Fusion could not observe native command: {case.command_id}")
+    executed = False
+    try:
+        case.open_command()
+        wait_for(
+            application,
+            lambda: (
+                capture.command is not None and str(user_interface.activeCommand) == case.command_id
+            ),
+            f"open {case.name}",
+        )
+        command = capture.command
+        if command is None:
+            raise RuntimeError(f"Fusion did not expose the live command for {case.name}.")
+        case.configure_inputs(command.commandInputs)
+        for _index in range(3):
+            adsk.doEvents()
+        if not command.doExecute(True):
+            raise RuntimeError(f"Fusion did not accept the configured {case.name} command.")
+        executed = True
+        wait_for(
+            application,
+            lambda: str(user_interface.activeCommand) != case.command_id,
+            f"terminate {case.name}",
+        )
+        _restore_default_select_command(application, case.name)
+    finally:
+        if not executed and str(user_interface.activeCommand) == case.command_id:
+            select_definition = user_interface.commandDefinitions.itemById("SelectCommand")
+            if select_definition is not None:
+                select_definition.execute()
+        if not definition.commandCreated.remove(capture):
+            raise RuntimeError(f"Fusion could not release the {case.name} command observer.")
+
+
+def _restore_default_select_command(
+    application: adsk.core.Application,
+    description: str,
+) -> None:
+    """
+    Restore Fusion's default command after programmatic dialog acceptance.
+
+    Args:
+        application: Active Fusion application.
+        description: Completed operation used in diagnostics.
+    """
+    user_interface = application.userInterface
+    if str(user_interface.activeCommand) == "SelectCommand":
+        return
+    select_definition = user_interface.commandDefinitions.itemById("SelectCommand")
+    if select_definition is None or not select_definition.execute():
+        raise RuntimeError(f"Fusion could not restore selection after {description}.")
+    wait_for(
+        application,
+        lambda: str(user_interface.activeCommand) == "SelectCommand",
+        f"restore selection after {description}",
+    )
+
+
+def _set_profile_selections(
+    inputs: adsk.core.CommandInputs,
+    selections: tuple[tuple[str, tuple[adsk.core.Base, ...]], ...],
+) -> None:
+    """
+    Populate real native selection inputs with deterministic sketch profiles.
+
+    Args:
+        inputs: Live production command inputs.
+        selections: Input IDs paired with ordered profile entities.
+    """
+    for input_id, entities in selections:
+        selection_input = adsk.core.SelectionCommandInput.cast(inputs.itemById(input_id))
+        if selection_input is None:
+            raise RuntimeError(f"Fusion command omitted selection input: {input_id}")
+        for entity in entities:
+            if not selection_input.addSelection(entity):
+                raise RuntimeError(f"Fusion rejected a profile for selection input: {input_id}")
+        if selection_input.selectionCount != len(entities):
+            raise AssertionError(
+                f"Fusion retained {selection_input.selectionCount} selections for {input_id}; "
+                f"expected {len(entities)}."
+            )
+
+
+def _connection_member_tokens(
+    definition: HarnessDefinition,
+    connection_id: UUID,
+) -> tuple[str, ...]:
+    """
+    Return the ordered profile tokens for one stable connection identity.
+    """
+    connection = next(
+        (item for item in definition.connections if item.connection_id == connection_id),
+        None,
+    )
+    return connection.member_tokens if connection is not None else ()
+
+
+def _has_distinct_pathway_gate(
+    definition: HarnessDefinition,
+    excluded_pathway_id: UUID,
+    gate_token: str,
+) -> bool:
+    """
+    Report whether another pathway owns a control linked to the requested profile.
+    """
+    controls = {control.control_id: control for control in definition.controls}
+    return any(
+        any(
+            control_id in controls and controls[control_id].entity_token == gate_token
+            for control_id in pathway.ordered_control_ids
+        )
+        for pathway in definition.pathways
+        if pathway.pathway_id != excluded_pathway_id
+    )
+
+
+def _pathway_last_gate_token(
+    definition: HarnessDefinition,
+    pathway_id: UUID,
+) -> str:
+    """
+    Return the linked token for the last control on one pathway.
+    """
+    pathway = next(
+        (item for item in definition.pathways if item.pathway_id == pathway_id),
+        None,
+    )
+    if pathway is None or not pathway.ordered_control_ids:
+        return ""
+    control_id = pathway.ordered_control_ids[-1]
+    control = next(
+        (item for item in definition.controls if item.control_id == control_id),
+        None,
+    )
+    return control.entity_token if control is not None else ""
+
+
+def _has_wire_between_tokens(
+    definition: HarnessDefinition,
+    source_token: str,
+    destination_token: str,
+) -> bool:
+    """
+    Report whether one wire connects the requested primary profile tokens.
+    """
+    connections = {connection.connection_id: connection for connection in definition.connections}
+    return any(
+        wire.start_connection_id in connections
+        and wire.end_connection_id in connections
+        and connections[wire.start_connection_id].entity_token == source_token
+        and connections[wire.end_connection_id].entity_token == destination_token
+        for wire in definition.wires
+    )
+
+
 def _verify_multi_wire_endpoint_history(
     application: adsk.core.Application,
     design: adsk.fusion.Design,
@@ -455,45 +868,73 @@ def _verify_persistent_edit_case(
         gateway: Persistence gateway bound to the command fixture.
         case: Action payload and expected-state predicate.
     """
+    _verify_definition_history(
+        application,
+        gateway,
+        case.name,
+        lambda: execute_palette_action(application, case.action, json.dumps(case.payload)),
+        case.matches_expected,
+    )
+
+
+def _verify_definition_history(
+    application: adsk.core.Application,
+    gateway: FusionHarnessGateway,
+    description: str,
+    execute: Callable[[], None],
+    matches_expected: Callable[[HarnessDefinition], bool],
+    palette_must_change: bool = True,
+) -> None:
+    """
+    Verify edit, Undo, Redo, and restoration against data and palette state.
+
+    Args:
+        application: Active Fusion application.
+        gateway: Persistence gateway bound to the command fixture.
+        description: Operation label used in timeout diagnostics.
+        execute: Real production command invocation.
+        matches_expected: Predicate identifying the intended edited state.
+        palette_must_change: Whether the public projection exposes the changed field.
+    """
     before = _read_definition(gateway)
     before_palette = _palette_harness_projection(application)
-    execute_palette_action(application, case.action, json.dumps(case.payload))
+    execute()
     wait_for(
         application,
-        lambda: _matches_edit(gateway, before, case.matches_expected),
-        case.name,
+        lambda: _matches_edit(gateway, before, matches_expected),
+        description,
     )
     after = _read_definition(gateway)
     after_palette = _palette_harness_projection(application)
-    if after_palette == before_palette:
-        raise AssertionError(f"Palette projection did not change after {case.name}.")
+    if palette_must_change and after_palette == before_palette:
+        raise AssertionError(f"Palette projection did not change after {description}.")
 
     _execute_native_history_command(application, "UndoCommand")
-    wait_for(application, lambda: _read_definition(gateway) == before, f"{case.name} Undo")
+    wait_for(application, lambda: _read_definition(gateway) == before, f"{description} Undo")
     wait_for(
         application,
         lambda: _palette_harness_projection(application) == before_palette,
-        f"{case.name} palette Undo",
+        f"{description} palette Undo",
     )
 
     _execute_native_history_command(application, "RedoCommand")
-    wait_for(application, lambda: _read_definition(gateway) == after, f"{case.name} Redo")
+    wait_for(application, lambda: _read_definition(gateway) == after, f"{description} Redo")
     wait_for(
         application,
         lambda: _palette_harness_projection(application) == after_palette,
-        f"{case.name} palette Redo",
+        f"{description} palette Redo",
     )
 
     _execute_native_history_command(application, "UndoCommand")
     wait_for(
         application,
         lambda: _read_definition(gateway) == before,
-        f"{case.name} final restoration",
+        f"{description} final restoration",
     )
     wait_for(
         application,
         lambda: _palette_harness_projection(application) == before_palette,
-        f"{case.name} final palette restoration",
+        f"{description} final palette restoration",
     )
 
 

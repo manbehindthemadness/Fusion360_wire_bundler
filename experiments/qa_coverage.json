@@ -100,7 +100,7 @@
       "status": "partial",
       "layers": ["fusion-command", "fusion-api", "mcp"],
       "evidence": ["tests/test_addin_palette_lifecycle.py", "experiments/experiment_command_history.py", "experiments/fusion_mcp_capabilities.json"],
-      "capabilities": ["selection-backed-create-edit-history", "palette-dom-state-observation"]
+      "capabilities": ["palette-dom-state-observation"]
     },
     {
       "id": "M0-LIFE-004",

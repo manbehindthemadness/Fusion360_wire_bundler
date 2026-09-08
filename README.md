@@ -26,7 +26,7 @@ Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, an
 - Drag a member row to a blue insertion line and release to reorder. Releasing outside its stack cancels the move.
 - Gate traversal uses the same drag-and-drop interaction. Both stacks show a separate far-left position number; stable gate names/IDs and end-member IDs follow their members.
 - Section counts align at the right, immediately before the disclosure arrow, independently of heading length.
-- Palette edits and Preview/Clear Preview execute as named Fusion commands, grouping definition and graphics changes into one undo transaction. Command completion reloads the palette and reconciles saved preview caches without creating a new edit. Live Fusion automation verifies every dialog-free palette edit plus Preview, Generate, Rebuild, and Clear Solids through native Undo/Redo, including exact definition and serialized palette-state restoration.
+- Palette edits and Preview/Clear Preview execute as named Fusion commands, grouping definition and graphics changes into one undo transaction. Command completion reloads the palette and reconciles saved preview caches without creating a new edit. Live Fusion automation verifies every dialog-free palette edit and all five selection-backed edit paths, plus Preview, Generate, Rebuild, and Clear Solids, through native Undo/Redo with exact definition and serialized palette-state restoration.
 - End-member rows drag and drop within their own stack and provide add-after, replace, and remove controls. Every profile center guides the preview; both stacks are ordered from terminal toward pathway. Edits refresh the active preview as needed.
 - Synchronized end-to-end wire-route and pathway-occupancy representations
 - Read-only Master Relationship Graphic below Validation, with one searchable card per pathway, curved connection-to-pathway links, and collapsible End A/End B connection lists centered around the pathway. Lists with seven or fewer connections open by default, and the retained per-harness threshold is editable. Each wire has one detailed colored and striped route graphic: its End A/End B nodes open their ordering editors, pathway nodes navigate to pathway configuration, and the wire specification and material controls remain beneath it. Diagram hover highlighting and click-through navigation remain connected to Fusion geometry. An independent projection audit cross-checks routes, pathway occupancy, and connection usage in both the application layer and palette.
@@ -335,11 +335,11 @@ orchestration rather than an add-in runtime surface.
 
 `experiments/experiment_command_history_runner/` is the focused command-history
 scenario. It creates an enriched harness in an isolated unsaved design; exercises all
-dialog-free palette mutations, including multi-wire endpoint ordering, plus Preview,
-Generate, Rebuild, Clear Preview, and Clear Solids through their production paths; and
-verifies native Undo and Redo against exact persisted definitions, serialized palette
-projections, preview graphics, and wire solids. It then closes the fixture and restores
-the user's previously active document.
+dialog-free palette mutations, all production selection-backed commands, including Add
+Pathway, Add Gates, member add/replace, and Add Wires, plus Preview, Generate, Rebuild,
+Clear Preview, and Clear Solids; and verifies native Undo and Redo against exact
+persisted definitions, serialized palette projections, preview graphics, and wire
+solids. It then closes the fixture and restores the user's previously active document.
 Register and run it from the Scripts tab, or invoke its assertion core through
 development MCP orchestration with changed modules refreshed.
 
@@ -419,17 +419,17 @@ Diameter-aware center drift, bounded oval deformation, and circular-envelope
 packing are parallel round-wire behavior. Ribbon routing remains a separate
 profile-gate system and follows completion of parallel-wire routing.
 
-Undo/Redo automation now covers every dialog-free palette mutation, including
-renames, dimensions, interpolation and material settings, gate/member removal and
-ordering, wire removal, and multi-wire endpoint ordering. Each case verifies the
-edited definition and serialized palette projection, one native Undo, Redo, and a
+Undo/Redo automation now covers every dialog-free palette mutation and every
+selection-backed edit command, including renames, dimensions, interpolation and
+material settings, gate/member creation, replacement, removal and ordering, pathway
+and wire creation, wire removal, and multi-wire endpoint ordering. Each case verifies
+the edited definition and serialized palette projection, one native Undo, Redo, and a
 final restoring Undo. Preview, Generate, Rebuild, transient Clear Preview, and Clear
 Solids are covered in the same isolated live Fusion scenario.
 
-Remaining command-history verification covers selection-backed Add Pathway, Add
-Gates, endpoint-member add/replace, and Add Wires commands; consecutive mixed
-Undo/Redo sequences; failure rollback; command-handler stop/start behavior; and
-actual palette DOM state such as disclosure expansion and hover behavior.
+Remaining command-history verification covers consecutive mixed Undo/Redo sequences,
+failure rollback, command-handler stop/start behavior, and actual palette DOM state
+such as disclosure expansion and hover behavior.
 
 Deferred UI follow-up: match Fusion’s light/dark color scheme, including automatic host/OS theme changes. The current palette remains light when the host switches to dark.
 
