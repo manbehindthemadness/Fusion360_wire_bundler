@@ -144,8 +144,8 @@
       "behavior": "Native and HTML dialogs open within their bounds with readable controls and no unintended scrollbars.",
       "status": "partial",
       "layers": ["palette", "fusion-api", "mcp", "os-window"],
-      "evidence": ["tests/test_palette.cjs", "tests/test_desktop_ui_capture.py", "experiments/desktop_ui_capture.py", "experiments/macos_fusion_windows.swift", "experiments/qa_orchestrator.py"],
-      "capabilities": ["screen-recording-permission", "native-selector-state", "pixel-baseline-comparison"]
+      "evidence": ["tests/test_palette.cjs", "tests/test_desktop_ui_capture.py", "tests/test_qa_orchestrator.py", "experiments/desktop_ui_capture.py", "experiments/macos_fusion_windows.swift", "experiments/qa_orchestrator.py"],
+      "capabilities": ["native-selector-state", "interactive-dialog-state-comparison"]
     },
     {
       "id": "M0-CLOUD-001",

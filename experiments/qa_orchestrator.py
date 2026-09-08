@@ -42,6 +42,7 @@ from experiments.qa_coverage import load_coverage_ledger
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ARTIFACT_ROOT = PROJECT_ROOT / "artifacts" / "verification"
 DEFAULT_MCP_URL = "http://127.0.0.1:27182/mcp"
+MAXIMUM_STABLE_DESKTOP_CHANGE = 0.02
 MCP_PROTOCOL_VERSION = "2025-03-26"
 FUSION_RESULT_PREFIX = "WIRE_BUNDLER_QA_RESULT="
 VISUAL_RESULT_PREFIX = "WIRE_BUNDLER_VISUAL_RESULT="
@@ -459,15 +460,20 @@ def _run_fusion_suite(endpoint: str, timeout_seconds: float) -> dict[str, object
 
 def _run_desktop_ui_oracle(endpoint: str, timeout_seconds: float) -> dict[str, object]:
     """
-    Capture the verified Fusion palette only when explicitly requested.
+    Compare two verified captures of the stable Fusion palette when explicitly requested.
 
     Returns:
         Passed metadata, a non-failing unavailable result, or a safety failure.
     """
     try:
-        palette_bounds = _read_palette_bounds(endpoint, timeout_seconds)
-        capture = capture_harness_builder_window(palette_bounds)
-        observation = desktop_capture_observation(capture)
+        first_bounds = _read_palette_bounds(endpoint, timeout_seconds)
+        first_capture = capture_harness_builder_window(first_bounds)
+        second_bounds = _read_palette_bounds(endpoint, timeout_seconds)
+        second_capture = capture_harness_builder_window(second_bounds)
+        observations = [
+            desktop_capture_observation(first_capture),
+            desktop_capture_observation(second_capture),
+        ]
     except DesktopCaptureSafetyError as error:
         return {"status": "failed", "error": str(error), "capturesPurged": True}
     except (
@@ -479,7 +485,33 @@ def _run_desktop_ui_oracle(endpoint: str, timeout_seconds: float) -> dict[str, o
         json.JSONDecodeError,
     ) as error:
         return {"status": "deferred", "reason": str(error), "capturesPurged": True}
-    return {"status": "passed", "observation": observation, "capturesPurged": True}
+    try:
+        difference = asdict(compare_pngs(first_capture.png, second_capture.png))
+    except ValueError as error:
+        return {"status": "failed", "error": str(error), "capturesPurged": True}
+    changed_fraction = float(difference["changed_pixel_fraction"])
+    palette_bounds_stable = first_bounds == second_bounds
+    comparison = {
+        **difference,
+        "maximum_changed_pixel_fraction": MAXIMUM_STABLE_DESKTOP_CHANGE,
+        "palette_bounds_stable": palette_bounds_stable,
+    }
+    result = {
+        "status": "passed",
+        "observations": observations,
+        "comparison": comparison,
+        "capturesPurged": True,
+    }
+    if not palette_bounds_stable:
+        result["status"] = "failed"
+        result["error"] = "Stable desktop palette moved or resized between captures."
+    elif changed_fraction > MAXIMUM_STABLE_DESKTOP_CHANGE:
+        result["status"] = "failed"
+        result["error"] = (
+            f"Stable desktop palette changed {changed_fraction:.2%}; maximum is "
+            f"{MAXIMUM_STABLE_DESKTOP_CHANGE:.2%}."
+        )
+    return result
 
 
 def _read_palette_bounds(endpoint: str, timeout_seconds: float) -> PaletteBounds:

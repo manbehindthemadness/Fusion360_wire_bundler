@@ -7,10 +7,13 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 from experiments import qa_orchestrator
+from experiments.png_oracle import ImageDifference
 from experiments.qa_orchestrator import CheckResult, HttpResponse, McpClient
 
 
@@ -183,6 +186,106 @@ def test_desktop_ui_unavailable_does_not_fail_fusion_suite(
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert exit_code == 0
     assert payload["fusion"]["desktopUiOracle"]["status"] == "deferred"
+
+
+def test_desktop_ui_oracle_compares_two_ephemeral_stable_captures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Turn opted-in exact-window capture into a rendered stability assertion.
+    """
+    bounds = qa_orchestrator.PaletteBounds(10, 20, 840, 760)
+    captures = [SimpleNamespace(png=b"first"), SimpleNamespace(png=b"second")]
+    monkeypatch.setattr(qa_orchestrator, "_read_palette_bounds", lambda *_args: bounds)
+    monkeypatch.setattr(
+        "experiments.qa_orchestrator.capture_harness_builder_window",
+        lambda _bounds: captures.pop(0),
+    )
+    monkeypatch.setattr(
+        "experiments.qa_orchestrator.desktop_capture_observation",
+        lambda capture: {"bytesObserved": len(capture.png), "purged": True},
+    )
+    monkeypatch.setattr(
+        "experiments.qa_orchestrator.compare_pngs",
+        lambda first, second: ImageDifference(0.001, 0.2, 4),
+    )
+
+    result = qa_orchestrator._run_desktop_ui_oracle("local", 1.0)
+
+    assert result["status"] == "passed"
+    observations = cast(list[dict[str, object]], result["observations"])
+    comparison = cast(dict[str, object], result["comparison"])
+    assert len(observations) == 2
+    assert comparison["palette_bounds_stable"] is True
+    assert comparison["changed_pixel_fraction"] == 0.001
+    assert result["capturesPurged"] is True
+
+
+def test_desktop_ui_oracle_fails_when_stable_palette_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Reject visible instability above the bounded desktop comparison tolerance.
+    """
+    bounds = qa_orchestrator.PaletteBounds(10, 20, 840, 760)
+    captures = [SimpleNamespace(png=b"first"), SimpleNamespace(png=b"second")]
+    monkeypatch.setattr(qa_orchestrator, "_read_palette_bounds", lambda *_args: bounds)
+    monkeypatch.setattr(
+        "experiments.qa_orchestrator.capture_harness_builder_window",
+        lambda _bounds: captures.pop(0),
+    )
+    monkeypatch.setattr(
+        "experiments.qa_orchestrator.desktop_capture_observation",
+        lambda _capture: {"purged": True},
+    )
+    monkeypatch.setattr(
+        "experiments.qa_orchestrator.compare_pngs",
+        lambda first, second: ImageDifference(0.03, 1.0, 20),
+    )
+
+    result = qa_orchestrator._run_desktop_ui_oracle("local", 1.0)
+
+    assert result["status"] == "failed"
+    assert "changed 3.00%" in result["error"]
+    assert result["capturesPurged"] is True
+
+
+def test_desktop_ui_oracle_fails_when_palette_moves_between_captures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Detect the fullscreen Space regression even when window contents remain stable.
+    """
+    bounds = [
+        qa_orchestrator.PaletteBounds(-840, 20, 840, 760),
+        qa_orchestrator.PaletteBounds(0, 30, 840, 760),
+    ]
+    captures = [SimpleNamespace(png=b"first"), SimpleNamespace(png=b"second")]
+    monkeypatch.setattr(
+        qa_orchestrator,
+        "_read_palette_bounds",
+        lambda *_args: bounds.pop(0),
+    )
+    monkeypatch.setattr(
+        "experiments.qa_orchestrator.capture_harness_builder_window",
+        lambda _bounds: captures.pop(0),
+    )
+    monkeypatch.setattr(
+        "experiments.qa_orchestrator.desktop_capture_observation",
+        lambda _capture: {"purged": True},
+    )
+    monkeypatch.setattr(
+        "experiments.qa_orchestrator.compare_pngs",
+        lambda first, second: ImageDifference(0.0, 0.0, 0),
+    )
+
+    result = qa_orchestrator._run_desktop_ui_oracle("local", 1.0)
+
+    assert result["status"] == "failed"
+    comparison = cast(dict[str, object], result["comparison"])
+    assert comparison["palette_bounds_stable"] is False
+    assert "moved or resized" in result["error"]
+    assert result["capturesPurged"] is True
 
 
 def test_fusion_bootstrap_refreshes_dependencies_before_importing_suite() -> None:

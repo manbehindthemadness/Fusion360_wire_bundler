@@ -143,6 +143,12 @@ system permission and starts no external automation; every UI-oracle run remains
 separate explicit action. Ordinary add-in use and the shipping self-diagnostic never
 request these permissions.
 
+The opted-in desktop oracle captures the verified Harness Builder window twice in a
+stable state and compares the pixels with a bounded tolerance. Both private temporary
+images are purged; the report retains only verified window metadata and difference
+metrics. Movement or resizing between captures also fails the check. Interactive
+dialog-state comparisons remain future automation work.
+
 Desktop UI capture has a second independent clamp: the adapter must resolve the target
 from the operating system's window inventory and verify that its owning executable or
 bundle identity is Autodesk Fusion. It accepts no caller-supplied rectangle, process,
