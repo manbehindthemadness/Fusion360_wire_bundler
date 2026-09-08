@@ -1342,7 +1342,7 @@ def _show_palette(application: adsk.core.Application) -> None:
             PALETTE_ID,
             COMMAND_NAME,
             PALETTE_HTML_URL,
-            True,
+            False,
             True,
             True,
             PALETTE_INITIAL_WIDTH,
@@ -1361,8 +1361,9 @@ def _show_palette(application: adsk.core.Application) -> None:
             raise RuntimeError("Fusion did not register the palette navigation handler.")
         _handlers.extend((incoming_handler, navigation_handler))
         _log_to_fusion(f"Harness Builder requested palette file: {palette.htmlFileURL}")
-    else:
-        palette.isVisible = True
+    palette.dockingOption = adsk.core.PaletteDockingOptions.PaletteDockOptionsToVerticalOnly
+    palette.dockingState = adsk.core.PaletteDockingStates.PaletteDockStateRight
+    palette.isVisible = True
     _send_palette_state(application)
 
 

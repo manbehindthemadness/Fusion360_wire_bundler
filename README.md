@@ -136,8 +136,9 @@ Any desktop-level capture or input automation is development-only and opt-in. Th
 top-level **Developer mode** checkbox defaults off and gates verbose diagnostics and
 future development-only controls. Enabling it requires agreement to a versioned
 disclosure about visible project information, input simulation, suitable test data, and
-Screen Recording or Accessibility permissions. The preference lasts only for the
-palette session and is not harness data. Enabling Developer mode grants no operating-
+Screen Recording or Accessibility permissions. Developer mode and verbose diagnostics
+remain selected across palette and add-in reloads until turned off; they are local UI
+preferences rather than harness data. Enabling Developer mode grants no operating-
 system permission and starts no external automation; every UI-oracle run remains a
 separate explicit action. Ordinary add-in use and the shipping self-diagnostic never
 request these permissions.

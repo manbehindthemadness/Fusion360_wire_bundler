@@ -91,7 +91,7 @@ class Element {
 }
 
 /** Evaluate the complete palette script with the Fusion transport mocked. */
-function palette(storage = new Map()) {
+function palette(storage = new Map(), preferences = storage) {
   const calls = [];
   /** @type {*} Palette functions are defined dynamically by the evaluated HTML script. */
   const context = {
@@ -101,10 +101,17 @@ function palette(storage = new Map()) {
       createElementNS: (_namespace, tag) => new Element(tag),
       getElementById: () => new Element('div'),
     },
-    window: { sessionStorage: {
-      getItem: (key) => storage.get(key) || null,
-      setItem: (key, value) => storage.set(key, value),
-    } },
+    window: {
+      sessionStorage: {
+        getItem: (key) => storage.get(key) || null,
+        setItem: (key, value) => storage.set(key, value),
+        removeItem: (key) => storage.delete(key),
+      },
+      localStorage: {
+        getItem: (key) => preferences.get(key) || null,
+        setItem: (key, value) => preferences.set(key, value),
+      },
+    },
   };
   const html = readFileSync(join(__dirname, '..', 'palette.html'), 'utf8');
   const scripts = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)]
@@ -904,6 +911,24 @@ test('developer mode requires disclosure agreement before activation', () => {
   assert.equal(context.ui.developerMode.checked, false);
   assert.equal(context.ui.verboseDiagnostics.disabled, true);
   assert.equal(storage.get('wireBundler.developerMode'), 'false');
+});
+
+test('developer mode and verbose diagnostics survive palette context recreation', () => {
+  const preferences = new Map();
+  const first = palette(new Map(), preferences).context;
+  first.ui.developerMode.checked = true;
+  first.ui.developerMode.events.change();
+  first.ui.developerConsentAgreement.checked = true;
+  first.ui.developerConsentAgreement.events.change();
+  first.ui.developerConsentForm.events.submit({ preventDefault() {} });
+  first.ui.verboseDiagnostics.checked = true;
+  first.ui.verboseDiagnostics.events.change();
+
+  const second = palette(new Map(), preferences).context;
+
+  assert.equal(second.ui.developerMode.checked, true);
+  assert.equal(second.ui.verboseDiagnostics.disabled, false);
+  assert.equal(second.ui.verboseDiagnostics.checked, true);
 });
 
 test('developer mode rejects stale consent and remains off after cancel or Escape', () => {

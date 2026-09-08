@@ -39,6 +39,7 @@ textarea:focus-visible, summary:focus-visible {
   z-index: 10;
   top: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -52,7 +53,9 @@ h2 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
 h3 { margin: 0; font-size: 13px; }
 .header-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
 }
 .developer-mode-toggle {

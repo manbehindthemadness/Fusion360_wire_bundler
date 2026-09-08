@@ -66,12 +66,12 @@ function setDeveloperMode(enabled) {
   developerModeEnabled = enabled;
   ui.developerMode.checked = enabled;
   ui.verboseDiagnostics.disabled = !enabled;
-  writeSession(DEVELOPER_MODE_STORAGE_KEY, String(enabled));
+  writePreference(DEVELOPER_MODE_STORAGE_KEY, String(enabled));
   if (enabled) {
-    writeSession(DEVELOPER_CONSENT_STORAGE_KEY, DEVELOPER_MODE_DISCLOSURE_VERSION);
+    writePreference(DEVELOPER_CONSENT_STORAGE_KEY, DEVELOPER_MODE_DISCLOSURE_VERSION);
   } else {
     ui.verboseDiagnostics.checked = false;
-    writeSession("wireBundler.verboseDiagnostics", "false");
+    writePreference("wireBundler.verboseDiagnostics", "false");
   }
   Array.from(ui.notice.children).forEach(updateNoticeEntry);
 }
@@ -322,10 +322,10 @@ ui.developerConsent.addEventListener("close", () => {
 ui.verboseDiagnostics.addEventListener("change", () => {
   if (!developerModeEnabled) {
     ui.verboseDiagnostics.checked = false;
-    writeSession("wireBundler.verboseDiagnostics", "false");
+    writePreference("wireBundler.verboseDiagnostics", "false");
     return;
   }
-  writeSession("wireBundler.verboseDiagnostics", String(ui.verboseDiagnostics.checked));
+  writePreference("wireBundler.verboseDiagnostics", String(ui.verboseDiagnostics.checked));
   Array.from(ui.notice.children).forEach(updateNoticeEntry);
 });
 ui.notice.addEventListener("mouseup", persistNoticeHeight);

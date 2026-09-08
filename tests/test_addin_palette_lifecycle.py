@@ -88,6 +88,12 @@ def addin_module(monkeypatch: pytest.MonkeyPatch) -> _PaletteLifecycleModule:
     )
     for handler_name in handler_names:
         setattr(core_module, handler_name, type(handler_name, (), {}))
+    core_module.PaletteDockingStates = SimpleNamespace(  # type: ignore[attr-defined]
+        PaletteDockStateRight="right"
+    )
+    core_module.PaletteDockingOptions = SimpleNamespace(  # type: ignore[attr-defined]
+        PaletteDockOptionsToVerticalOnly="vertical"
+    )
     adsk_module.core = core_module  # type: ignore[attr-defined]
     adsk_module.fusion = fusion_module  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "adsk", adsk_module)
@@ -204,6 +210,29 @@ def test_palette_opens_at_relationship_graphic_working_size(
     addin_module._show_palette(application)
 
     assert palettes.add.call_args.args[6:8] == (840, 760)
+    assert palettes.add.call_args.args[3] is False
+    assert palette.dockingOption == "vertical"
+    assert palette.dockingState == "right"
+    assert palette.isVisible is True
+
+
+def test_existing_palette_is_redocked_and_revealed(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Recover a floating palette that macOS moved outside Fusion's fullscreen Space.
+    """
+    palette = SimpleNamespace(dockingState="floating", isVisible=True)
+    palettes = SimpleNamespace(itemById=Mock(return_value=palette))
+    application = SimpleNamespace(userInterface=SimpleNamespace(palettes=palettes))
+    monkeypatch.setattr(addin_module, "_send_palette_state", lambda _application: None)
+
+    addin_module._show_palette(application)
+
+    assert palette.dockingState == "right"
+    assert palette.dockingOption == "vertical"
+    assert palette.isVisible is True
 
 
 def test_all_palette_resources_are_packaged(addin_module: _PaletteLifecycleModule) -> None:

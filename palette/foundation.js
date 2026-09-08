@@ -41,6 +41,16 @@ function removeSession(key) {
   catch (_error) { /* Palette storage is an optional convenience. */ }
 }
 
+function readPreference(key) {
+  try { return window.localStorage.getItem(key); }
+  catch (_error) { return null; }
+}
+
+function writePreference(key, value) {
+  try { window.localStorage.setItem(key, value); }
+  catch (_error) { /* Palette storage is an optional convenience. */ }
+}
+
 let currentState = { harnesses: [], notice: "" };
 let selectedHarnessKey = readSession("wireBundler.selectedHarness") || "";
 const routeFilters = new Map();
@@ -62,12 +72,12 @@ try {
   expandedSectionIds = [];
 }
 const expandedSections = new Set(expandedSectionIds);
-let developerModeEnabled = readSession(DEVELOPER_MODE_STORAGE_KEY) === "true"
-  && readSession(DEVELOPER_CONSENT_STORAGE_KEY) === DEVELOPER_MODE_DISCLOSURE_VERSION;
-if (!developerModeEnabled) writeSession(DEVELOPER_MODE_STORAGE_KEY, "false");
+let developerModeEnabled = readPreference(DEVELOPER_MODE_STORAGE_KEY) === "true"
+  && readPreference(DEVELOPER_CONSENT_STORAGE_KEY) === DEVELOPER_MODE_DISCLOSURE_VERSION;
+if (!developerModeEnabled) writePreference(DEVELOPER_MODE_STORAGE_KEY, "false");
 ui.developerMode.checked = developerModeEnabled;
 ui.verboseDiagnostics.checked = developerModeEnabled
-  && readSession("wireBundler.verboseDiagnostics") === "true";
+  && readPreference("wireBundler.verboseDiagnostics") === "true";
 ui.verboseDiagnostics.disabled = !developerModeEnabled;
 const storedNoticeHeight = Number(readSession("wireBundler.noticeHeight"));
 if (Number.isFinite(storedNoticeHeight) && storedNoticeHeight >= 72) {
