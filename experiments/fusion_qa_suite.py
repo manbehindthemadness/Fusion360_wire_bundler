@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import platform
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Optional
 
 # noinspection PyUnresolvedReferences
 import adsk.core
@@ -25,9 +26,23 @@ from experiments.scenario_report import ScenarioReport
 ADDIN_ROOT = Path(__file__).resolve().parent.parent
 ARTIFACT_ROOT = ADDIN_ROOT / "artifacts" / "verification"
 Scenario = Callable[[adsk.core.Application, ScenarioReport], None]
+FUSION_SCENARIOS: tuple[tuple[str, Scenario], ...] = (
+    ("fusion_capabilities", audit_fusion_capabilities),
+    ("command_history", verify_command_history),
+    ("sweep_matrix", verify_sweep_matrix),
+    ("reference_harness", verify_reference_harness),
+    ("preview_reload", verify_preview_reload),
+    ("assembly_placement", verify_assembly_placement),
+    ("linked_geometry", verify_linked_geometry),
+    ("generated_solids", verify_generated_solids),
+)
+FUSION_SCENARIO_NAMES = tuple(name for name, _scenario in FUSION_SCENARIOS)
 
 
-def run_automated_fusion_suite(application: adsk.core.Application) -> dict[str, object]:
+def run_automated_fusion_suite(
+    application: adsk.core.Application,
+    scenario_names: Optional[Sequence[str]] = None,
+) -> dict[str, object]:
     """
     Run every cleanup-safe live scenario and return one JSON-safe result.
 
@@ -36,20 +51,17 @@ def run_automated_fusion_suite(application: adsk.core.Application) -> dict[str, 
 
     Args:
         application: Active Fusion application.
+        scenario_names: Optional ordered subset of structural scenario names.
 
     Returns:
         Aggregate live-suite result including each durable scenario report path.
     """
-    scenarios: tuple[tuple[str, Scenario], ...] = (
-        ("fusion_capabilities", audit_fusion_capabilities),
-        ("command_history", verify_command_history),
-        ("sweep_matrix", verify_sweep_matrix),
-        ("reference_harness", verify_reference_harness),
-        ("preview_reload", verify_preview_reload),
-        ("assembly_placement", verify_assembly_placement),
-        ("linked_geometry", verify_linked_geometry),
-        ("generated_solids", verify_generated_solids),
-    )
+    scenarios_by_name = dict(FUSION_SCENARIOS)
+    selected_names = tuple(scenario_names) if scenario_names is not None else FUSION_SCENARIO_NAMES
+    unknown_names = tuple(name for name in selected_names if name not in scenarios_by_name)
+    if unknown_names:
+        raise ValueError(f"Unknown Fusion QA scenarios: {', '.join(unknown_names)}")
+    scenarios = tuple((name, scenarios_by_name[name]) for name in selected_names)
     initial_document = application.activeDocument
     initial_document_count = application.documents.count
     results = []
@@ -104,6 +116,7 @@ def run_automated_fusion_suite(application: adsk.core.Application) -> dict[str, 
             "documentCountStable": document_count_stable,
             "activeDocumentRestored": active_document_restored,
         },
+        "selection": {"scenarios": list(selected_names)},
         "scenarios": results,
     }
 

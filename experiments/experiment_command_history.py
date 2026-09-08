@@ -40,6 +40,7 @@ from wire_bundler.addin import (  # noqa: E402
     APPEND_GATES_COMMAND_ID,
     DESTINATION_CONNECTIONS_INPUT_ID,
     EDIT_END_COMMAND_ID,
+    PALETTE_ID,
     PATHWAY_GATES_INPUT_ID,
     SOURCE_CONNECTIONS_INPUT_ID,
 )
@@ -82,6 +83,7 @@ class _PersistentEditCase:
     action: str
     payload: dict[str, object]
     matches_expected: Callable[[HarnessDefinition], bool]
+    observe_palette_dom: bool = False
 
 
 @dataclass(frozen=True)
@@ -165,7 +167,10 @@ def verify_command_history(
     """
     previous_document = application.activeDocument
     test_document: Optional[adsk.core.Document] = None
+    original_palette_url: Optional[str] = None
     try:
+        with report.step("Refresh development palette resources"):
+            original_palette_url = _reload_palette_resources(application)
         with report.step("Create isolated one-wire command fixture"):
             test_document = application.documents.add(
                 adsk.core.DocumentTypes.FusionDesignDocumentType
@@ -306,6 +311,7 @@ def verify_command_history(
                 "selectionBackedCount": len(selection_actions),
                 "nativeSelectionInputs": True,
                 "paletteProjectionUndoRedo": True,
+                "paletteDomUndoRedo": True,
                 "previewUndoRedo": True,
                 "generateUndoRedo": True,
                 "rebuildUndoRedo": True,
@@ -322,6 +328,8 @@ def verify_command_history(
         if previous_document is not None and previous_document.isValid:
             if application.activeDocument != previous_document and not previous_document.activate():
                 raise RuntimeError("Fusion did not restore the previously active document.")
+        if original_palette_url is not None:
+            _restore_palette_url(application, original_palette_url)
 
 
 def build_single_wire_fixture(
@@ -868,12 +876,23 @@ def _verify_persistent_edit_case(
         gateway: Persistence gateway bound to the command fixture.
         case: Action payload and expected-state predicate.
     """
+    dom_observer: Optional[Callable[[HarnessDefinition, str], None]] = None
+    if case.observe_palette_dom:
+
+        def observe_palette_dom(definition: HarnessDefinition, phase: str) -> None:
+            """
+            Bind the active application to this edit case's DOM assertion.
+            """
+            _observe_wire_palette_dom(application, definition, phase)
+
+        dom_observer = observe_palette_dom
     _verify_definition_history(
         application,
         gateway,
         case.name,
         lambda: execute_palette_action(application, case.action, json.dumps(case.payload)),
         case.matches_expected,
+        dom_observer=dom_observer,
     )
 
 
@@ -884,6 +903,7 @@ def _verify_definition_history(
     execute: Callable[[], None],
     matches_expected: Callable[[HarnessDefinition], bool],
     palette_must_change: bool = True,
+    dom_observer: Optional[Callable[[HarnessDefinition, str], None]] = None,
 ) -> None:
     """
     Verify edit, Undo, Redo, and restoration against data and palette state.
@@ -895,9 +915,12 @@ def _verify_definition_history(
         execute: Real production command invocation.
         matches_expected: Predicate identifying the intended edited state.
         palette_must_change: Whether the public projection exposes the changed field.
+        dom_observer: Optional live palette assertion after each history phase.
     """
     before = _read_definition(gateway)
     before_palette = _palette_harness_projection(application)
+    if dom_observer is not None:
+        dom_observer(before, "initial")
     execute()
     wait_for(
         application,
@@ -908,6 +931,8 @@ def _verify_definition_history(
     after_palette = _palette_harness_projection(application)
     if palette_must_change and after_palette == before_palette:
         raise AssertionError(f"Palette projection did not change after {description}.")
+    if dom_observer is not None:
+        dom_observer(after, "edited")
 
     _execute_native_history_command(application, "UndoCommand")
     wait_for(application, lambda: _read_definition(gateway) == before, f"{description} Undo")
@@ -916,6 +941,8 @@ def _verify_definition_history(
         lambda: _palette_harness_projection(application) == before_palette,
         f"{description} palette Undo",
     )
+    if dom_observer is not None:
+        dom_observer(before, "undo")
 
     _execute_native_history_command(application, "RedoCommand")
     wait_for(application, lambda: _read_definition(gateway) == after, f"{description} Redo")
@@ -924,6 +951,8 @@ def _verify_definition_history(
         lambda: _palette_harness_projection(application) == after_palette,
         f"{description} palette Redo",
     )
+    if dom_observer is not None:
+        dom_observer(after, "redo")
 
     _execute_native_history_command(application, "UndoCommand")
     wait_for(
@@ -936,6 +965,109 @@ def _verify_definition_history(
         lambda: _palette_harness_projection(application) == before_palette,
         f"{description} final palette restoration",
     )
+    if dom_observer is not None:
+        dom_observer(before, "final restoration")
+
+
+def _observe_wire_palette_dom(
+    application: adsk.core.Application,
+    definition: HarnessDefinition,
+    phase: str,
+) -> None:
+    """
+    Prove that the consent-gated live palette rendered the expected wire label.
+
+    The fixed JavaScript probe clears a known viewport selection only after it
+    finds the requested harness and wire in the real DOM with the exact expected
+    label. No selector or executable script crosses the palette boundary.
+
+    Args:
+        application: Active Fusion application.
+        definition: Persisted state expected in the palette.
+        phase: History phase used in timeout diagnostics.
+    """
+    wire = next((item for item in definition.wires if item.wire_id == WIRE_ID), None)
+    if wire is None:
+        raise AssertionError("Palette DOM probe wire is missing from the definition.")
+    connection = next(
+        (item for item in definition.connections if item.connection_id == wire.start_connection_id),
+        None,
+    )
+    if connection is None:
+        raise AssertionError("Palette DOM probe source connection is missing.")
+    design = adsk.fusion.Design.cast(application.activeProduct)
+    entities = design.findEntityByToken(connection.entity_token) if design is not None else ()
+    profile = adsk.fusion.Profile.cast(entities[0] if entities else None)
+    if profile is None:
+        raise AssertionError("Palette DOM probe source profile no longer resolves.")
+    palette = application.userInterface.palettes.itemById(PALETTE_ID)
+    if palette is None or not palette.isVisible:
+        raise RuntimeError("Harness Builder palette must be visible for DOM verification.")
+    selections = application.userInterface.activeSelections
+    if not selections.clear() or not selections.add(profile):
+        raise RuntimeError("Fusion could not prepare the palette DOM probe sentinel.")
+    expected_label = wire.display_name or f"Wire #{wire.wire_number}"
+    payload = json.dumps(
+        {
+            "operation": "observe_wire",
+            "harnessId": str(definition.harness_id),
+            "wireId": str(wire.wire_id),
+            "expectedLabel": expected_label,
+        }
+    )
+    current_addin = importlib.import_module("wire_bundler.addin")
+    vars(current_addin)["_send_palette_state"](application)
+    deadline = monotonic() + 5.0
+    while monotonic() < deadline:
+        palette.sendInfoToHTML("qa_probe", payload)
+        for _index in range(3):
+            adsk.doEvents()
+        if selections.count == 0:
+            return
+        sleep(0.05)
+    selections.clear()
+    raise RuntimeError(
+        f"Palette DOM did not render {expected_label!r} during {phase}; "
+        "Developer mode with current disclosure consent is required."
+    )
+
+
+def _reload_palette_resources(application: adsk.core.Application) -> str:
+    """
+    Reload local palette files for this development-only live scenario.
+
+    Args:
+        application: Active Fusion application.
+
+    Returns:
+        Original palette URL restored during scenario cleanup.
+    """
+    palette = application.userInterface.palettes.itemById(PALETTE_ID)
+    if palette is None or not palette.isVisible:
+        raise RuntimeError("Harness Builder palette must be visible for DOM verification.")
+    original_url = str(palette.htmlFileURL)
+    base_url = (ADDIN_ROOT / "palette.html").resolve().as_uri()
+    palette.htmlFileURL = f"{base_url}?wire_bundler_qa={int(monotonic() * 1_000_000)}"
+    for _index in range(5):
+        adsk.doEvents()
+        sleep(0.05)
+    return original_url
+
+
+def _restore_palette_url(application: adsk.core.Application, original_url: str) -> None:
+    """
+    Restore the ordinary palette resource URL after a focused live scenario.
+
+    Args:
+        application: Active Fusion application.
+        original_url: URL captured before the development refresh.
+    """
+    palette = application.userInterface.palettes.itemById(PALETTE_ID)
+    if palette is None:
+        return
+    palette.htmlFileURL = original_url
+    for _index in range(3):
+        adsk.doEvents()
 
 
 def _matches_edit(
@@ -991,6 +1123,7 @@ def _persistent_edit_cases(gateway: FusionHarnessGateway) -> tuple[_PersistentEd
             "rename_wire",
             {"harnessId": harness_id, "wireId": wire_id, "name": RENAMED_WIRE},
             lambda current: current.wires[0].display_name == RENAMED_WIRE,
+            observe_palette_dom=True,
         ),
         _PersistentEditCase(
             "rename pathway",

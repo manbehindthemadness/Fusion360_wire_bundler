@@ -931,6 +931,52 @@ test('developer mode and verbose diagnostics survive palette context recreation'
   assert.equal(second.ui.verboseDiagnostics.checked, true);
 });
 
+asyncTest('developer mode QA probe observes the rendered wire DOM through a fixed target', async () => {
+  const preferences = new Map([
+    ['wireBundler.developerMode', 'true'],
+    ['wireBundler.developerConsentVersion', '1'],
+  ]);
+  const { context } = palette(new Map(), preferences);
+  const definition = harness();
+  const sent = [];
+  context.window.scrollTo = () => {};
+  context.send = async (action, payload) => sent.push({ action, payload });
+  runInNewContext(
+    'currentState = { harnesses: [definition], notice: "" };',
+    Object.assign(context, { definition }),
+  );
+
+  const result = context.window.fusionJavaScriptHandler.handle('qa_probe', JSON.stringify({
+    operation: 'observe_wire',
+    harnessId: 'h',
+    wireId: 'w1',
+    expectedLabel: 'Wire #001',
+  }));
+  await Promise.resolve();
+
+  assert.equal(result, 'OK');
+  assert.deepEqual(sent, [{ action: 'clear_highlight', payload: undefined }]);
+  assert.equal(context.ui.libraryView.hidden, true);
+  assert.equal(context.ui.editorView.hidden, false);
+  assert.equal(
+    context.ui.editor.querySelector('[data-wire-id="w1"]')
+      .querySelector('.member-reference').textContent,
+    'Wire #001',
+  );
+});
+
+test('palette QA probe is denied without current developer consent', () => {
+  const { context } = palette();
+  const result = context.window.fusionJavaScriptHandler.handle('qa_probe', JSON.stringify({
+    operation: 'observe_wire',
+    harnessId: 'h',
+    wireId: 'w1',
+    expectedLabel: 'Wire #001',
+  }));
+
+  assert.equal(result, 'DENIED');
+});
+
 test('developer mode rejects stale consent and remains off after cancel or Escape', () => {
   const storage = new Map([
     ['wireBundler.developerMode', 'true'],

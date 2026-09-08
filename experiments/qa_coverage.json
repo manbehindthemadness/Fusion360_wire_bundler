@@ -97,10 +97,10 @@
       "id": "M0-LIFE-003",
       "area": "command-history",
       "behavior": "Every persistent edit, Preview, Generate, Rebuild, and Clear Solids operation creates one reversible Fusion history action with stable Undo/Redo results; transient Clear Preview removes graphics immediately.",
-      "status": "partial",
-      "layers": ["fusion-command", "fusion-api", "mcp"],
-      "evidence": ["tests/test_addin_palette_lifecycle.py", "experiments/experiment_command_history.py", "experiments/fusion_mcp_capabilities.json"],
-      "capabilities": ["palette-dom-state-observation"]
+      "status": "automated",
+      "layers": ["palette", "fusion-command", "fusion-api", "mcp"],
+      "evidence": ["tests/test_addin_palette_lifecycle.py", "tests/test_palette.cjs", "palette/host.js", "experiments/experiment_command_history.py", "experiments/fusion_mcp_capabilities.json"],
+      "capabilities": []
     },
     {
       "id": "M0-LIFE-004",

@@ -93,6 +93,35 @@ function persistNoticeHeight() {
   if (Number.isFinite(height)) writeSession("wireBundler.noticeHeight", String(height));
 }
 
+function handleQaProbe(data) {
+  if (!developerModeEnabled) return "DENIED";
+  let payload;
+  try {
+    payload = JSON.parse(data);
+  } catch (_error) {
+    return "INVALID";
+  }
+  const validText = (value) => typeof value === "string" && value.length > 0
+    && value.length <= 160;
+  if (payload?.operation !== "observe_wire"
+      || !validText(payload.harnessId)
+      || !validText(payload.wireId)
+      || !validText(payload.expectedLabel)) return "INVALID";
+  const harness = currentState.harnesses.find(
+    (candidate) => harnessKey(candidate) === payload.harnessId,
+  );
+  const wire = harness?.wires?.find((candidate) => candidate.wireId === payload.wireId);
+  if (!harness || !wire || wireLabel(wire) !== payload.expectedLabel) return "MISMATCH";
+  openHarness(payload.harnessId);
+  const card = Array.from(ui.editor.querySelectorAll("div"))
+    .find((candidate) => candidate.dataset.wireId === payload.wireId);
+  const label = card?.querySelector(".member-reference");
+  if (ui.editorView.hidden || !ui.libraryView.hidden || !card
+      || label?.textContent !== payload.expectedLabel) return "MISMATCH";
+  void send("clear_highlight").catch(() => {});
+  return "OK";
+}
+
 function waitForFusionHost() {
   return new Promise((resolve, reject) => {
     let attempts = 0;
@@ -331,6 +360,7 @@ ui.verboseDiagnostics.addEventListener("change", () => {
 ui.notice.addEventListener("mouseup", persistNoticeHeight);
 window.fusionJavaScriptHandler = { handle(action, data) {
   if (action === "state") render(JSON.parse(data));
+  if (action === "qa_probe") return handleQaProbe(data);
   return "OK";
 }};
 void refresh();

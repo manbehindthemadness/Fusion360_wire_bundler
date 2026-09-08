@@ -115,6 +115,13 @@ development orchestration that starts scenarios, inspects Fusion, captures evide
 and collects reports through the local MCP server. MCP and developer tools remain test
 infrastructure and never become add-in runtime dependencies.
 
+Command-history QA also observes the live palette DOM. A consent-gated, fixed-target
+probe verifies the rendered wire label through edit, Undo, Redo, and final restoration,
+then signals success by clearing a prepared Fusion selection. The probe accepts only
+stable harness and wire identities plus the expected label; it does not accept selectors
+or executable code. The live scenario refreshes local palette resources and restores the
+ordinary palette URL during cleanup.
+
 The viewport layer includes a deterministic generated-wire oracle. It builds an
 isolated striped wire, verifies that hiding the component-owned stripe meshes changes
 the rendered result, compares isometric and top views, and checks rebuild, parent
@@ -287,7 +294,8 @@ fairing and body-generation assertions as those production services are implemen
 ## Fusion automation capability audit
 
 Run the complete development QA procedure from the repository root while Fusion and the
-Wire Bundler add-in are running:
+Wire Bundler add-in are running. Enable the consented Developer mode in Harness Builder
+so the live command-history scenario can observe its rendered DOM:
 
 ```text
 uv run python experiments/run_qa.py
@@ -295,19 +303,30 @@ uv run python experiments/run_qa.py
 
 The command runs pytest, the JavaScript palette regressions, Ruff lint and formatting,
 and the Git whitespace check. It then negotiates a temporary session with the local
-Fusion MCP server and runs the capability, command-history, Sweep-matrix, reference-
-harness, and preview save/reload scenarios sequentially. The first four scenarios use
-isolated unsaved designs. The preview lifecycle scenario creates one uniquely named file
-in Fusion's active cloud folder, waits for processing, reopens it, and deletes it during
-mandatory cleanup. Every scenario closes its documents and restores the previously
-active document. The MCP session is deleted in a `finally` path. One aggregate JSON
-report and the individual live reports are written under `artifacts/verification/`; the
-process exits nonzero if any selected layer fails.
+Fusion MCP server and runs all structural scenarios plus both viewport visual oracles.
+Scenarios use isolated unsaved or disposable cloud designs according to what they need.
+Every scenario closes its documents and restores the previously active document. The
+MCP session is deleted in a `finally` path. One aggregate JSON report and the individual
+live reports are written under `artifacts/verification/`; the process exits nonzero if
+any selected layer fails.
 
 Use `--local-only` when Fusion is unavailable or `--fusion-only` while iterating on live
 scenarios. `--command-timeout` and `--fusion-timeout` override the bounded defaults. The
 orchestrator uses only the Python standard library plus the existing development tools,
 lives under `experiments/`, and is not a runtime or installation dependency.
+
+Task-specific runs can select one or more named checks without paying for unrelated
+work. Repeat either selection option to include more than one target:
+
+```text
+uv run python experiments/run_qa.py --local-only --local-check palette
+uv run python experiments/run_qa.py --fusion-only --fusion-scenario command_history
+```
+
+`--local-check` accepts `pytest`, `palette`, `ruff-lint`, `ruff-format`, and
+`diff-check`. `--fusion-scenario` accepts the scenario names listed by `--help` and
+skips both viewport visual oracles; an explicitly requested `--desktop-ui` check still
+runs. Omit the selection options for the complete pre-milestone suite.
 
 On an explicitly configured development machine, add `--desktop-ui` to probe the
 forward-facing Harness Builder window. This opt-in macOS adapter requires Screen

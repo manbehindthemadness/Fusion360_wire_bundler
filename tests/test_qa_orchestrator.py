@@ -88,12 +88,15 @@ def test_aggregate_report_returns_failure_for_failed_selected_layer(
     monkeypatch.setattr(
         qa_orchestrator,
         "_run_local_checks",
-        lambda _timeout: [CheckResult("pytest", "failed", 1.0, "failure")],
+        lambda _timeout, _selected=None: [CheckResult("pytest", "failed", 1.0, "failure")],
     )
     monkeypatch.setattr(
         qa_orchestrator,
         "_run_fusion_suite",
-        lambda _endpoint, _timeout: {"status": "passed", "scenarios": []},
+        lambda _endpoint, _timeout, _selected=None: {
+            "status": "passed",
+            "scenarios": [],
+        },
     )
 
     exit_code, report_path = qa_orchestrator.run_qa()
@@ -117,7 +120,7 @@ def test_local_only_report_marks_fusion_skipped(
     monkeypatch.setattr(
         qa_orchestrator,
         "_run_local_checks",
-        lambda _timeout: [CheckResult("pytest", "passed", 1.0)],
+        lambda _timeout, _selected=None: [CheckResult("pytest", "passed", 1.0)],
     )
 
     exit_code, report_path = qa_orchestrator.run_qa(run_fusion=False)
@@ -126,6 +129,78 @@ def test_local_only_report_marks_fusion_skipped(
     assert exit_code == 0
     assert payload["status"] == "passed"
     assert payload["fusion"]["status"] == "skipped"
+
+
+def test_local_check_selection_runs_only_requested_checks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Run a task-specific local subset in the requested order.
+    """
+    observed: list[tuple[str, tuple[str, ...], float]] = []
+
+    def record_command(
+        name: str,
+        command: tuple[str, ...],
+        timeout_seconds: float,
+    ) -> CheckResult:
+        observed.append((name, command, timeout_seconds))
+        return CheckResult(name, "passed", 1.0)
+
+    monkeypatch.setattr(qa_orchestrator, "_run_command", record_command)
+
+    results = qa_orchestrator._run_local_checks(
+        12.0,
+        ("palette", "diff-check"),
+    )
+
+    assert [result.name for result in results] == ["palette", "diff-check"]
+    assert [item[0] for item in observed] == ["palette", "diff-check"]
+    assert observed[0][1] == ("node", "tests/test_palette.cjs")
+    assert all(item[2] == 12.0 for item in observed)
+
+
+def test_qa_report_records_and_forwards_focused_selections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Preserve focused selections in execution and durable report evidence.
+    """
+    observed: dict[str, object] = {}
+
+    def local_checks(
+        _timeout: float,
+        selected: tuple[str, ...] | None = None,
+    ) -> list[CheckResult]:
+        observed["local"] = selected
+        return [CheckResult("palette", "passed", 1.0)]
+
+    def fusion_suite(
+        _endpoint: str,
+        _timeout: float,
+        selected: tuple[str, ...] | None = None,
+    ) -> dict[str, object]:
+        observed["fusion"] = selected
+        return {"status": "passed", "scenarios": []}
+
+    monkeypatch.setattr(qa_orchestrator, "ARTIFACT_ROOT", tmp_path)
+    monkeypatch.setattr(qa_orchestrator, "_run_local_checks", local_checks)
+    monkeypatch.setattr(qa_orchestrator, "_run_fusion_suite", fusion_suite)
+
+    exit_code, report_path = qa_orchestrator.run_qa(
+        local_checks=("palette",),
+        fusion_scenarios=("command_history",),
+    )
+
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert observed == {
+        "local": ("palette",),
+        "fusion": ("command_history",),
+    }
+    assert payload["selection"]["localChecks"] == ["palette"]
+    assert payload["selection"]["fusionScenarios"] == ["command_history"]
 
 
 def test_desktop_ui_capture_is_opt_in(
@@ -139,12 +214,15 @@ def test_desktop_ui_capture_is_opt_in(
     monkeypatch.setattr(
         qa_orchestrator,
         "_run_local_checks",
-        lambda _timeout: [CheckResult("pytest", "passed", 1.0)],
+        lambda _timeout, _selected=None: [CheckResult("pytest", "passed", 1.0)],
     )
     monkeypatch.setattr(
         qa_orchestrator,
         "_run_fusion_suite",
-        lambda _endpoint, _timeout: {"status": "passed", "scenarios": []},
+        lambda _endpoint, _timeout, _selected=None: {
+            "status": "passed",
+            "scenarios": [],
+        },
     )
     monkeypatch.setattr(
         qa_orchestrator,
@@ -170,7 +248,10 @@ def test_desktop_ui_unavailable_does_not_fail_fusion_suite(
     monkeypatch.setattr(
         qa_orchestrator,
         "_run_fusion_suite",
-        lambda _endpoint, _timeout: {"status": "passed", "scenarios": []},
+        lambda _endpoint, _timeout, _selected=None: {
+            "status": "passed",
+            "scenarios": [],
+        },
     )
     monkeypatch.setattr(
         qa_orchestrator,
@@ -309,6 +390,16 @@ def test_fusion_bootstrap_refreshes_dependencies_before_importing_suite() -> Non
         < generated_solids_import
         < suite_import
     )
+
+
+def test_fusion_bootstrap_forwards_focused_scenario_selection() -> None:
+    """
+    Submit the requested scenario subset to the in-host suite.
+    """
+    script = qa_orchestrator._fusion_suite_script(("command_history",))
+
+    assert '["command_history"]' in script
+    assert "run_automated_fusion_suite(" in script
 
 
 def test_extracts_png_from_mcp_json_text_screenshot_envelope() -> None:

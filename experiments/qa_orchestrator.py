@@ -50,6 +50,17 @@ GENERATED_VISUAL_RESULT_PREFIX = "WIRE_BUNDLER_GENERATED_VISUAL_RESULT="
 PALETTE_BOUNDS_RESULT_PREFIX = "WIRE_BUNDLER_PALETTE_BOUNDS_RESULT="
 VISUAL_WIDTH = 640
 VISUAL_HEIGHT = 480
+LOCAL_CHECK_NAMES = ("pytest", "palette", "ruff-lint", "ruff-format", "diff-check")
+FUSION_SCENARIO_NAMES = (
+    "fusion_capabilities",
+    "command_history",
+    "sweep_matrix",
+    "reference_harness",
+    "preview_reload",
+    "assembly_placement",
+    "linked_geometry",
+    "generated_solids",
+)
 
 
 @dataclass(frozen=True)
@@ -243,6 +254,8 @@ def run_qa(
     command_timeout_seconds: float = 180.0,
     fusion_timeout_seconds: float = 600.0,
     capture_desktop_ui: bool = False,
+    local_checks: Optional[Sequence[str]] = None,
+    fusion_scenarios: Optional[Sequence[str]] = None,
 ) -> tuple[int, Path]:
     """
     Run the selected QA layers and write one aggregate report.
@@ -254,6 +267,8 @@ def run_qa(
         command_timeout_seconds: Timeout for each local subprocess.
         fusion_timeout_seconds: Timeout for each MCP request.
         capture_desktop_ui: Opt into permission-requiring Fusion-window capture.
+        local_checks: Optional ordered subset of local check names.
+        fusion_scenarios: Optional ordered subset of structural Fusion scenarios.
 
     Returns:
         Process exit code and aggregate JSON report path.
@@ -261,13 +276,13 @@ def run_qa(
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     started_at = datetime.now(timezone.utc)
     local_results = (
-        _run_local_checks(command_timeout_seconds)
+        _run_local_checks(command_timeout_seconds, local_checks)
         if run_local
         else [CheckResult("local", "skipped", 0.0, "Disabled by command option.")]
     )
     fusion_result: dict[str, object]
     if run_fusion:
-        fusion_result = _run_fusion_suite(mcp_url, fusion_timeout_seconds)
+        fusion_result = _run_fusion_suite(mcp_url, fusion_timeout_seconds, fusion_scenarios)
         if capture_desktop_ui:
             desktop_result = _run_desktop_ui_oracle(mcp_url, fusion_timeout_seconds)
             fusion_result["desktopUiOracle"] = desktop_result
@@ -291,6 +306,8 @@ def run_qa(
             "local": run_local,
             "fusion": run_fusion,
             "desktopUi": capture_desktop_ui,
+            "localChecks": list(local_checks) if local_checks is not None else None,
+            "fusionScenarios": list(fusion_scenarios) if fusion_scenarios is not None else None,
         },
         "local": [asdict(result) for result in local_results],
         "fusion": fusion_result,
@@ -334,6 +351,23 @@ def main(arguments: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--command-timeout", type=float, default=180.0)
     parser.add_argument("--fusion-timeout", type=float, default=600.0)
     parser.add_argument(
+        "--local-check",
+        action="append",
+        choices=LOCAL_CHECK_NAMES,
+        dest="local_checks",
+        help="Run only this local check; repeat to select more than one.",
+    )
+    parser.add_argument(
+        "--fusion-scenario",
+        action="append",
+        choices=FUSION_SCENARIO_NAMES,
+        dest="fusion_scenarios",
+        help=(
+            "Run only this structural Fusion scenario and skip viewport visual oracles; "
+            "repeat to select more than one."
+        ),
+    )
+    parser.add_argument(
         "--desktop-ui",
         action="store_true",
         help=(
@@ -344,6 +378,10 @@ def main(arguments: Optional[Sequence[str]] = None) -> int:
     options = parser.parse_args(arguments)
     if options.local_only and options.desktop_ui:
         parser.error("--desktop-ui requires the live Fusion layer.")
+    if options.fusion_only and options.local_checks:
+        parser.error("--local-check cannot be used with --fusion-only.")
+    if options.local_only and options.fusion_scenarios:
+        parser.error("--fusion-scenario cannot be used with --local-only.")
     exit_code, report_path = run_qa(
         run_local=not options.fusion_only,
         run_fusion=not options.local_only,
@@ -351,13 +389,18 @@ def main(arguments: Optional[Sequence[str]] = None) -> int:
         command_timeout_seconds=options.command_timeout,
         fusion_timeout_seconds=options.fusion_timeout,
         capture_desktop_ui=options.desktop_ui,
+        local_checks=options.local_checks,
+        fusion_scenarios=options.fusion_scenarios,
     )
     print(f"Wire Bundler QA: {'PASS' if exit_code == 0 else 'FAIL'}")
     print(f"Report: {report_path}")
     return exit_code
 
 
-def _run_local_checks(timeout_seconds: float) -> list[CheckResult]:
+def _run_local_checks(
+    timeout_seconds: float,
+    selected_checks: Optional[Sequence[str]] = None,
+) -> list[CheckResult]:
     """
     Execute every host-independent repository check.
     """
@@ -393,7 +436,12 @@ def _run_local_checks(timeout_seconds: float) -> list[CheckResult]:
         ),
         ("diff-check", ("git", "diff", "--check")),
     )
-    return [_run_command(name, command, timeout_seconds) for name, command in commands]
+    commands_by_name = dict(commands)
+    selected_names = tuple(selected_checks) if selected_checks is not None else LOCAL_CHECK_NAMES
+    unknown_names = tuple(name for name in selected_names if name not in commands_by_name)
+    if unknown_names:
+        raise ValueError(f"Unknown local QA checks: {', '.join(unknown_names)}")
+    return [_run_command(name, commands_by_name[name], timeout_seconds) for name in selected_names]
 
 
 def _run_command(name: str, command: Sequence[str], timeout_seconds: float) -> CheckResult:
@@ -425,7 +473,11 @@ def _run_command(name: str, command: Sequence[str], timeout_seconds: float) -> C
     return CheckResult(name, status, elapsed_ms, detail)
 
 
-def _run_fusion_suite(endpoint: str, timeout_seconds: float) -> dict[str, object]:
+def _run_fusion_suite(
+    endpoint: str,
+    timeout_seconds: float,
+    selected_scenarios: Optional[Sequence[str]] = None,
+) -> dict[str, object]:
     """
     Execute the in-host suite through one temporary MCP session.
     """
@@ -436,18 +488,29 @@ def _run_fusion_suite(endpoint: str, timeout_seconds: float) -> dict[str, object
         server = client.initialize()
         tool_result = client.call_tool(
             "fusion_mcp_execute",
-            {"featureType": "script", "object": {"script": _fusion_suite_script()}},
+            {
+                "featureType": "script",
+                "object": {"script": _fusion_suite_script(selected_scenarios)},
+            },
         )
         suite_result = _parse_fusion_tool_result(tool_result)
         suite_result["server"] = server
-        visual_result = _run_preview_visual_oracle(client)
-        suite_result["visualOracle"] = visual_result
-        if visual_result.get("status") != "passed":
-            suite_result["status"] = "failed"
-        generated_visual_result = _run_generated_visual_oracle(client)
-        suite_result["generatedVisualOracle"] = generated_visual_result
-        if generated_visual_result.get("status") != "passed":
-            suite_result["status"] = "failed"
+        if selected_scenarios is None:
+            visual_result = _run_preview_visual_oracle(client)
+            suite_result["visualOracle"] = visual_result
+            if visual_result.get("status") != "passed":
+                suite_result["status"] = "failed"
+            generated_visual_result = _run_generated_visual_oracle(client)
+            suite_result["generatedVisualOracle"] = generated_visual_result
+            if generated_visual_result.get("status") != "passed":
+                suite_result["status"] = "failed"
+        else:
+            skipped = {
+                "status": "skipped",
+                "detail": "Focused structural Fusion scenario selection.",
+            }
+            suite_result["visualOracle"] = skipped
+            suite_result["generatedVisualOracle"] = skipped
     except (ConnectionError, OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         suite_result = {"status": "failed", "error": str(error)}
     finally:
@@ -961,11 +1024,14 @@ def _assert_visual_differences(differences: dict[str, dict[str, object]]) -> Non
             )
 
 
-def _fusion_suite_script() -> str:
+def _fusion_suite_script(selected_scenarios: Optional[Sequence[str]] = None) -> str:
     """
     Build the small in-host bootstrap submitted to ``fusion_mcp_execute``.
     """
     root = json.dumps(str(PROJECT_ROOT))
+    scenario_selection = json.dumps(
+        list(selected_scenarios) if selected_scenarios is not None else None
+    )
     return f'''import importlib
 import json
 import sys
@@ -1003,7 +1069,10 @@ def run(_context: str):
     import experiments.fusion_qa_suite as suite_module
 
     suite_module = importlib.reload(suite_module)
-    result = suite_module.run_automated_fusion_suite(adsk.core.Application.get())
+    result = suite_module.run_automated_fusion_suite(
+        adsk.core.Application.get(),
+        {scenario_selection},
+    )
     print("{FUSION_RESULT_PREFIX}" + json.dumps(result, sort_keys=True))
 '''
 
