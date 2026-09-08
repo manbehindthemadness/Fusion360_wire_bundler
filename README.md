@@ -41,7 +41,7 @@ Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, an
 - Save-time graphics-cache protection prevents active previews from being baked into reopened designs
 - Active previews refresh affected routing groups after member edits and redraw only changed paths, preserving unrelated graphics.
 - Persistent Fusion entity tokens with reload-time linked-geometry health reporting
-- Schema version 4 persistence with automatic in-memory reading of versions 1 through 3
+- Schema version 5 persistence with deterministic in-memory reading of versions 1 through 4
 - Isolated reporting of malformed stored definitions without hiding healthy harnesses
 
 The detailed product behavior is defined in `reference/`. Persistent conductor identity, explicit control-structure ordering, editable geometry, and stored procedural metadata are core requirements.
@@ -198,16 +198,21 @@ and when a new Fusion release or test adapter should trigger another automation 
 
 ### M2 topology and terminators
 
-M2 is ready to begin. Schema version 4 has stable harness, pathway, control, connection,
-member, profile, and wire identities, but each wire still stores a linear ordered
-pathway/control route. There are no persistent junction, extension, branch-leg,
-exit-state, electrical-relationship, terminator, or connection-name-provenance records.
-The existing routing, generation, relationship, history, and QA layers are the verified
-baseline that M2 must extend without weakening identity or migration behavior.
+M2 is in progress. Schema version 5 now provides a host-independent directed route
+graph with persistent pathway endpoints, external ends, movable junction slice nodes,
+physical wire legs, route edges, member dispositions, and ideal-splice relationships.
+Versions 1 through 4 remain readable and receive a deterministic linear graph
+projection without guessed branch semantics. The kernel orders each physical leg,
+derives per-span membership and `OPEN`, `TERMINATED`, and `EXTENDED` pathway-exit
+states, and validates identity, reference, disposition, network, cycle, recombination,
+and incomplete-route failures.
+Topology edits now own the explicit graph transactionally. Existing pathway, wire,
+diameter, and removal workflows synchronize graph identities and membership rather
+than discarding branched state.
 
 Work proceeds in this dependency order:
 
-1. **Settle the topology contract and fixtures.** Define the schema-version-5 graph
+1. **Settle the topology contract and fixtures.** Complete. Define the schema-version-5 graph
    entities and stable IDs; preserve the exact `EXCLUDE_BRANCH`, `BRANCH`, and
    `REDIRECT_BRANCH` dispositions; give every true branch leg its own physical-wire
    UUID and explicit electrical relationship; derive `OPEN`, `TERMINATED`, and
@@ -216,21 +221,27 @@ Work proceeds in this dependency order:
    the authoritative UI/data-model specification and add the M2 acceptance targets to the
    dedicated [`experiments/qa_coverage_m2.json`](experiments/qa_coverage_m2.json)
    ledger before production code.
-2. **Build the host-independent topology kernel.** Extend the immutable domain model,
+2. **Build the host-independent topology kernel.** Complete. Extend the immutable domain model,
    deterministic codec and versions 1–4 migration, validation, and reusable fixtures.
    Compute ordered pathway legs and per-span wire membership from the graph, rejecting
    cycles, dangling references, identity reuse, and invalid dispositions before Fusion
    geometry is involved.
-3. **Add transactional topology workflows.** Implement create, edit, move, redirect,
+3. **Add transactional topology workflows.** Complete locally. Implement create, edit, move, redirect,
    branch, extend, terminate, and removal operations as deterministic application
    services. Preserve IDs through edits and make each palette mutation one native
    Undo/Redo transaction with explicit invalidation scope.
-4. **Extend projections and editing UI.** Teach validation, Wire Routes, Pathways &
-   Occupancy, relationship audits, search, hover, and navigation about graph membership,
-   branch legs, extensions, and exit states. Keep the presentation graph-capable and
-   reserve the documented cross-link indicator while cycles remain invalid.
-5. **Add Fusion topology realization.** Create movable junction slice references,
-   derived exit interfaces, extension entry frames, and deterministic branch/redirect
+4. **Extend projections and editing UI.** Complete locally. Validation, Wire Routes, Pathways &
+   Occupancy, relationship audits, search, hover, and navigation understand graph
+   membership, branch legs, extensions, and exit states. Junctions extend the original
+   rounded-node diagrams with vertical branches; wire colors, endpoint naming,
+   collapsible connection lists, and click navigation remain intact. Both relationship
+   views run inside floating block-diagram canvases with cursor-centered wheel zoom,
+   background drag panning, Fit, and 100% controls.
+5. **Add Fusion topology realization.** In progress. The bounded host-independent local
+   junction router, graph readiness gate, document-unit bridge, native end-profile
+   selection, mouse-selected gate-backed junction placement, and bright selectable
+   Fusion slice outlines are implemented. Next create arbitrary movable virtual-slice
+   references, derived exit interfaces, extension entry frames, and deterministic branch/redirect
    transitions. Junction routing uses bounded, order-preserving local curves and reports
    conflicts instead of weaving members through a global optimizer. Preview and
    generation must use the same per-span membership and retain stable physical-wire
@@ -249,9 +260,10 @@ Work proceeds in this dependency order:
    terminator geometry, and opted-in visual evidence. Use focused runs during each slice
    and the complete suite at the milestone gate.
 
-The first implementation slice ends after objectives 1 and 2: schema-v5 topology
-objects, migrations, graph validation, deterministic per-span membership, and local
-tests. Fusion adapters and palette controls begin only after that contract is stable.
+The current implementation slice is locally and live-regression verified. The next
+check is one add-in reload to inspect the restored original diagrams, gate-backed
+slice picker and outline, numbered/collapsible junctions, extension naming, and
+multi-junction membership before graph-derived routes connect to preview and solids.
 
 Detailed future contracts live in [UI and data model](reference/UI_AND_DATA_MODEL.md),
 including [recursive composites](reference/UI_AND_DATA_MODEL.md#planned-recursive-composite-wire-and-shielding-milestone),
@@ -298,7 +310,7 @@ For each milestone:
 | `reference/RIBBON_SPECS.md` | Future profile-gate and ribbon geometry reference for M3. |
 | `reference/TERMINATION_TRANSLATION.md` | Future terminator and guide-transition geometry reference for M2 and M3. |
 | `reference/UI_WORKFLOW.md` | Broad UX vision and illustrative flows. When an older illustration conflicts with current behavior or the authoritative contracts above, follow `README.md` and `UI_AND_DATA_MODEL.md`. |
-| `experiments/qa_coverage.json` and `experiments/qa_coverage_m2.json` | Machine-readable acceptance and automation status for the completed M0 baseline and planned M2 topology work. |
+| `experiments/qa_coverage.json` and `experiments/qa_coverage_m2.json` | Machine-readable acceptance and automation status for the completed M0 baseline and active M2 topology work. |
 
 New requirements enter the roadmap once and receive detailed contracts in the relevant
 reference section. When implemented, update **Current milestone**, tests, and live

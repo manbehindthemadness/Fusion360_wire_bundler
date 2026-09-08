@@ -114,6 +114,37 @@ def test_reads_version_three_with_default_materials(valid_harness: HarnessDefini
     assert migrated.wires[0].material_overrides == WireMaterialOverrides()
 
 
+def test_reads_version_four_with_deterministic_topology_projection(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Migrate linear schema-v4 routes without persisting guessed branch semantics.
+    """
+    payload = json.loads(dumps(valid_harness))
+    payload["schema_version"] = 4
+    payload.pop("topology")
+
+    migrated = loads(json.dumps(payload))
+
+    assert migrated.topology is None
+    assert migrated.resolved_topology == valid_harness.resolved_topology
+
+
+def test_early_version_five_topology_defaults_missing_attachments(
+    branched_harness: HarnessDefinition,
+) -> None:
+    """
+    Read schema-v5 data written before empty junction attachments were persisted.
+    """
+    payload = json.loads(dumps(branched_harness))
+    payload["topology"].pop("junction_attachments")
+
+    migrated = loads(json.dumps(payload))
+
+    assert migrated.topology is not None
+    assert migrated.topology.junction_attachments == ()
+
+
 def test_rejects_stripe_without_required_repeat(valid_harness: HarnessDefinition) -> None:
     """
     Reject a dashed stripe that cannot define a procedural repetition.

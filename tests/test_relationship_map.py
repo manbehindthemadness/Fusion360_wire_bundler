@@ -57,6 +57,46 @@ def test_relationship_map_marks_unresolved_references(
     assert relationship_map.audit_issues == ()
 
 
+def test_relationship_map_projects_explicit_branches_and_exact_spans(
+    branched_harness: HarnessDefinition,
+) -> None:
+    """
+    Expose stable graph nodes, physical legs, and per-span membership additively.
+    """
+    relationship_map = build_relationship_map(branched_harness)
+    topology = branched_harness.resolved_topology
+
+    assert len(relationship_map.topology_nodes) == len(topology.nodes)
+    assert len(relationship_map.topology_edges) == len(topology.edges)
+    assert len(relationship_map.topology_routes) == 2
+    assert len(relationship_map.span_occupancy) == 3
+    assert {route.wire_id for route in relationship_map.topology_routes} == {
+        wire.physical_wire_id for wire in topology.physical_wires
+    }
+    assert all(
+        route.primary_wire_id == branched_harness.wires[0].wire_id
+        for route in relationship_map.topology_routes
+    )
+    assert relationship_map.audit_issues == ()
+
+
+def test_relationship_audit_detects_tampered_topology_span(
+    branched_harness: HarnessDefinition,
+) -> None:
+    """
+    Cross-check graph occupancy independently of the palette projection.
+    """
+    relationship_map = build_relationship_map(branched_harness)
+    tampered = replace(
+        relationship_map,
+        span_occupancy=relationship_map.span_occupancy[1:],
+    )
+
+    codes = {issue.code for issue in audit_relationship_map(branched_harness, tampered)}
+
+    assert "topology_span_occupancy_mismatch" in codes
+
+
 def test_relationship_audit_detects_tampered_route_and_occupancy(
     valid_harness: HarnessDefinition,
 ) -> None:

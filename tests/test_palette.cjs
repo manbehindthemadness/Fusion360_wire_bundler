@@ -33,9 +33,17 @@ class Element {
     /** @type {Object.<string, Function>} */
     this.events = {};
     this.attributes = {};
-    this.classList = { add: (...names) => {
-      this.className = [this.className || '', ...names].filter(Boolean).join(' ');
-    } };
+    this.classList = {
+      add: (...names) => {
+        this.className = [...new Set([
+          ...(this.className || '').split(' ').filter(Boolean), ...names,
+        ])].join(' ');
+      },
+      remove: (...names) => {
+        this.className = (this.className || '').split(' ')
+          .filter((name) => name && !names.includes(name)).join(' ');
+      },
+    };
     this.textContent = '';
     this.value = '';
     this.hidden = false;
@@ -112,6 +120,7 @@ function palette(storage = new Map(), preferences = storage) {
   const context = {
     document: {
       body: new Element('body'),
+      scrollingElement: { scrollTop: 0 },
       createElement: (tag) => new Element(tag),
       createElementNS: (_namespace, tag) => new Element(tag),
       getElementById: () => new Element('div'),
@@ -120,6 +129,8 @@ function palette(storage = new Map(), preferences = storage) {
       innerWidth: 800,
       innerHeight: 700,
       Event: class Event { constructor(type) { this.type = type; } },
+      requestAnimationFrame: (callback) => callback(),
+      scrollTo: () => {},
       sessionStorage: {
         getItem: (key) => storage.get(key) || null,
         setItem: (key, value) => storage.set(key, value),
@@ -204,6 +215,168 @@ function harness() {
   return definition;
 }
 
+/** Add one explicit Y-junction projection to the standard palette fixture. */
+function topologyHarness() {
+  const definition = harness();
+  definition.pathways.push({
+    pathwayId: 'branch', name: 'Branch Path', startName: '', endName: '', orderedControlIds: [],
+  });
+  definition.topology = {
+    nodes: [
+      { nodeId: 'pa', kind: 'pathway_end', pathwayId: 'p', pathwayEnd: 'a' },
+      { nodeId: 'j1', kind: 'junction', pathwayId: 'p', distanceMm: 25.4,
+        sliceControlId: 'g1', diameterFactor: null, name: 'Junction 1' },
+      { nodeId: 'pb', kind: 'pathway_end', pathwayId: 'p', pathwayEnd: 'b' },
+      { nodeId: 'ba', kind: 'pathway_end', pathwayId: 'branch', pathwayEnd: 'a' },
+      { nodeId: 'bb', kind: 'pathway_end', pathwayId: 'branch', pathwayEnd: 'b' },
+    ],
+    physicalWires: [
+      { physicalWireId: 'w1', networkId: 'w1', profileId: 'profile' },
+      { physicalWireId: 'w2', networkId: 'w1', profileId: 'profile' },
+    ],
+    edges: [
+      { edgeId: 'e1', kind: 'pathway', physicalWireId: 'w1', startNodeId: 'pa',
+        endNodeId: 'j1', pathwayId: 'p' },
+      { edgeId: 'e2', kind: 'pathway', physicalWireId: 'w1', startNodeId: 'j1',
+        endNodeId: 'pb', pathwayId: 'p' },
+      { edgeId: 'e3', kind: 'junction_transition', physicalWireId: 'w2',
+        startNodeId: 'j1', endNodeId: 'ba', pathwayId: null },
+      { edgeId: 'e4', kind: 'pathway', physicalWireId: 'w2', startNodeId: 'ba',
+        endNodeId: 'bb', pathwayId: 'branch' },
+      { edgeId: 'x1', kind: 'extension', physicalWireId: 'w1', startNodeId: 'pb',
+        endNodeId: 'ba', pathwayId: null, name: 'Extension 1' },
+    ],
+    junctionAttachments: [{ junctionId: 'j1', pathwayId: 'branch', pathwayEnd: 'a' }],
+    junctionDispositions: [{ junctionId: 'j1', pathwayId: 'branch', pathwayEnd: 'a',
+      incomingWireId: 'w1', disposition: 'branch', branchWireId: 'w2' }],
+    exitStates: [
+      { pathwayId: 'p', pathwayEnd: 'b', physicalWireId: 'w1', state: 'open' },
+      { pathwayId: 'branch', pathwayEnd: 'b', physicalWireId: 'w2', state: 'open' },
+    ],
+  };
+  definition.controls = [{ controlId: 'g1', name: 'Gate 1', kind: 'routing_gate' }];
+  return definition;
+}
+
+test('topology editor exposes junction membership and extension actions', () => {
+  const { context, calls } = palette();
+  const rendered = context.renderTopologyEditor(topologyHarness());
+  const branchAll = descendants(rendered, (node) => (
+    node.textContent === 'Create Y junction for all members'
+  ))[0];
+  branchAll.events.click();
+  assert.equal(calls.pop().action, 'branch_all_junction_members');
+  const memberDisposition = descendants(rendered, (node) => (
+    node.tag === 'select' && node.children.some((child) => child.value === 'redirect_branch')
+  ))[0];
+  memberDisposition.value = 'redirect_branch';
+  memberDisposition.events.change();
+  assert.equal(JSON.stringify(calls.pop()), JSON.stringify({
+    action: 'set_junction_disposition',
+    payload: {
+      harnessId: 'h', junctionId: 'j1', pathwayId: 'branch', pathwayEnd: 'a',
+      physicalWireId: 'w1', disposition: 'redirect_branch',
+    },
+  }));
+  const extend = descendants(rendered, (node) => node.textContent === 'Extend member')[0];
+  extend.events.click();
+  assert.equal(calls.pop().action, 'extend_pathway_member');
+  const addEnd = descendants(rendered, (node) => node.textContent === 'Add end…')[0];
+  addEnd.events.click();
+  const addEndCall = calls.pop();
+  assert.equal(addEndCall.action, 'edit_end_members');
+  assert.equal(addEndCall.payload.editAction, 'topology_add_end');
+  assert.equal(addEndCall.payload.pathwayEnd, 'b');
+  const junctionCard = descendants(rendered, (node) => (
+    node.tag === 'details' && node.className === 'topology-junction-card'
+  ))[0];
+  assert.equal(junctionCard.open, true);
+  const rename = descendants(junctionCard, (node) => node.textContent === 'Rename')[0];
+  rename.events.click();
+  const renameCall = calls.pop();
+  assert.equal(renameCall.action, 'rename_junction');
+  assert.equal(renameCall.payload.name, 'Junction 1');
+  const pick = descendants(rendered, (node) => node.textContent === 'Pick pathway in Fusion…')[0];
+  pick.events.click();
+  assert.equal(calls.pop().action, 'pick_junction_pathway');
+  const renameExtension = descendants(
+    rendered, (node) => node.textContent === 'Rename extension',
+  )[0];
+  renameExtension.events.click();
+  assert.equal(calls.pop().action, 'rename_pathway_extension');
+});
+
+test('schema-v5 diagrams retain the original nodes and add vertical junction branches', () => {
+  const { context } = palette();
+  const definition = topologyHarness();
+  const perWire = context.renderWireRelationshipGraphic(
+    definition, definition.wires[0], new Map(), new Map(), new Element('div'), new Element('div'),
+  );
+  const master = context.renderRelationshipMap(definition, []);
+  assert.equal(descendants(perWire, (node) => node.className === 'relationship-map-svg').length, 1);
+  assert.equal(descendants(perWire, (node) => node.className === 'wire-relationship-node junction').length, 1);
+  assert.equal(descendants(master, (node) => node.className === 'relationship-pathway-card').length, 2);
+  assert.equal(descendants(master, (node) => node.className === 'relationship-junction-node').length, 1);
+  assert.equal(descendants(master, (node) => node.className === 'topology-network-svg').length, 0);
+});
+
+test('relationship diagrams use zoomable pannable floating workspaces', () => {
+  const { context } = palette();
+  const definition = topologyHarness();
+  const perWire = context.renderWireRelationshipGraphic(
+    definition, definition.wires[0], new Map(), new Map(), new Element('div'), new Element('div'),
+  );
+  const master = context.renderRelationshipMap(definition, []);
+  for (const diagram of [perWire, master]) {
+    assert.equal(descendants(
+      diagram, (node) => node.className === 'block-diagram-workspace',
+    ).length, 1);
+    const viewport = descendants(
+      diagram, (node) => node.className === 'block-diagram-viewport',
+    )[0];
+    const stage = descendants(
+      diagram, (node) => node.className === 'block-diagram-stage',
+    )[0];
+    const zoom = descendants(
+      diagram, (node) => node.className === 'block-diagram-zoom',
+    )[0];
+    const zoomIn = descendants(diagram, (node) => node.title === 'Zoom in')[0];
+    const initialZoom = zoom.textContent;
+    zoomIn.events.click();
+    assert.notEqual(zoom.textContent, initialZoom);
+    let prevented = false;
+    viewport.events.wheel({
+      deltaY: -1, clientX: 50, clientY: 40,
+      preventDefault: () => { prevented = true; },
+    });
+    assert.equal(prevented, true);
+    const beforePan = stage.style.transform;
+    viewport.events.pointerdown({
+      button: 0, pointerId: 7, clientX: 30, clientY: 30, target: viewport,
+    });
+    viewport.events.pointermove({ pointerId: 7, clientX: 50, clientY: 60 });
+    viewport.events.pointerup({ pointerId: 7 });
+    assert.notEqual(stage.style.transform, beforePan);
+    assert.equal(viewport.className.includes('panning'), false);
+  }
+});
+
+test('length controls use active document units and preserve canonical millimeters', () => {
+  const { context } = palette();
+  context.render({ harnesses: [], notice: '', units: { length: 'in', millimetersPerUnit: 25.4 } });
+  assert.equal(context.activeLengthUnit(), 'in');
+  assert.equal(context.displayLength(25.4), 1);
+  assert.equal(context.canonicalLength('2'), 50.8);
+  const rendered = context.renderTopologyEditor(topologyHarness());
+  const distance = descendants(rendered, (node) => (
+    node.attributes['aria-label'] === 'Junction distance (in)' && node.value === '1'
+  ));
+  assert.equal(distance.length, 1);
+  assert.equal(descendants(rendered, (node) => (
+    node.className === 'unit-input-suffix' && node.textContent === 'in'
+  )).length >= 2, true);
+});
+
 test('master relationship graphic is last and independently cross-checked', () => {
   const { context } = palette();
   const definition = harness();
@@ -211,16 +384,16 @@ test('master relationship graphic is last and independently cross-checked', () =
   const sections = Array.from(context.ui.editor.children).filter((node) => node.tag === 'details');
   assert.deepEqual(
     sections.map((section) => section.dataset.section),
-    ['wire-routes', 'pathways', 'validation', 'master-relationship-graphic'],
+    ['topology', 'wire-routes', 'pathways', 'validation', 'master-relationship-graphic'],
   );
-  const audit = descendants(sections[2], (node) => node.className === 'relationship-audit')[0];
+  const audit = descendants(sections[3], (node) => node.className === 'relationship-audit')[0];
   assert.match(audit.textContent, /agrees with wire routes/);
-  const pathwayCards = descendants(sections[3], (node) => node.className === 'relationship-pathway-card');
+  const pathwayCards = descendants(sections[4], (node) => node.className === 'relationship-pathway-card');
   assert.equal(pathwayCards.length, 1);
   const endLists = descendants(pathwayCards[0], (node) => node.className === 'relationship-end-list');
   assert.equal(endLists.length, 2);
   assert.ok(endLists.every((list) => list.open));
-  const wireGraphics = descendants(sections[0], (node) => node.className === 'wire-relationship-graphic');
+  const wireGraphics = descendants(sections[1], (node) => node.className === 'wire-relationship-graphic');
   assert.equal(wireGraphics.length, 3);
   const pathwayBubble = descendants(wireGraphics[0], (node) => (
     node.className === 'relationship-node pathway'
@@ -232,7 +405,7 @@ test('master relationship graphic is last and independently cross-checked', () =
   assert.ok(graphicLabels.includes('Data input'));
   assert.ok(graphicLabels.includes('lower fuse box path'));
   assert.ok(graphicLabels.includes('Data output'));
-  const connectors = descendants(sections[3], (node) => node.className === 'relationship-connector');
+  const connectors = descendants(sections[4], (node) => node.className === 'relationship-connector');
   assert.equal(connectors.length, 2);
   assert.ok(connectors.every((connector) => (
     descendants(connector, (node) => node.tag === 'path').length === 3
@@ -240,7 +413,7 @@ test('master relationship graphic is last and independently cross-checked', () =
   endLists[0].open = false;
   endLists[0].events.toggle();
   assert.equal(descendants(connectors[0], (node) => node.tag === 'path').length, 1);
-  assert.equal(sections[3].open, true);
+  assert.equal(sections[4].open, true);
 });
 
 test('palette entry point loads organized local style and script resources', () => {

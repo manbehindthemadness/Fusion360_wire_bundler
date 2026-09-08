@@ -29,15 +29,16 @@ def test_repository_coverage_ledger_is_valid_and_references_existing_evidence() 
             assert (PROJECT_ROOT / evidence).is_file(), f"Missing evidence for {target.target_id}"
 
 
-def test_m2_coverage_ledger_is_valid_and_starts_as_candidate_work() -> None:
+def test_m2_coverage_ledger_is_valid_and_tracks_implementation_progress() -> None:
     """
-    Keep planned topology behavior explicit before production implementation begins.
+    Keep topology behavior and its current automation evidence explicit.
     """
     ledger = load_coverage_ledger(M2_LEDGER_PATH)
 
     assert ledger.milestone == "M2"
     assert len(ledger.targets) >= 10
-    assert ledger.counts_by_status()["candidate"] == len(ledger.targets)
+    assert ledger.counts_by_status()["automated"] >= 1
+    assert ledger.counts_by_status()["partial"] >= 1
     assert {target.target_id for target in ledger.targets} >= {
         "M2-DOM-001",
         "M2-JUNC-001",

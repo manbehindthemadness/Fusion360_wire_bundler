@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Optional
 from uuid import UUID, uuid5
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class RoutingMode(str, Enum):
@@ -29,6 +29,64 @@ class ControlKind(str, Enum):
 
     ROUTING_GATE = "routing_gate"
     PROFILE_GATE = "profile_gate"
+
+
+class PathwayEnd(str, Enum):
+    """
+    Identify one stable endpoint of a pathway's traversal order.
+    """
+
+    A = "a"
+    B = "b"
+
+
+class TopologyNodeKind(str, Enum):
+    """
+    Identify the role of a node in the route graph.
+    """
+
+    EXTERNAL_END = "external_end"
+    PATHWAY_END = "pathway_end"
+    JUNCTION = "junction"
+
+
+class RouteEdgeKind(str, Enum):
+    """
+    Identify the geometric or logical role of a route edge.
+    """
+
+    END_LINK = "end_link"
+    PATHWAY = "pathway"
+    EXTENSION = "extension"
+    JUNCTION_TRANSITION = "junction_transition"
+
+
+class PathwayExitState(str, Enum):
+    """
+    Describe graph-derived continuity at one occupied pathway endpoint.
+    """
+
+    OPEN = "open"
+    TERMINATED = "terminated"
+    EXTENDED = "extended"
+
+
+class JunctionDisposition(str, Enum):
+    """
+    Describe one incoming member's behavior at a junction attachment.
+    """
+
+    EXCLUDE_BRANCH = "exclude_branch"
+    BRANCH = "branch"
+    REDIRECT_BRANCH = "redirect_branch"
+
+
+class ElectricalRelationshipKind(str, Enum):
+    """
+    Identify an explicit electrical relationship between physical wires.
+    """
+
+    IDEAL_SPLICE = "ideal_splice"
 
 
 class StripePattern(str, Enum):
@@ -419,6 +477,110 @@ class WireDefinition:
 
 
 @dataclass(frozen=True)
+class TopologyNode:
+    """
+    Represent an external end, pathway endpoint, or movable junction.
+
+    Optional fields are interpreted by ``kind`` and validated before generation.
+    Junction distance and persisted diameter values use canonical millimeters.
+    """
+
+    node_id: UUID
+    kind: TopologyNodeKind
+    pathway_id: Optional[UUID] = None
+    pathway_end: Optional[PathwayEnd] = None
+    connection_id: Optional[UUID] = None
+    physical_wire_id: Optional[UUID] = None
+    distance_mm: Optional[float] = None
+    slice_control_id: Optional[UUID] = None
+    junction_diameter_factor_override: Optional[float] = None
+    name: str = ""
+
+
+@dataclass(frozen=True)
+class PhysicalWire:
+    """
+    Preserve one generated body's identity within a logical wire network.
+    """
+
+    physical_wire_id: UUID
+    network_id: UUID
+    profile_id: UUID
+
+
+@dataclass(frozen=True)
+class RouteEdge:
+    """
+    Connect two topology nodes for one physical wire.
+
+    ``pathway_id`` is present only for an edge occupying a pathway span.
+    """
+
+    edge_id: UUID
+    kind: RouteEdgeKind
+    physical_wire_id: UUID
+    start_node_id: UUID
+    end_node_id: UUID
+    pathway_id: Optional[UUID] = None
+    name: str = ""
+
+
+@dataclass(frozen=True)
+class JunctionMemberDisposition:
+    """
+    Persist one member's disposition toward one junction attachment.
+    """
+
+    junction_id: UUID
+    attachment_pathway_id: UUID
+    attachment_end: PathwayEnd
+    incoming_wire_id: UUID
+    disposition: JunctionDisposition
+    branch_wire_id: Optional[UUID] = None
+
+
+@dataclass(frozen=True)
+class JunctionAttachment:
+    """
+    Attach one ordinary pathway endpoint to a persistent junction slice node.
+
+    Attachments exist independently of member dispositions so an empty Y junction
+    and multiple pathways sharing one cross-junction slice survive persistence.
+    """
+
+    junction_id: UUID
+    pathway_id: UUID
+    pathway_end: PathwayEnd
+
+
+@dataclass(frozen=True)
+class ElectricalRelationship:
+    """
+    Relate distinct physical wires without conflating their body identities.
+    """
+
+    relationship_id: UUID
+    kind: ElectricalRelationshipKind
+    junction_id: UUID
+    physical_wire_ids: tuple[UUID, ...]
+    notes: str = ""
+
+
+@dataclass(frozen=True)
+class RouteTopology:
+    """
+    Store the explicit directed route graph introduced by schema version five.
+    """
+
+    nodes: tuple[TopologyNode, ...] = ()
+    physical_wires: tuple[PhysicalWire, ...] = ()
+    edges: tuple[RouteEdge, ...] = ()
+    junction_attachments: tuple[JunctionAttachment, ...] = ()
+    junction_dispositions: tuple[JunctionMemberDisposition, ...] = ()
+    electrical_relationships: tuple[ElectricalRelationship, ...] = ()
+
+
+@dataclass(frozen=True)
 class HarnessDefinition:
     """
     Store the complete logical definition independently of Fusion geometry.
@@ -449,9 +611,23 @@ class HarnessDefinition:
     gate_defaults: InterpolationSettings = InterpolationSettings()
     end_defaults: InterpolationSettings = InterpolationSettings()
     material_defaults: WireMaterialSettings = WireMaterialSettings()
+    topology: Optional[RouteTopology] = None
 
     def wire_materials(self, wire: WireDefinition) -> WireMaterialSettings:
         """
         Resolve one wire's effective material settings from parent defaults.
         """
         return wire.material_overrides.resolve(self.material_defaults)
+
+    @property
+    def resolved_topology(self) -> RouteTopology:
+        """
+        Return explicit topology or a deterministic projection of legacy linear routes.
+        """
+        if self.topology is not None:
+            return self.topology
+
+        from .topology import build_linear_topology
+
+        topology = build_linear_topology(self.wires, self.pathways)
+        return topology

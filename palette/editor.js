@@ -84,6 +84,13 @@ function renderEditor(harness) {
 
   ui.editor.append(
     editorSection(
+      "topology",
+      "Junctions & Extensions",
+      `${harness.topology?.nodes?.filter((node) => node.kind === "junction").length || 0} junctions`,
+      renderTopologyEditor(harness),
+      false,
+    ),
+    editorSection(
       "wire-routes",
       "Wire Routes",
       `${harness.wires.length}`,

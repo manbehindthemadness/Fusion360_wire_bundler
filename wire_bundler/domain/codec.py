@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any, Optional, Type, TypeVar
 from uuid import UUID
 
@@ -16,11 +16,23 @@ from .model import (
     Connection,
     ControlKind,
     ControlStructure,
+    ElectricalRelationship,
+    ElectricalRelationshipKind,
     HarnessDefinition,
     InterpolationSettings,
+    JunctionAttachment,
+    JunctionDisposition,
+    JunctionMemberDisposition,
     PathwayDefinition,
+    PathwayEnd,
+    PhysicalWire,
+    RouteEdge,
+    RouteEdgeKind,
+    RouteTopology,
     RoutingMode,
     StripePattern,
+    TopologyNode,
+    TopologyNodeKind,
     WireAppearanceReference,
     WireColor,
     WireDefinition,
@@ -29,8 +41,19 @@ from .model import (
     WireProfile,
     WireStripe,
 )
+from .naming import next_available_name
 
-EnumType = TypeVar("EnumType", RoutingMode, ControlKind, StripePattern)
+EnumType = TypeVar(
+    "EnumType",
+    RoutingMode,
+    ControlKind,
+    StripePattern,
+    PathwayEnd,
+    TopologyNodeKind,
+    RouteEdgeKind,
+    JunctionDisposition,
+    ElectricalRelationshipKind,
+)
 
 
 class DefinitionParseError(ValueError):
@@ -86,10 +109,10 @@ def loads(serialized: str) -> HarnessDefinition:
 
     payload = _require_mapping(raw_payload, "$")
     schema_version = _require_int(payload, "schema_version", "$.schema_version")
-    if schema_version not in (1, 2, 3, SCHEMA_VERSION):
+    if schema_version not in (1, 2, 3, 4, SCHEMA_VERSION):
         raise DefinitionParseError(
             "$.schema_version",
-            f"unsupported version {schema_version}; expected 1, 2, 3, or {SCHEMA_VERSION}",
+            f"unsupported version {schema_version}; expected 1 through {SCHEMA_VERSION}",
         )
 
     harness_id = _require_uuid(payload, "harness_id", "$.harness_id")
@@ -136,6 +159,9 @@ def loads(serialized: str) -> HarnessDefinition:
             if schema_version >= 4
             else WireMaterialSettings()
         ),
+        topology=(
+            _parse_topology(payload.get("topology"), "$.topology") if schema_version >= 5 else None
+        ),
     )
     return definition
 
@@ -158,6 +184,7 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
         "gate_defaults": asdict(definition.gate_defaults),
         "end_defaults": asdict(definition.end_defaults),
         "material_defaults": _materials_to_dict(definition.material_defaults),
+        "topology": _topology_to_dict(definition.topology),
         "profiles": [
             {
                 "profile_id": str(profile.profile_id),
@@ -233,6 +260,254 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
         ],
     }
     return payload
+
+
+def _topology_to_dict(topology: Optional[RouteTopology]) -> Optional[dict[str, object]]:
+    """
+    Convert optional explicit route topology to JSON-compatible values.
+    """
+    if topology is None:
+        return None
+    return {
+        "nodes": [
+            {
+                "node_id": str(node.node_id),
+                "kind": node.kind.value,
+                "pathway_id": None if node.pathway_id is None else str(node.pathway_id),
+                "pathway_end": (None if node.pathway_end is None else node.pathway_end.value),
+                "connection_id": (None if node.connection_id is None else str(node.connection_id)),
+                "physical_wire_id": (
+                    None if node.physical_wire_id is None else str(node.physical_wire_id)
+                ),
+                "distance_mm": node.distance_mm,
+                "slice_control_id": (
+                    None if node.slice_control_id is None else str(node.slice_control_id)
+                ),
+                "junction_diameter_factor_override": node.junction_diameter_factor_override,
+                "name": node.name,
+            }
+            for node in topology.nodes
+        ],
+        "physical_wires": [
+            {
+                "physical_wire_id": str(wire.physical_wire_id),
+                "network_id": str(wire.network_id),
+                "profile_id": str(wire.profile_id),
+            }
+            for wire in topology.physical_wires
+        ],
+        "edges": [
+            {
+                "edge_id": str(edge.edge_id),
+                "kind": edge.kind.value,
+                "physical_wire_id": str(edge.physical_wire_id),
+                "start_node_id": str(edge.start_node_id),
+                "end_node_id": str(edge.end_node_id),
+                "pathway_id": (None if edge.pathway_id is None else str(edge.pathway_id)),
+                "name": edge.name,
+            }
+            for edge in topology.edges
+        ],
+        "junction_attachments": [
+            {
+                "junction_id": str(item.junction_id),
+                "pathway_id": str(item.pathway_id),
+                "pathway_end": item.pathway_end.value,
+            }
+            for item in topology.junction_attachments
+        ],
+        "junction_dispositions": [
+            {
+                "junction_id": str(item.junction_id),
+                "attachment_pathway_id": str(item.attachment_pathway_id),
+                "attachment_end": item.attachment_end.value,
+                "incoming_wire_id": str(item.incoming_wire_id),
+                "disposition": item.disposition.value,
+                "branch_wire_id": (
+                    None if item.branch_wire_id is None else str(item.branch_wire_id)
+                ),
+            }
+            for item in topology.junction_dispositions
+        ],
+        "electrical_relationships": [
+            {
+                "relationship_id": str(item.relationship_id),
+                "kind": item.kind.value,
+                "junction_id": str(item.junction_id),
+                "physical_wire_ids": [str(wire_id) for wire_id in item.physical_wire_ids],
+                "notes": item.notes,
+            }
+            for item in topology.electrical_relationships
+        ],
+    }
+
+
+def _parse_topology(raw_value: object, path: str) -> Optional[RouteTopology]:
+    """
+    Parse optional explicit schema-v5 route topology.
+    """
+    if raw_value is None:
+        return None
+    value = _require_mapping(raw_value, path)
+    raw_nodes = _require_list(value, "nodes", f"{path}.nodes")
+    parsed_nodes = tuple(
+        _parse_topology_node(item, f"{path}.nodes[{index}]") for index, item in enumerate(raw_nodes)
+    )
+    junction_names: list[str] = []
+    normalized_nodes: list[TopologyNode] = []
+    for index, node in enumerate(parsed_nodes):
+        if node.kind is not TopologyNodeKind.JUNCTION:
+            normalized_nodes.append(node)
+            continue
+        raw_node = raw_nodes[index]
+        missing_name = isinstance(raw_node, Mapping) and "name" not in raw_node
+        if missing_name:
+            name = next_available_name("Junction 1", junction_names)
+            node = replace(node, name=name)
+        if node.name:
+            junction_names.append(node.name)
+        normalized_nodes.append(node)
+    nodes = tuple(normalized_nodes)
+    physical_wires = tuple(
+        _parse_physical_wire(item, f"{path}.physical_wires[{index}]")
+        for index, item in enumerate(
+            _require_list(value, "physical_wires", f"{path}.physical_wires")
+        )
+    )
+    edges = tuple(
+        _parse_route_edge(item, f"{path}.edges[{index}]")
+        for index, item in enumerate(_require_list(value, "edges", f"{path}.edges"))
+    )
+    raw_attachments = value.get("junction_attachments", [])
+    if not isinstance(raw_attachments, list):
+        raise DefinitionParseError(f"{path}.junction_attachments", "expected an array")
+    attachments = tuple(
+        _parse_junction_attachment(item, f"{path}.junction_attachments[{index}]")
+        for index, item in enumerate(raw_attachments)
+    )
+    dispositions = tuple(
+        _parse_junction_disposition(item, f"{path}.junction_dispositions[{index}]")
+        for index, item in enumerate(
+            _require_list(value, "junction_dispositions", f"{path}.junction_dispositions")
+        )
+    )
+    relationships = tuple(
+        _parse_electrical_relationship(item, f"{path}.electrical_relationships[{index}]")
+        for index, item in enumerate(
+            _require_list(
+                value,
+                "electrical_relationships",
+                f"{path}.electrical_relationships",
+            )
+        )
+    )
+    return RouteTopology(
+        nodes=nodes,
+        physical_wires=physical_wires,
+        edges=edges,
+        junction_attachments=attachments,
+        junction_dispositions=dispositions,
+        electrical_relationships=relationships,
+    )
+
+
+def _parse_topology_node(raw_value: object, path: str) -> TopologyNode:
+    """
+    Parse one topology node.
+    """
+    value = _require_mapping(raw_value, path)
+    return TopologyNode(
+        node_id=_require_uuid(value, "node_id", f"{path}.node_id"),
+        kind=_require_enum(TopologyNodeKind, value, "kind", f"{path}.kind"),
+        pathway_id=_optional_uuid(value.get("pathway_id"), f"{path}.pathway_id"),
+        pathway_end=_optional_enum(PathwayEnd, value.get("pathway_end"), f"{path}.pathway_end"),
+        connection_id=_optional_uuid(value.get("connection_id"), f"{path}.connection_id"),
+        physical_wire_id=_optional_uuid(value.get("physical_wire_id"), f"{path}.physical_wire_id"),
+        distance_mm=_optional_float(value.get("distance_mm"), f"{path}.distance_mm"),
+        slice_control_id=_optional_uuid(value.get("slice_control_id"), f"{path}.slice_control_id"),
+        junction_diameter_factor_override=_optional_float(
+            value.get("junction_diameter_factor_override"),
+            f"{path}.junction_diameter_factor_override",
+        ),
+        name=_optional_str(value.get("name"), f"{path}.name") or "",
+    )
+
+
+def _parse_physical_wire(raw_value: object, path: str) -> PhysicalWire:
+    """
+    Parse one physical wire identity.
+    """
+    value = _require_mapping(raw_value, path)
+    return PhysicalWire(
+        physical_wire_id=_require_uuid(value, "physical_wire_id", f"{path}.physical_wire_id"),
+        network_id=_require_uuid(value, "network_id", f"{path}.network_id"),
+        profile_id=_require_uuid(value, "profile_id", f"{path}.profile_id"),
+    )
+
+
+def _parse_route_edge(raw_value: object, path: str) -> RouteEdge:
+    """
+    Parse one directed route edge.
+    """
+    value = _require_mapping(raw_value, path)
+    return RouteEdge(
+        edge_id=_require_uuid(value, "edge_id", f"{path}.edge_id"),
+        kind=_require_enum(RouteEdgeKind, value, "kind", f"{path}.kind"),
+        physical_wire_id=_require_uuid(value, "physical_wire_id", f"{path}.physical_wire_id"),
+        start_node_id=_require_uuid(value, "start_node_id", f"{path}.start_node_id"),
+        end_node_id=_require_uuid(value, "end_node_id", f"{path}.end_node_id"),
+        pathway_id=_optional_uuid(value.get("pathway_id"), f"{path}.pathway_id"),
+        name=_optional_str(value.get("name"), f"{path}.name") or "",
+    )
+
+
+def _parse_junction_attachment(raw_value: object, path: str) -> JunctionAttachment:
+    """
+    Parse one pathway endpoint attached to a junction slice.
+    """
+    value = _require_mapping(raw_value, path)
+    return JunctionAttachment(
+        junction_id=_require_uuid(value, "junction_id", f"{path}.junction_id"),
+        pathway_id=_require_uuid(value, "pathway_id", f"{path}.pathway_id"),
+        pathway_end=_require_enum(PathwayEnd, value, "pathway_end", f"{path}.pathway_end"),
+    )
+
+
+def _parse_junction_disposition(raw_value: object, path: str) -> JunctionMemberDisposition:
+    """
+    Parse one member disposition at one junction attachment.
+    """
+    value = _require_mapping(raw_value, path)
+    return JunctionMemberDisposition(
+        junction_id=_require_uuid(value, "junction_id", f"{path}.junction_id"),
+        attachment_pathway_id=_require_uuid(
+            value, "attachment_pathway_id", f"{path}.attachment_pathway_id"
+        ),
+        attachment_end=_require_enum(PathwayEnd, value, "attachment_end", f"{path}.attachment_end"),
+        incoming_wire_id=_require_uuid(value, "incoming_wire_id", f"{path}.incoming_wire_id"),
+        disposition=_require_enum(JunctionDisposition, value, "disposition", f"{path}.disposition"),
+        branch_wire_id=_optional_uuid(value.get("branch_wire_id"), f"{path}.branch_wire_id"),
+    )
+
+
+def _parse_electrical_relationship(raw_value: object, path: str) -> ElectricalRelationship:
+    """
+    Parse one explicit electrical relationship.
+    """
+    value = _require_mapping(raw_value, path)
+    wire_ids = tuple(
+        _parse_uuid(item, f"{path}.physical_wire_ids[{index}]")
+        for index, item in enumerate(
+            _require_list(value, "physical_wire_ids", f"{path}.physical_wire_ids")
+        )
+    )
+    return ElectricalRelationship(
+        relationship_id=_require_uuid(value, "relationship_id", f"{path}.relationship_id"),
+        kind=_require_enum(ElectricalRelationshipKind, value, "kind", f"{path}.kind"),
+        junction_id=_require_uuid(value, "junction_id", f"{path}.junction_id"),
+        physical_wire_ids=wire_ids,
+        notes=_require_str({"notes": "", **value}, "notes", f"{path}.notes"),
+    )
 
 
 def _parse_profile(raw_value: object, path: str) -> WireProfile:
@@ -824,6 +1099,15 @@ def _parse_uuid(raw_value: object, path: str) -> UUID:
     return parsed_uuid
 
 
+def _optional_uuid(raw_value: object, path: str) -> Optional[UUID]:
+    """
+    Parse a nullable UUID string.
+    """
+    if raw_value is None:
+        return None
+    return _parse_uuid(raw_value, path)
+
+
 def _require_enum(
     enum_type: Type[EnumType],
     value: Mapping[str, Any],
@@ -849,6 +1133,25 @@ def _require_enum(
         allowed_values = ", ".join(member.value for member in enum_type)
         raise DefinitionParseError(path, f"expected one of: {allowed_values}") from error
     return parsed_value
+
+
+def _optional_enum(
+    enum_type: Type[EnumType],
+    raw_value: object,
+    path: str,
+) -> Optional[EnumType]:
+    """
+    Parse a nullable supported enum value.
+    """
+    if raw_value is None:
+        return None
+    if not isinstance(raw_value, str):
+        raise DefinitionParseError(path, "expected a string or null")
+    try:
+        return enum_type(raw_value)
+    except ValueError as error:
+        allowed_values = ", ".join(member.value for member in enum_type)
+        raise DefinitionParseError(path, f"expected one of: {allowed_values}") from error
 
 
 def parse_interpolation(raw_value: object, path: str) -> InterpolationSettings:

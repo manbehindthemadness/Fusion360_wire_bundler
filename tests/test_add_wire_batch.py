@@ -11,7 +11,13 @@ from uuid import UUID
 import pytest
 
 from wire_bundler.application import WireBatchGateway, WireBatchUpdateError, add_wire_batch
-from wire_bundler.domain import HarnessDefinition, dumps, loads
+from wire_bundler.domain import (
+    HarnessDefinition,
+    RouteEdgeKind,
+    dumps,
+    loads,
+    validate_harness,
+)
 
 PROFILE_ID = UUID("81000000-0000-0000-0000-000000000001")
 SOURCE_IDS = (
@@ -140,6 +146,38 @@ def test_increments_after_existing_numeric_wire(valid_harness: HarnessDefinition
     )
 
     assert result.wires[0].wire_number == "002"
+
+
+def test_new_wire_traverses_existing_junction_slices(
+    branched_harness: HarnessDefinition,
+) -> None:
+    """
+    Synchronize new primary wires with an already explicit parent topology.
+    """
+    gateway = _RecordingWireGateway(branched_harness)
+    identifiers = iter((PROFILE_ID, SOURCE_IDS[0], DESTINATION_IDS[0], WIRE_IDS[0]))
+
+    result = add_wire_batch(
+        branched_harness.harness_id,
+        branched_harness.pathways[0].pathway_id,
+        ("new-source",),
+        ("new-destination",),
+        1.0,
+        gateway,
+        id_factory=lambda: next(identifiers),
+    )
+
+    stored = loads(gateway.serialized_definition)
+    assert stored.topology is not None
+    parent_spans = [
+        edge
+        for edge in stored.topology.edges
+        if edge.kind is RouteEdgeKind.PATHWAY
+        and edge.pathway_id == branched_harness.pathways[0].pathway_id
+        and edge.physical_wire_id == result.wires[0].wire_id
+    ]
+    assert len(parent_spans) == 2
+    assert validate_harness(stored) == ()
 
 
 @pytest.mark.parametrize(

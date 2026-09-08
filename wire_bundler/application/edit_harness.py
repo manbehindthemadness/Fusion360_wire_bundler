@@ -17,6 +17,7 @@ from ..domain import (
     HarnessDefinition,
     PathwayDefinition,
     RoutingMode,
+    TopologyNodeKind,
     WireDefinition,
     WireMaterialOverrides,
     WireMaterialSettings,
@@ -447,7 +448,33 @@ def set_wire_diameter(
         replace(item, profile_id=updated_profile.profile_id) if item.wire_id == wire_id else item
         for item in definition.wires
     )
-    _persist(harness_id, original, replace(definition, profiles=profiles, wires=wires), gateway)
+    topology = definition.topology
+    if topology is not None:
+        primary = next(
+            (item for item in topology.physical_wires if item.physical_wire_id == wire_id),
+            None,
+        )
+        if primary is not None:
+            topology = replace(
+                topology,
+                physical_wires=tuple(
+                    replace(item, profile_id=updated_profile.profile_id)
+                    if item.network_id == primary.network_id
+                    else item
+                    for item in topology.physical_wires
+                ),
+            )
+    _persist(
+        harness_id,
+        original,
+        replace(
+            definition,
+            profiles=profiles,
+            wires=wires,
+            topology=topology,
+        ),
+        gateway,
+    )
 
 
 def set_harness_material_defaults(
@@ -559,6 +586,54 @@ def remove_wire(
     }
     referenced_profile_ids = {wire.profile_id for wire in wires}
     removed_connection_ids = {removed.start_connection_id, removed.end_connection_id}
+    updated_topology = definition.topology
+    if updated_topology is not None:
+        primary_physical = next(
+            (wire for wire in updated_topology.physical_wires if wire.physical_wire_id == wire_id),
+            None,
+        )
+        if primary_physical is not None:
+            removed_physical_ids = {
+                wire.physical_wire_id
+                for wire in updated_topology.physical_wires
+                if wire.network_id == primary_physical.network_id
+            }
+            for node in updated_topology.nodes:
+                if (
+                    node.kind is TopologyNodeKind.EXTERNAL_END
+                    and node.physical_wire_id in removed_physical_ids
+                    and node.connection_id is not None
+                ):
+                    removed_connection_ids.add(node.connection_id)
+            updated_topology = replace(
+                updated_topology,
+                nodes=tuple(
+                    node
+                    for node in updated_topology.nodes
+                    if node.physical_wire_id not in removed_physical_ids
+                ),
+                physical_wires=tuple(
+                    wire
+                    for wire in updated_topology.physical_wires
+                    if wire.physical_wire_id not in removed_physical_ids
+                ),
+                edges=tuple(
+                    edge
+                    for edge in updated_topology.edges
+                    if edge.physical_wire_id not in removed_physical_ids
+                ),
+                junction_dispositions=tuple(
+                    item
+                    for item in updated_topology.junction_dispositions
+                    if item.incoming_wire_id not in removed_physical_ids
+                    and item.branch_wire_id not in removed_physical_ids
+                ),
+                electrical_relationships=tuple(
+                    item
+                    for item in updated_topology.electrical_relationships
+                    if not (set(item.physical_wire_ids) & removed_physical_ids)
+                ),
+            )
     updated = replace(
         definition,
         connections=tuple(
@@ -574,6 +649,7 @@ def remove_wire(
             or profile.profile_id in referenced_profile_ids
         ),
         wires=wires,
+        topology=updated_topology,
     )
     _persist(harness_id, original, updated, gateway)
 

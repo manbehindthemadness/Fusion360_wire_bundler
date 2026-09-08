@@ -14,10 +14,14 @@ from ..domain import (
     ControlStructure,
     HarnessDefinition,
     PathwayDefinition,
+    PathwayEnd,
     RoutingMode,
+    TopologyNode,
+    TopologyNodeKind,
     dumps,
     loads,
     next_available_name,
+    pathway_end_node_id,
 )
 
 
@@ -138,6 +142,23 @@ def add_pathway(
         controls=(*definition.controls, *controls),
         pathways=(*definition.pathways, pathway),
     )
+    if updated_definition.topology is not None:
+        endpoint_nodes = tuple(
+            TopologyNode(
+                node_id=pathway_end_node_id(pathway.pathway_id, pathway_end),
+                kind=TopologyNodeKind.PATHWAY_END,
+                pathway_id=pathway.pathway_id,
+                pathway_end=pathway_end,
+            )
+            for pathway_end in PathwayEnd
+        )
+        updated_definition = replace(
+            updated_definition,
+            topology=replace(
+                updated_definition.topology,
+                nodes=updated_definition.topology.nodes + endpoint_nodes,
+            ),
+        )
 
     try:
         gateway.replace_harness_definition(harness_id, dumps(updated_definition))

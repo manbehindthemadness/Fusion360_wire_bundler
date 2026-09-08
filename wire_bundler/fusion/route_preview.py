@@ -24,6 +24,7 @@ from ..domain import (
     WireColor,
     WireDefinition,
     WireStripe,
+    validate_harness,
 )
 from ..routing import (
     GateFrame,
@@ -40,6 +41,7 @@ from ..routing import (
 from ..routing.geometry import cross, difference, dot, linear_combination, magnitude, unit
 
 PREVIEW_GROUP_ID = "kev0.wire_bundler.route_preview"
+JUNCTION_SLICE_GROUP_ID = "kev0.wire_bundler.junction_slices"
 _PREVIEW_COLORS = (
     (23, 119, 200),
     (220, 92, 66),
@@ -170,6 +172,12 @@ def show_route_previews(
         RuntimeError: If referenced geometry is unavailable or unsupported.
         ValueError: If route inputs or gate capacity are invalid.
     """
+    if definition.topology is not None:
+        issues = validate_harness(definition)
+        if issues:
+            raise ValueError(
+                "Cannot preview wires: " + "; ".join(issue.message for issue in issues)
+            )
     routes = _solve_definition_routes(design, definition, clearance_mm, notices)
     root_component = design.rootComponent
     clear_route_previews(design)
@@ -225,6 +233,94 @@ def clear_route_previews(design: adsk.fusion.Design) -> int:
                 _preview_states.pop(group_id, None)
                 deleted_count += 1
     return deleted_count
+
+
+def show_junction_slices(
+    design: adsk.fusion.Design,
+    definition: HarnessDefinition,
+) -> int:
+    """
+    Rebuild bright selectable slice outlines for gate-backed junctions.
+
+    Virtual slices do not have a host-space frame until pathway interpolation is
+    implemented. Gate-backed slices use the selected profile's exact plane and
+    aperture, which keeps the visual oracle aligned with Fusion geometry.
+    """
+    group_id = f"{JUNCTION_SLICE_GROUP_ID}:{definition.harness_id}"
+    groups = design.rootComponent.customGraphicsGroups
+    for index in range(groups.count - 1, -1, -1):
+        existing = groups.item(index)
+        if existing is not None and (
+            existing.id == group_id or existing.name == f"{definition.name} Junction Slices"
+        ):
+            _delete_graphics_group(existing)
+    topology = definition.topology
+    if topology is None:
+        return 0
+    controls = {control.control_id: control for control in definition.controls}
+    junctions = tuple(
+        node
+        for node in topology.nodes
+        if node.kind.value == "junction" and node.slice_control_id is not None
+    )
+    if not junctions:
+        return 0
+    group = groups.add()
+    if group is None:
+        raise RuntimeError("Fusion did not create junction-slice graphics.")
+    group.id = group_id
+    group.name = f"{definition.name} Junction Slices"
+    for junction in junctions:
+        slice_control_id = junction.slice_control_id
+        if slice_control_id is None:
+            continue
+        control = controls.get(slice_control_id)
+        frame = _gate_frame(design, control, slice_control_id)
+        segments = 48
+        points: list[float] = []
+        for index in range(segments + 1):
+            angle = math.tau * index / segments
+            offset = linear_combination(
+                frame.u_direction,
+                frame.usable_radius_mm * math.cos(angle),
+                frame.v_direction,
+                frame.usable_radius_mm * math.sin(angle),
+            )
+            point = Vector3(
+                frame.origin.x + offset.x,
+                frame.origin.y + offset.y,
+                frame.origin.z + offset.z,
+            )
+            points.extend((point.x / 10.0, point.y / 10.0, point.z / 10.0))
+        coordinates = adsk.fusion.CustomGraphicsCoordinates.create(points)
+        if coordinates is None:
+            raise RuntimeError(f"Fusion did not create graphics for {junction.name}.")
+        lines = group.addLines(coordinates, [], True)
+        if lines is None:
+            raise RuntimeError(f"Fusion did not draw {junction.name}.")
+        lines.name = f"{junction.name} Slice"
+        lines.weight = 4.0
+        lines.isSelectable = True
+        color = adsk.core.Color.create(255, 78, 24, 255)
+        lines.color = adsk.fusion.CustomGraphicsSolidColorEffect.create(color)
+    return len(junctions)
+
+
+def clear_junction_slices(design: adsk.fusion.Design) -> int:
+    """
+    Remove every transient junction-slice group owned by Wire Bundler.
+    """
+    deleted = 0
+    for groups in _design_graphics_collections(design):
+        for index in range(groups.count - 1, -1, -1):
+            group = groups.item(index)
+            if group is not None and (
+                group.id.startswith(f"{JUNCTION_SLICE_GROUP_ID}:")
+                or group.name.endswith(" Junction Slices")
+            ):
+                _delete_graphics_group(group)
+                deleted += 1
+    return deleted
 
 
 def has_route_previews(design: adsk.fusion.Design) -> bool:

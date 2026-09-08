@@ -150,6 +150,7 @@ function renderRelationshipMap(harness, auditIssues) {
   const settings = document.createElement("label");
   const collapseInput = document.createElement("input");
   const viewport = document.createElement("div");
+  const workspace = createBlockDiagramWorkspace("Zoomable master relationship diagram");
   container.className = "section-content relationship-map";
   toolbar.className = "relationship-map-toolbar";
   filter.className = "filter";
@@ -171,12 +172,13 @@ function renderRelationshipMap(harness, auditIssues) {
   collapseInput.setAttribute("aria-label", "Connections before end lists collapse");
   settings.append(collapseInput, "connections");
   viewport.className = "relationship-map-viewport";
+  viewport.append(workspace.root);
 
   const draw = () => {
     const query = filter.value.trim().toLocaleLowerCase();
     const collapseLimit = clampRelationshipCollapseLimit(collapseInput.value);
     relationshipFilters.set(harnessKey(harness), query);
-    viewport.replaceChildren();
+    workspace.stage.replaceChildren();
     const stack = document.createElement("div");
     let visiblePathways = 0;
     stack.className = "relationship-pathway-stack";
@@ -219,6 +221,22 @@ function renderRelationshipMap(harness, auditIssues) {
       startList.redrawConnector = startConnector.redraw;
       endList.redrawConnector = endConnector.redraw;
       card.append(startList, startConnector, hub, endConnector, endList);
+      const junctions = (harness.topology?.nodes || []).filter(
+        (node) => node.kind === "junction" && node.pathwayId === pathway.pathwayId,
+      );
+      if (junctions.length) {
+        const branches = document.createElement("div");
+        branches.className = "relationship-junction-branches";
+        junctions.forEach((junction, index) => {
+          const branch = document.createElement("button");
+          branch.type = "button";
+          branch.className = "relationship-junction-node";
+          branch.textContent = junction.name || `Junction ${index + 1}`;
+          branch.addEventListener("click", () => navigateToJunction(junction.nodeId));
+          branches.append(branch);
+        });
+        card.append(branches);
+      }
       stack.append(card);
       visiblePathways += 1;
     });
@@ -229,10 +247,12 @@ function renderRelationshipMap(harness, auditIssues) {
           : "No pathways to display yet.",
       );
       message.className = "empty relationship-map-empty";
-      viewport.append(message);
+      workspace.stage.append(message);
+      window.requestAnimationFrame(() => workspace.fit());
       return;
     }
-    viewport.append(stack);
+    workspace.stage.append(stack);
+    window.requestAnimationFrame(() => workspace.fit());
   };
   filter.addEventListener("input", draw);
   collapseInput.addEventListener("change", () => {
@@ -248,4 +268,3 @@ function renderRelationshipMap(harness, auditIssues) {
   draw();
   return container;
 }
-
