@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "id": "EFCB8F05-6A76-456A-8718-D975228716C7",
+  "author": "Fusion 360 Wire Bundler contributors",
+  "description": {
+    "": "Verify external harness placement through an Assembly save and reopen cycle."
+  },
+  "version": "0.1.0",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

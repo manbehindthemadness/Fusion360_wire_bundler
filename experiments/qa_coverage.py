@@ -15,7 +15,16 @@ LEDGER_PATH = Path(__file__).with_name("qa_coverage.json")
 VALID_STATUSES = frozenset(("automated", "partial", "candidate", "manual"))
 VALID_PLATFORMS = frozenset(("macos", "windows"))
 VALID_LAYERS = frozenset(
-    ("pytest", "palette", "fusion-script", "fusion-command", "fusion-api", "mcp", "manual")
+    (
+        "pytest",
+        "palette",
+        "fusion-script",
+        "fusion-command",
+        "fusion-api",
+        "mcp",
+        "os-window",
+        "manual",
+    )
 )
 
 

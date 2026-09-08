@@ -12,8 +12,11 @@ from pathlib import Path
 # noinspection PyUnresolvedReferences
 import adsk.core
 
+from experiments.experiment_assembly_placement import verify_assembly_placement
 from experiments.experiment_command_history import verify_command_history
 from experiments.experiment_fusion_capabilities import audit_fusion_capabilities
+from experiments.experiment_generated_solids import verify_generated_solids
+from experiments.experiment_linked_geometry import verify_linked_geometry
 from experiments.experiment_preview_reload import verify_preview_reload
 from experiments.experiment_reference_harness import verify_reference_harness
 from experiments.experiment_sweep_matrix import verify_sweep_matrix
@@ -43,6 +46,9 @@ def run_automated_fusion_suite(application: adsk.core.Application) -> dict[str, 
         ("sweep_matrix", verify_sweep_matrix),
         ("reference_harness", verify_reference_harness),
         ("preview_reload", verify_preview_reload),
+        ("assembly_placement", verify_assembly_placement),
+        ("linked_geometry", verify_linked_geometry),
+        ("generated_solids", verify_generated_solids),
     )
     initial_document = application.activeDocument
     initial_document_count = application.documents.count

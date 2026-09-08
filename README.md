@@ -132,6 +132,19 @@ dependencies, sample documents, or destructive fixture creation. Diagnostics pro
 an exportable report and never silently modify the active design. This optional surface
 adds no extra installation steps and is verified against the final package contents.
 
+Any desktop-level capture or input automation is development-only and opt-in. A future
+top-level **Developer mode** setting defaults off and gates permission-requiring tools,
+verbose test controls, and advanced diagnostic surfaces. Ordinary add-in use and the
+shipping self-diagnostic must never request Screen Recording, Accessibility, or similar
+operating-system permissions. Development hosts may grant those permissions explicitly
+when running the external UI-oracle procedure.
+
+Desktop UI capture has a second independent clamp: the adapter must resolve the target
+from the operating system's window inventory and verify that its owning executable or
+bundle identity is Autodesk Fusion. It accepts no caller-supplied rectangle, process,
+or arbitrary application target. Captures use a private temporary directory and are
+deleted in `finally` after metrics are computed, whether the check passes or fails.
+
 Automation must cover success, failure, cancellation, rollback, Undo/Redo, save/reload,
 rebuild, clear, lost references, and repeated execution wherever Fusion provides stable
 control and observation. Visual evidence may supplement structural assertions but does
@@ -280,6 +293,16 @@ scenarios. `--command-timeout` and `--fusion-timeout` override the bounded defau
 orchestrator uses only the Python standard library plus the existing development tools,
 lives under `experiments/`, and is not a runtime or installation dependency.
 
+On an explicitly configured development machine, add `--desktop-ui` to probe the
+forward-facing Harness Builder window. This opt-in macOS adapter requires Screen
+Recording permission. It reads the fixed palette's bounds from Fusion's API, verifies
+Fusion's exact bundle and executable, matches those bounds to a Core Graphics window
+owned by the verified Fusion process, revalidates the window identity in a fixed Swift
+helper, captures that exact window through Core Graphics, and purges the private
+temporary PNG before reporting. Missing permission or a hidden palette is reported as
+deferred; an identity or ownership mismatch is a failing safety error. The default
+command never invokes it.
+
 `experiments/qa_coverage.json` is the machine-readable M0 coverage ledger. Normal tests
 validate its schema, unique target IDs, evidence paths, and explanations for residual
 manual checks. The ledger requires both macOS and Windows. Update it whenever an
@@ -308,6 +331,33 @@ API-visible after reload, then creates and clears a fresh preview to prove the r
 document remains controllable. Its temporary DataFile is deleted after the document is
 closed. This structural result does not replace a future deterministic viewport-image
 comparison for graphics that might exist only in Fusion's saved OGS cache.
+
+The external orchestrator also advances a separate one-wire fixture through baseline,
+preview, save/reopen, fresh preview, and clear checkpoints. At every checkpoint MCP
+sets a standard isometric camera, Fusion fits and refreshes the viewport, and MCP saves
+a 640×480 PNG in memory. A dependency-free decoder compares pixels with a small channel
+tolerance. The preview must differ from baseline; reopened
+and cleared views must match baseline; and the fresh preview must match the original.
+Cleanup runs even when capture or comparison fails. Captures are never retained; the
+report stores only dimensions and numerical comparison metrics.
+
+`experiments/experiment_assembly_placement_runner/` creates an Assembly design and one
+external harness in the active cloud folder, saves the parent so Fusion persists both
+files, closes and reopens the parent, and verifies Assembly intent, the external
+occurrence, its child-file reference, and the harness UUID. Cleanup closes the fixture,
+deletes the parent before its referenced child, and restores the previous document.
+
+`experiments/experiment_linked_geometry_runner/` deletes one selected endpoint sketch
+from a complete one-wire fixture, saves and reopens the design, and verifies that the
+stored definition and all healthy references survive. The production palette payload
+must identify only the deleted endpoint as missing. The scenario then deletes its
+disposable cloud file and restores the previous document.
+
+`experiments/experiment_generated_solids_runner/` generates one striped wire, verifies
+its solid appearance and persistent identity, moves the parent harness and confirms the
+body follows, then clears the generated component and its component-owned stripe
+graphics. The live orchestrated suite covers this scenario alongside command history,
+save/reload, linked geometry, assembly placement, and viewport-image comparisons.
 
 ## Layout
 

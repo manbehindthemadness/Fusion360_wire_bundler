@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "id": "FCB3DAED-93DE-4AAE-A3E9-B1605CDBA9EE",
+  "author": "Fusion 360 Wire Bundler contributors",
+  "description": {
+    "": "Verify isolated linked-geometry damage across a Fusion save and reopen cycle."
+  },
+  "version": "0.1.0",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

@@ -96,4 +96,7 @@ def test_mcp_capability_snapshot_records_required_automation_surfaces() -> None:
         "sweep_matrix",
         "reference_harness",
         "preview_reload",
+        "assembly_placement",
+        "linked_geometry",
+        "generated_solids",
     }

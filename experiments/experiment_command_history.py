@@ -8,6 +8,7 @@ design and restores the previously active document.
 
 from __future__ import annotations
 
+import importlib
 import json
 import sys
 import traceback
@@ -32,7 +33,6 @@ import adsk.fusion  # noqa: E402
 
 from experiments.experiment_reference_harness import _create_circular_profile  # noqa: E402
 from experiments.scenario_report import ScenarioReport  # noqa: E402
-from wire_bundler import addin  # noqa: E402
 from wire_bundler.application import add_pathway, add_wire_batch, create_empty_harness  # noqa: E402
 from wire_bundler.domain import RoutingMode, loads  # noqa: E402
 from wire_bundler.fusion import FusionHarnessGateway  # noqa: E402
@@ -406,9 +406,15 @@ def execute_palette_action(
         action: Production palette action identifier.
         payload: Serialized action payload.
     """
+    wait_for(
+        application,
+        lambda: str(application.userInterface.activeCommand) == "SelectCommand",
+        f"Fusion default command before {action}",
+    )
     # The experiment intentionally verifies this internal production boundary.
     # noinspection PyProtectedMember
-    addin._open_palette_edit(application, action, payload)
+    current_addin = importlib.import_module("wire_bundler.addin")
+    current_addin._open_palette_edit(application, action, payload)
 
 
 def _clear_transient_preview(application: adsk.core.Application) -> int:
@@ -423,7 +429,8 @@ def _clear_transient_preview(application: adsk.core.Application) -> int:
     """
     # The experiment intentionally verifies this internal production boundary.
     # noinspection PyProtectedMember
-    return addin._clear_preview(application)
+    current_addin = importlib.import_module("wire_bundler.addin")
+    return current_addin._clear_preview(application)
 
 
 def _execute_native_history_command(
@@ -482,10 +489,11 @@ def wait_for(
             return
         # The scenario intentionally observes the running add-in's command boundary.
         # noinspection PyProtectedMember
-        if addin._last_command_error:
+        current_addin = importlib.import_module("wire_bundler.addin")
+        if current_addin._last_command_error:
             # noinspection PyProtectedMember
             raise RuntimeError(
-                f"Fusion command failed during {description}: {addin._last_command_error}"
+                f"Fusion command failed during {description}: {current_addin._last_command_error}"
             )
         sleep(0.01)
     active_command = application.userInterface.activeCommand

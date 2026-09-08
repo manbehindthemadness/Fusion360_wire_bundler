@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "script",
+  "id": "1FB3F1EF-D8E8-4452-8406-B48361AA0D30",
+  "author": "Fusion 360 Wire Bundler contributors",
+  "description": {
+    "": "Verify generated wire ownership, transforms, materials, stripes, and clearing."
+  },
+  "version": "0.1.0",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac",
+  "editEnabled": true
+}

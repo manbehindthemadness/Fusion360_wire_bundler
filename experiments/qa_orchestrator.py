@@ -1,3 +1,12 @@
+# =============================================================================
+# DEVELOPMENT-ONLY EXTERNAL UI CAPTURE — OPT-IN CALL SITE
+#
+# OS-level capture is reachable only through the explicit --desktop-ui command-line
+# flag. The default end-to-end QA procedure does not invoke it. The capture adapter
+# enforces Fusion identity and exact-window ownership, never accepts an arbitrary
+# target or rectangle, and purges all pixel files before this orchestrator reports.
+# =============================================================================
+
 """
 Orchestrate local checks and cleanup-safe Fusion scenarios into one QA report.
 """
@@ -5,8 +14,10 @@ Orchestrate local checks and cleanup-safe Fusion scenarios into one QA report.
 from __future__ import annotations
 
 import argparse
+import base64
 import http.client
 import json
+import math
 import platform
 import subprocess
 import sys
@@ -18,6 +29,14 @@ from time import perf_counter
 from typing import Optional
 from urllib.parse import urlparse
 
+from experiments.desktop_ui_capture import (
+    DesktopCaptureSafetyError,
+    DesktopCaptureUnavailable,
+    PaletteBounds,
+    capture_harness_builder_window,
+    desktop_capture_observation,
+)
+from experiments.png_oracle import PNG_SIGNATURE, compare_pngs
 from experiments.qa_coverage import load_coverage_ledger
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -25,6 +44,10 @@ ARTIFACT_ROOT = PROJECT_ROOT / "artifacts" / "verification"
 DEFAULT_MCP_URL = "http://127.0.0.1:27182/mcp"
 MCP_PROTOCOL_VERSION = "2025-03-26"
 FUSION_RESULT_PREFIX = "WIRE_BUNDLER_QA_RESULT="
+VISUAL_RESULT_PREFIX = "WIRE_BUNDLER_VISUAL_RESULT="
+PALETTE_BOUNDS_RESULT_PREFIX = "WIRE_BUNDLER_PALETTE_BOUNDS_RESULT="
+VISUAL_WIDTH = 640
+VISUAL_HEIGHT = 480
 
 
 @dataclass(frozen=True)
@@ -217,6 +240,7 @@ def run_qa(
     mcp_url: str = DEFAULT_MCP_URL,
     command_timeout_seconds: float = 180.0,
     fusion_timeout_seconds: float = 600.0,
+    capture_desktop_ui: bool = False,
 ) -> tuple[int, Path]:
     """
     Run the selected QA layers and write one aggregate report.
@@ -227,6 +251,7 @@ def run_qa(
         mcp_url: Local Fusion MCP endpoint.
         command_timeout_seconds: Timeout for each local subprocess.
         fusion_timeout_seconds: Timeout for each MCP request.
+        capture_desktop_ui: Opt into permission-requiring Fusion-window capture.
 
     Returns:
         Process exit code and aggregate JSON report path.
@@ -241,6 +266,11 @@ def run_qa(
     fusion_result: dict[str, object]
     if run_fusion:
         fusion_result = _run_fusion_suite(mcp_url, fusion_timeout_seconds)
+        if capture_desktop_ui:
+            desktop_result = _run_desktop_ui_oracle(mcp_url, fusion_timeout_seconds)
+            fusion_result["desktopUiOracle"] = desktop_result
+            if desktop_result.get("status") == "failed":
+                fusion_result["status"] = "failed"
     else:
         fusion_result = {"status": "skipped", "detail": "Disabled by command option."}
 
@@ -255,7 +285,11 @@ def run_qa(
         "startedAt": started_at.isoformat(),
         "finishedAt": finished_at.isoformat(),
         "host": {"platform": platform.system(), "machine": platform.machine()},
-        "selection": {"local": run_local, "fusion": run_fusion},
+        "selection": {
+            "local": run_local,
+            "fusion": run_fusion,
+            "desktopUi": capture_desktop_ui,
+        },
         "local": [asdict(result) for result in local_results],
         "fusion": fusion_result,
         "coverage": {
@@ -297,13 +331,24 @@ def main(arguments: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--mcp-url", default=DEFAULT_MCP_URL)
     parser.add_argument("--command-timeout", type=float, default=180.0)
     parser.add_argument("--fusion-timeout", type=float, default=600.0)
+    parser.add_argument(
+        "--desktop-ui",
+        action="store_true",
+        help=(
+            "Opt into Fusion-only desktop window capture; requires development-mode "
+            "Screen Recording permission."
+        ),
+    )
     options = parser.parse_args(arguments)
+    if options.local_only and options.desktop_ui:
+        parser.error("--desktop-ui requires the live Fusion layer.")
     exit_code, report_path = run_qa(
         run_local=not options.fusion_only,
         run_fusion=not options.local_only,
         mcp_url=options.mcp_url,
         command_timeout_seconds=options.command_timeout,
         fusion_timeout_seconds=options.fusion_timeout,
+        capture_desktop_ui=options.desktop_ui,
     )
     print(f"Wire Bundler QA: {'PASS' if exit_code == 0 else 'FAIL'}")
     print(f"Report: {report_path}")
@@ -393,6 +438,10 @@ def _run_fusion_suite(endpoint: str, timeout_seconds: float) -> dict[str, object
         )
         suite_result = _parse_fusion_tool_result(tool_result)
         suite_result["server"] = server
+        visual_result = _run_preview_visual_oracle(client)
+        suite_result["visualOracle"] = visual_result
+        if visual_result.get("status") != "passed":
+            suite_result["status"] = "failed"
     except (ConnectionError, OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         suite_result = {"status": "failed", "error": str(error)}
     finally:
@@ -406,6 +455,304 @@ def _run_fusion_suite(endpoint: str, timeout_seconds: float) -> dict[str, object
     display_status = raw_status.upper() if isinstance(raw_status, str) else "FAILED"
     print(f"[{display_status:7}] fusion ({elapsed_ms:.0f} ms)")
     return suite_result
+
+
+def _run_desktop_ui_oracle(endpoint: str, timeout_seconds: float) -> dict[str, object]:
+    """
+    Capture the verified Fusion palette only when explicitly requested.
+
+    Returns:
+        Passed metadata, a non-failing unavailable result, or a safety failure.
+    """
+    try:
+        palette_bounds = _read_palette_bounds(endpoint, timeout_seconds)
+        capture = capture_harness_builder_window(palette_bounds)
+        observation = desktop_capture_observation(capture)
+    except DesktopCaptureSafetyError as error:
+        return {"status": "failed", "error": str(error), "capturesPurged": True}
+    except (
+        ConnectionError,
+        DesktopCaptureUnavailable,
+        OSError,
+        RuntimeError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as error:
+        return {"status": "deferred", "reason": str(error), "capturesPurged": True}
+    return {"status": "passed", "observation": observation, "capturesPurged": True}
+
+
+def _read_palette_bounds(endpoint: str, timeout_seconds: float) -> PaletteBounds:
+    """
+    Read the fixed Harness Builder palette geometry through Fusion's API.
+
+    Args:
+        endpoint: Local Fusion MCP endpoint.
+        timeout_seconds: Timeout for each MCP operation.
+
+    Returns:
+        Validated visible palette bounds used only to select a Fusion-owned window.
+    """
+    client = McpClient(endpoint, timeout_seconds)
+    try:
+        client.initialize()
+        tool_result = client.call_tool(
+            "fusion_mcp_execute",
+            {"featureType": "script", "object": {"script": _palette_bounds_script()}},
+        )
+        payload = _parse_execute_result(tool_result, PALETTE_BOUNDS_RESULT_PREFIX)
+    finally:
+        try:
+            client.close()
+        except (ConnectionError, OSError, RuntimeError):
+            pass
+    if (
+        payload.get("id") != "kev0_wire_bundler_harness_builder_palette"
+        or payload.get("name") != "Harness Builder"
+    ):
+        raise DesktopCaptureSafetyError("Fusion returned an unexpected palette identity.")
+    if payload.get("valid") is not True or payload.get("visible") is not True:
+        raise DesktopCaptureUnavailable("Harness Builder is not a valid visible Fusion palette.")
+    left = _finite_number(payload.get("left"), "left")
+    top = _finite_number(payload.get("top"), "top")
+    width = _finite_number(payload.get("width"), "width")
+    height = _finite_number(payload.get("height"), "height")
+    if width <= 0 or height <= 0:
+        raise DesktopCaptureUnavailable("Harness Builder reported invalid palette dimensions.")
+    return PaletteBounds(left, top, width, height)
+
+
+def _palette_bounds_script() -> str:
+    """
+    Build a fixed in-host query for the Harness Builder palette only.
+    """
+    return f'''import json
+
+import adsk.core
+
+
+def run(_context: str):
+    application = adsk.core.Application.get()
+    palette = application.userInterface.palettes.itemById(
+        "kev0_wire_bundler_harness_builder_palette"
+    )
+    if palette is None:
+        raise RuntimeError("Harness Builder palette is not registered.")
+    result = {{
+        "id": palette.id,
+        "name": palette.name,
+        "valid": palette.isValid,
+        "visible": palette.isVisible,
+        "left": palette.left,
+        "top": palette.top,
+        "width": palette.width,
+        "height": palette.height,
+    }}
+    print("{PALETTE_BOUNDS_RESULT_PREFIX}" + json.dumps(result, sort_keys=True))
+'''
+
+
+def _finite_number(value: object, label: str) -> float:
+    """
+    Validate one numeric Palette API coordinate or dimension.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise DesktopCaptureUnavailable(f"Harness Builder {label} is not numeric.")
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise DesktopCaptureUnavailable(f"Harness Builder {label} is not finite.")
+    return parsed
+
+
+def _run_preview_visual_oracle(client: McpClient) -> dict[str, object]:
+    """
+    Advance the preview lifecycle around normalized MCP screenshots.
+
+    Args:
+        client: Initialized MCP client shared with the structural Fusion suite.
+
+    Returns:
+        JSON-safe comparison metrics, phase state, and status.
+    """
+    images: dict[str, bytes] = {}
+    phases: list[dict[str, object]] = []
+    cleanup: dict[str, object] = {"clean": False}
+    error = ""
+    try:
+        phases.append(_call_visual_phase(client, "begin", reload_module=True))
+        images["baseline"] = _capture_normalized_viewport(client, phases)
+        phases.append(_call_visual_phase(client, "show-preview"))
+        images["preview"] = _capture_normalized_viewport(client, phases)
+        phases.append(_call_visual_phase(client, "save-reload"))
+        images["reloaded"] = _capture_normalized_viewport(client, phases)
+        phases.append(_call_visual_phase(client, "show-fresh"))
+        images["freshPreview"] = _capture_normalized_viewport(client, phases)
+        phases.append(_call_visual_phase(client, "clear"))
+        images["cleared"] = _capture_normalized_viewport(client, phases)
+
+        differences = {
+            "baselineToPreview": asdict(compare_pngs(images["baseline"], images["preview"])),
+            "baselineToReloaded": asdict(compare_pngs(images["baseline"], images["reloaded"])),
+            "previewToFreshPreview": asdict(
+                compare_pngs(images["preview"], images["freshPreview"])
+            ),
+            "baselineToCleared": asdict(compare_pngs(images["baseline"], images["cleared"])),
+        }
+        _assert_visual_differences(differences)
+        status = "passed"
+    except (OSError, RuntimeError, TypeError, ValueError, json.JSONDecodeError) as failure:
+        status = "failed"
+        differences = {}
+        error = str(failure)
+    finally:
+        try:
+            cleanup = _call_visual_phase(client, "cleanup")
+        except (RuntimeError, ValueError, json.JSONDecodeError) as failure:
+            cleanup = {"clean": False, "error": str(failure)}
+            status = "failed"
+            error = f"{error} Cleanup failed: {failure}".strip()
+    return {
+        "status": status,
+        "dimensions": {"width": VISUAL_WIDTH, "height": VISUAL_HEIGHT},
+        "camera": "iso-top-right",
+        "captures": {"count": len(images), "storage": "memory-only", "purged": True},
+        "differences": differences,
+        "phases": phases,
+        "cleanup": cleanup,
+        "error": error,
+    }
+
+
+def _capture_normalized_viewport(
+    client: McpClient,
+    phases: list[dict[str, object]],
+) -> bytes:
+    """
+    Establish a standard camera, fit the model, and capture the active viewport.
+    """
+    screenshot_arguments: dict[str, object] = {
+        "queryType": "screenshot",
+        "width": VISUAL_WIDTH,
+        "height": VISUAL_HEIGHT,
+        "antiAliasing": True,
+        "transparentBackground": False,
+    }
+    client.call_tool(
+        "fusion_mcp_read",
+        {**screenshot_arguments, "direction": "iso-top-right"},
+    )
+    phases.append(_call_visual_phase(client, "normalize"))
+    tool_result = client.call_tool(
+        "fusion_mcp_read",
+        {**screenshot_arguments, "direction": "current"},
+    )
+    return _extract_screenshot_png(tool_result)
+
+
+def _call_visual_phase(
+    client: McpClient,
+    action: str,
+    reload_module: bool = False,
+) -> dict[str, object]:
+    """
+    Execute one visual-fixture phase inside Fusion.
+    """
+    tool_result = client.call_tool(
+        "fusion_mcp_execute",
+        {
+            "featureType": "script",
+            "object": {"script": _visual_phase_script(action, reload_module)},
+        },
+    )
+    return _parse_execute_result(tool_result, VISUAL_RESULT_PREFIX)
+
+
+def _visual_phase_script(action: str, reload_module: bool = False) -> str:
+    """
+    Build the in-host bootstrap for one visual-fixture phase.
+    """
+    root = json.dumps(str(PROJECT_ROOT))
+    encoded_action = json.dumps(action)
+    reload_statement = "module = importlib.reload(module)" if reload_module else ""
+    return f'''import importlib
+import json
+import sys
+
+
+def run(_context: str):
+    root = {root}
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    import experiments.experiment_preview_visual as module
+
+    {reload_statement}
+    result = module.dispatch({encoded_action})
+    print("{VISUAL_RESULT_PREFIX}" + json.dumps(result, sort_keys=True))
+'''
+
+
+def _extract_screenshot_png(tool_result: dict[str, object]) -> bytes:
+    """
+    Extract and validate PNG bytes from supported MCP content envelopes.
+    """
+    encoded = _find_encoded_png(tool_result)
+    if encoded is None:
+        raise RuntimeError("Fusion MCP screenshot result omitted PNG image data.")
+    try:
+        payload = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError) as error:
+        raise RuntimeError("Fusion MCP screenshot returned invalid base64 data.") from error
+    if not payload.startswith(PNG_SIGNATURE):
+        raise RuntimeError("Fusion MCP screenshot did not return a PNG file.")
+    return payload
+
+
+def _find_encoded_png(value: object) -> Optional[str]:
+    """
+    Find base64 PNG data in native image blocks or JSON text blocks.
+    """
+    if isinstance(value, dict):
+        mime_type = value.get("mimeType") or value.get("mime_type")
+        if mime_type == "image/png":
+            for key in ("base64Data", "data"):
+                encoded = value.get(key)
+                if isinstance(encoded, str):
+                    return encoded
+        for nested in value.values():
+            found = _find_encoded_png(nested)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for nested in value:
+            found = _find_encoded_png(nested)
+            if found is not None:
+                return found
+    elif isinstance(value, str) and value.startswith(("{", "[")):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        return _find_encoded_png(decoded)
+    return None
+
+
+def _assert_visual_differences(differences: dict[str, dict[str, object]]) -> None:
+    """
+    Enforce tolerant preview visibility and cleared-state equivalence.
+    """
+    minimum_visible_change = 0.0001
+    maximum_stable_change = 0.02
+    for name in ("baselineToPreview",):
+        changed = float(differences[name]["changed_pixel_fraction"])
+        if changed < minimum_visible_change:
+            raise RuntimeError(f"Visual oracle did not detect the route preview: {changed:.6f}.")
+    for name in ("baselineToReloaded", "previewToFreshPreview", "baselineToCleared"):
+        changed = float(differences[name]["changed_pixel_fraction"])
+        if changed > maximum_stable_change:
+            raise RuntimeError(
+                f"Visual oracle comparison {name} changed {changed:.2%}; "
+                f"maximum is {maximum_stable_change:.2%}."
+            )
 
 
 def _fusion_suite_script() -> str:
@@ -438,6 +785,15 @@ def run(_context: str):
     import experiments.experiment_preview_reload as preview_reload_module
 
     importlib.reload(preview_reload_module)
+    import experiments.experiment_assembly_placement as assembly_module
+
+    importlib.reload(assembly_module)
+    import experiments.experiment_linked_geometry as linked_geometry_module
+
+    importlib.reload(linked_geometry_module)
+    import experiments.experiment_generated_solids as generated_solids_module
+
+    importlib.reload(generated_solids_module)
     import experiments.fusion_qa_suite as suite_module
 
     suite_module = importlib.reload(suite_module)
@@ -449,6 +805,23 @@ def run(_context: str):
 def _parse_fusion_tool_result(tool_result: dict[str, object]) -> dict[str, object]:
     """
     Extract the suite sentinel from Fusion MCP's nested execute result.
+    """
+    return _parse_execute_result(tool_result, FUSION_RESULT_PREFIX)
+
+
+def _parse_execute_result(
+    tool_result: dict[str, object],
+    result_prefix: str,
+) -> dict[str, object]:
+    """
+    Extract one prefixed JSON object from Fusion MCP's nested execute result.
+
+    Args:
+        tool_result: Raw MCP tool result.
+        result_prefix: Sentinel prefix written by the submitted in-host script.
+
+    Returns:
+        Decoded JSON object following the final matching sentinel.
     """
     content = tool_result.get("content")
     if not isinstance(content, list):
@@ -469,8 +842,8 @@ def _parse_fusion_tool_result(tool_result: dict[str, object]) -> dict[str, objec
     if not isinstance(message, str):
         raise RuntimeError("Fusion MCP execute result omitted script output.")
     for line in reversed(message.splitlines()):
-        if line.startswith(FUSION_RESULT_PREFIX):
-            result = json.loads(line[len(FUSION_RESULT_PREFIX) :])
+        if line.startswith(result_prefix):
+            result = json.loads(line[len(result_prefix) :])
             if not isinstance(result, dict):
                 raise RuntimeError("Fusion suite result was not an object.")
             return result

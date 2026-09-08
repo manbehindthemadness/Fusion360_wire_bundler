@@ -79,19 +79,19 @@
       "id": "M0-LIFE-001",
       "area": "preview-lifecycle",
       "behavior": "Preview, clear, save, close, reopen, and clear again leave no cached or orphaned Custom Graphics.",
-      "status": "partial",
+      "status": "automated",
       "layers": ["fusion-command", "fusion-api", "mcp"],
-      "evidence": ["tests/test_incremental_preview.py", "experiments/experiment_preview_reload.py", "experiments/fusion_qa_suite.py"],
-      "capabilities": ["post-reload-visual-oracle"]
+      "evidence": ["tests/test_incremental_preview.py", "tests/test_png_oracle.py", "experiments/experiment_preview_reload.py", "experiments/experiment_preview_visual.py", "experiments/png_oracle.py", "experiments/fusion_qa_suite.py", "experiments/qa_orchestrator.py"],
+      "capabilities": []
     },
     {
       "id": "M0-LIFE-002",
       "area": "generated-solids",
       "behavior": "Generate, rebuild, transform, and clear preserve wire identity and keep stripes owned by their generated components.",
-      "status": "partial",
-      "layers": ["pytest", "fusion-command", "fusion-api"],
-      "evidence": ["tests/test_wire_solids.py", "experiments/experiment_reference_harness.py"],
-      "capabilities": ["command-execution", "occurrence-transform", "appearance-inspection", "undo-redo"]
+      "status": "automated",
+      "layers": ["pytest", "fusion-command", "fusion-api", "mcp"],
+      "evidence": ["tests/test_wire_solids.py", "experiments/experiment_reference_harness.py", "experiments/experiment_generated_solids.py", "experiments/fusion_qa_suite.py", "experiments/qa_orchestrator.py"],
+      "capabilities": []
     },
     {
       "id": "M0-LIFE-003",
@@ -109,16 +109,16 @@
       "status": "candidate",
       "layers": ["fusion-command", "fusion-api", "mcp"],
       "evidence": ["tests/test_addin_palette_lifecycle.py"],
-      "capabilities": ["addin-start-stop", "command-registry-inspection", "palette-registry-inspection"]
+      "capabilities": ["host-owned-addin-start-stop", "command-registry-inspection", "palette-registry-inspection"]
     },
     {
       "id": "M0-LINK-001",
       "area": "linked-geometry",
       "behavior": "Deleted or invalid profile references survive reload as repairable findings without damaging healthy definitions.",
-      "status": "partial",
-      "layers": ["pytest", "fusion-api"],
-      "evidence": ["tests/test_load_harnesses.py", "tests/test_fusion_harness_gateway.py"],
-      "capabilities": ["entity-deletion", "document-save", "document-close-open"]
+      "status": "automated",
+      "layers": ["pytest", "fusion-api", "mcp"],
+      "evidence": ["tests/test_load_harnesses.py", "tests/test_fusion_harness_gateway.py", "experiments/experiment_linked_geometry.py", "experiments/fusion_qa_suite.py", "experiments/qa_orchestrator.py"],
+      "capabilities": []
     },
     {
       "id": "M0-SEL-001",
@@ -133,34 +133,28 @@
       "id": "M0-VIS-001",
       "area": "visual-presentation",
       "behavior": "Wire stripes conform to curved solids, remain centered, and retain useful contrast at representative viewpoints.",
-      "status": "manual",
-      "layers": ["manual", "mcp"],
-      "evidence": ["tests/test_wire_solids.py", "tests/test_palette.cjs", "experiments/fusion_mcp_capabilities.json"],
-      "capabilities": ["deterministic-viewport", "screenshot-capture", "visual-baseline-comparison"],
-      "manualReason": "Structural mesh assertions exist, but the current environment has no proven stable rendered-image oracle.",
-      "reviewTrigger": "Revisit after deterministic MCP screenshot capture and viewport normalization are proven."
+      "status": "partial",
+      "layers": ["pytest", "palette", "mcp"],
+      "evidence": ["tests/test_wire_solids.py", "tests/test_palette.cjs", "tests/test_png_oracle.py", "experiments/png_oracle.py", "experiments/qa_orchestrator.py", "experiments/fusion_mcp_capabilities.json"],
+      "capabilities": ["stripe-visual-fixture", "representative-viewpoint-comparison"]
     },
     {
       "id": "M0-UI-001",
       "area": "native-dialog-layout",
       "behavior": "Native and HTML dialogs open within their bounds with readable controls and no unintended scrollbars.",
-      "status": "manual",
-      "layers": ["manual", "mcp"],
-      "evidence": ["tests/test_palette.cjs"],
-      "capabilities": ["native-dialog-control", "deterministic-window-metrics", "screenshot-capture"],
-      "manualReason": "Mocked layout behavior is covered, but Fusion window metrics and native selector state are not exposed by a proven stable assertion API.",
-      "reviewTrigger": "Revisit when the capability audit proves deterministic dialog control or screenshot geometry."
+      "status": "partial",
+      "layers": ["palette", "fusion-api", "mcp", "os-window"],
+      "evidence": ["tests/test_palette.cjs", "tests/test_desktop_ui_capture.py", "experiments/desktop_ui_capture.py", "experiments/macos_fusion_windows.swift", "experiments/qa_orchestrator.py"],
+      "capabilities": ["screen-recording-permission", "native-selector-state", "pixel-baseline-comparison"]
     },
     {
       "id": "M0-CLOUD-001",
       "area": "assembly-placement",
       "behavior": "Assembly-mode creation places and persists one external harness component in the selected cloud folder.",
-      "status": "manual",
-      "layers": ["manual", "fusion-api"],
-      "evidence": ["tests/test_create_harness.py", "tests/test_fusion_harness_gateway.py"],
-      "capabilities": ["authenticated-cloud-folder", "external-document-save", "deterministic-cleanup"],
-      "manualReason": "The live path depends on authenticated mutable cloud state that is unsuitable for the normal deterministic suite.",
-      "reviewTrigger": "Revisit when an isolated Fusion test project and cleanup contract are available."
+      "status": "automated",
+      "layers": ["pytest", "fusion-api", "mcp"],
+      "evidence": ["tests/test_create_harness.py", "tests/test_fusion_harness_gateway.py", "experiments/experiment_assembly_placement.py", "experiments/fusion_qa_suite.py"],
+      "capabilities": []
     },
     {
       "id": "M0-PLAT-001",
