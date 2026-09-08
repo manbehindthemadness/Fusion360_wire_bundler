@@ -196,6 +196,56 @@ not replace them. A check remains manual only when the audit identifies the exac
 unavailable control or observable result; the ledger records how a person verifies it
 and when a new Fusion release or test adapter should trigger another automation attempt.
 
+### M2 topology and terminators
+
+M2 is ready to begin. Schema version 4 has stable harness, pathway, control, connection,
+member, profile, and wire identities, but each wire still stores a linear ordered
+pathway/control route. There are no persistent junction, extension, branch-leg,
+exit-state, electrical-relationship, terminator, or connection-name-provenance records.
+The existing routing, generation, relationship, history, and QA layers are the verified
+baseline that M2 must extend without weakening identity or migration behavior.
+
+Work proceeds in this dependency order:
+
+1. **Settle the topology contract and fixtures.** Define the schema-version-5 graph
+   entities and stable IDs; preserve the exact `EXCLUDE_BRANCH`, `BRANCH`, and
+   `REDIRECT_BRANCH` dispositions; give every true branch leg its own physical-wire
+   UUID and explicit electrical relationship; represent `OPEN`, `TERMINATED`, and
+   `EXTENDED` exit states; reject cycles initially; and decide whether target-derived
+   names track later Fusion renames or are copied when connected. Update the
+   authoritative UI/data-model specification and add the M2 acceptance targets to the
+   QA ledger before production code.
+2. **Build the host-independent topology kernel.** Extend the immutable domain model,
+   deterministic codec and versions 1–4 migration, validation, and reusable fixtures.
+   Compute ordered pathway legs and per-span wire membership from the graph, rejecting
+   cycles, dangling references, identity reuse, and invalid dispositions before Fusion
+   geometry is involved.
+3. **Add transactional topology workflows.** Implement create, edit, move, redirect,
+   branch, extend, terminate, and removal operations as deterministic application
+   services. Preserve IDs through edits and make each palette mutation one native
+   Undo/Redo transaction with explicit invalidation scope.
+4. **Extend projections and editing UI.** Teach validation, Wire Routes, Pathways &
+   Occupancy, relationship audits, search, hover, and navigation about graph membership,
+   branch legs, extensions, and exit states. Keep the presentation graph-capable and
+   reserve the documented cross-link indicator while cycles remain invalid.
+5. **Add Fusion topology realization.** Create movable junction slice references,
+   derived exit interfaces, extension entry frames, and deterministic branch/redirect
+   transitions. Preview and generation must use the same per-span membership and retain
+   stable physical-wire identity in every generated body.
+6. **Add terminators and target-derived connection naming.** Model symmetric End A/End
+   B terminator sections with optional per-wire guides, connect them to routing gates,
+   and carry target references plus naming provenance into generated metadata. Explicit
+   user names always win and refresh never overwrites them.
+7. **Close M2 through the established QA layers.** Cover schema migration, graph
+   validation, mutation rollback, Undo/Redo, save/reload, relationship projections,
+   preview/generation cleanup, junction movement, branch/redirect/extension geometry,
+   terminator geometry, and opted-in visual evidence. Use focused runs during each slice
+   and the complete suite at the milestone gate.
+
+The first implementation slice ends after objectives 1 and 2: schema-v5 topology
+objects, migrations, graph validation, deterministic per-span membership, and local
+tests. Fusion adapters and palette controls begin only after that contract is stable.
+
 Detailed future contracts live in [UI and data model](reference/UI_AND_DATA_MODEL.md),
 including [recursive composites](reference/UI_AND_DATA_MODEL.md#planned-recursive-composite-wire-and-shielding-milestone),
 [flex and pull](reference/UI_AND_DATA_MODEL.md#planned-routed-member-flexibility-and-kink-diagnostics-milestone),
