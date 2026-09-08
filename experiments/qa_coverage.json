@@ -106,10 +106,12 @@
       "id": "M0-LIFE-004",
       "area": "add-in-lifecycle",
       "behavior": "Repeated add-in stop and start cycles remove and restore commands, palettes, handlers, previews, and package modules cleanly.",
-      "status": "candidate",
-      "layers": ["fusion-command", "fusion-api", "mcp"],
-      "evidence": ["tests/test_addin_palette_lifecycle.py"],
-      "capabilities": ["safe-repeated-host-owned-addin-start-stop", "command-registry-inspection", "palette-registry-inspection"]
+      "status": "manual",
+      "layers": ["manual", "fusion-command", "fusion-api", "mcp"],
+      "evidence": ["tests/test_addin_palette_lifecycle.py", "experiments/fusion_mcp_capabilities.json"],
+      "capabilities": ["safe-repeated-host-owned-addin-start-stop", "command-registry-inspection", "palette-registry-inspection"],
+      "manualReason": "Fusion 2704.1.53 crashed during the second Application.scripts stop/start cycle inside one MCP-hosted script. Repeated host-owned cycles through Scripts and Add-Ins passed on the current macOS host.",
+      "reviewTrigger": "Retry automation only after Autodesk exposes a stable host-owned lifecycle boundary or a later Fusion release materially changes Application.scripts behavior."
     },
     {
       "id": "M0-LINK-001",

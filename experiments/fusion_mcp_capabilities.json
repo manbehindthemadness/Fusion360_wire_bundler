@@ -49,9 +49,10 @@
   "focusedRunAudit": {
     "status": "passed",
     "scenario": "qa_suite",
-    "report": "artifacts/verification/qa_suite_20260908T143241.486980Z.json",
+    "report": "artifacts/verification/qa_suite_20260908T151201.980610Z.json",
     "selectedScenarios": ["fusion_capabilities", "command_history"],
-    "skippedCapabilities": ["preview-viewport-oracle", "generated-viewport-oracle"]
+    "skippedCapabilities": ["preview-viewport-oracle", "generated-viewport-oracle"],
+    "purpose": "Post-native-dialog-capture command, handler, palette, and cleanup health check."
   },
   "orchestratedSuiteAudit": {
     "status": "passed",

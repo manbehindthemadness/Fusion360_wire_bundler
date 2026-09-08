@@ -90,9 +90,9 @@ dependencies are settled.
 
 | Milestone | Scope | Completion gate |
 | --- | --- | --- |
-| **M0 · Round-wire foundation** *(current closeout)* | Stable round-wire data, gates and ends, smooth previews, material/stripe presentation, persistent sweeps, relationship graphics, diagnostics, and explicit clear/rebuild behavior. | Full local checks; live reference harness; Preview/Save/Reload/Clear; Generate/Rebuild/Clear; material Apply/Save/Cancel; and Fusion Undo/Redo all pass without ghosts or stale projections. |
-| **M1 · Automated Fusion QA foundation** | Audit every current and planned acceptance criterion against host-independent tests, mocked palette tests, registered Fusion scripts, supported Fusion command execution, API state inspection, and development-only MCP orchestration. Build reusable cross-platform fixtures, lifecycle drivers, assertions, cleanup, timeouts, screenshots where useful, and machine-readable reports. | Every M0 QA target has an automated test wherever Fusion exposes reliable control and observation; one repeatable suite reports local and in-host results on each available required platform; unavailable platforms are explicit deferrals and do not block feature progress. Remaining manual checks name the missing capability, required evidence, and review trigger. Development-only automation is separable from the production package. |
-| **M2 · Topology and terminators** | Explicit Y junctions, arbitrary branching, recombination, extensions, open exits, loops, ground straps, end transitions, per-member guide faces, and target-face/object connection naming with provenance. Assembly nesting remains organizational and does not substitute for route topology. | Stable branch-leg identities and per-span membership survive edit/reload; capacity and relationship audits cover complex graphs; target-derived names never overwrite custom names; terminator and branch geometry pass focused automated and live scenarios. |
+| **M0 · Round-wire foundation** *(completed 2026-09-08)* | Stable round-wire data, gates and ends, smooth previews, material/stripe presentation, persistent sweeps, relationship graphics, diagnostics, and explicit clear/rebuild behavior. | Full local checks; live reference harness; Preview/Save/Reload/Clear; Generate/Rebuild/Clear; material Apply/Save/Cancel; and Fusion Undo/Redo all pass without ghosts or stale projections. |
+| **M1 · Automated Fusion QA foundation** *(completed 2026-09-08)* | Audit every current and planned acceptance criterion against host-independent tests, mocked palette tests, registered Fusion scripts, supported Fusion command execution, API state inspection, and development-only MCP orchestration. Build reusable cross-platform fixtures, lifecycle drivers, assertions, cleanup, timeouts, screenshots where useful, and machine-readable reports. | Every M0 QA target has an automated test wherever Fusion exposes reliable control and observation; one repeatable suite reports local and in-host results on each available required platform; unavailable platforms are explicit deferrals and do not block feature progress. Remaining manual checks name the missing capability, required evidence, and review trigger. Development-only automation is separable from the production package. |
+| **M2 · Topology and terminators** *(next)* | Explicit Y junctions, arbitrary branching, recombination, extensions, open exits, loops, ground straps, end transitions, per-member guide faces, and target-face/object connection naming with provenance. Assembly nesting remains organizational and does not substitute for route topology. | Stable branch-leg identities and per-span membership survive edit/reload; capacity and relationship audits cover complex graphs; target-derived names never overwrite custom names; terminator and branch geometry pass focused automated and live scenarios. |
 | **M3 · Profile gates and ribbons** | Open profile gates, non-circular cross-sections, ribbon ordering, banking, twist, curl, deformation, and transitions between loose, ribbon, and terminated members. | Deterministic correspondence and non-crossing validation pass local fixtures and automated Fusion loft/sweep experiments across representative deformations. |
 | **M4 · Routed members and composites** | Electrical conductors, optical fiber, coolant tubing, shields, and recursively nested composite members; optional child insulation; per-kind technical data; recursive fit checks; sparse child geometry; reusable complex-wire definitions; and extension of M2 target naming to nested members. | Schema migration, recursive containment and fit validation, breakout identity, sparse realization, saved-definition round trips, and scalable diagram drill-down pass before Fusion generation is enabled. |
 | **M5 · Flex, pull, and operating modes** | Constrained and unconstrained operation, optional manufacturer flex ratings, least-flexible rated-member propagation, kink highlighting, generated reference lengths, and animation/test pull inspection. | Rating-free spans skip analysis; rated violations remain non-blocking; exact-route bend and positive-length-growth findings navigate to the responsible member and controls; no advisory input can fail generation. |
@@ -101,12 +101,21 @@ dependencies are settled.
 
 ### M1 automated Fusion QA foundation
 
-M1 begins with a coverage ledger containing every current QA target, its fixture, the
+M1 is complete. Its coverage ledger contains every current QA target, its fixture, the
 action that drives it, the state or artifact that proves the result, its automation
 layer, and its cleanup requirements. Discovery must exercise candidate Fusion commands,
 registered scripts, API calls, application-log inspection, document lifecycle actions,
 and MCP capabilities rather than assuming that an advertised or undocumented hook is
 reliable.
+
+The closing macOS run passed 263 Python tests, 41 palette regressions, all eight
+structural Fusion scenarios, both viewport visual oracles, the stable palette capture,
+and the native Add Pathway pixel oracle. The M0 ledger has 16 automated targets, no
+partial or candidate targets, and two explicit manual exceptions. Repeated host-owned
+add-in lifecycle testing has passing manual evidence because the MCP-hosted lifecycle
+API is unsafe, and Windows remains deferred until a suitable host is available. These
+recorded exceptions satisfy the M1 completion gate and remain active follow-up
+conditions rather than blockers for M2.
 
 The suite has three layers: fast host-independent Python and palette tests; deterministic
 in-host Fusion scenarios that assert document, component, body, feature, attribute,
