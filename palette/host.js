@@ -62,6 +62,31 @@ function updateNoticeEntry(entry) {
     : message;
 }
 
+function setDeveloperMode(enabled) {
+  developerModeEnabled = enabled;
+  ui.developerMode.checked = enabled;
+  ui.verboseDiagnostics.disabled = !enabled;
+  writeSession(DEVELOPER_MODE_STORAGE_KEY, String(enabled));
+  if (enabled) {
+    writeSession(DEVELOPER_CONSENT_STORAGE_KEY, DEVELOPER_MODE_DISCLOSURE_VERSION);
+  } else {
+    ui.verboseDiagnostics.checked = false;
+    writeSession("wireBundler.verboseDiagnostics", "false");
+  }
+  Array.from(ui.notice.children).forEach(updateNoticeEntry);
+}
+
+function openDeveloperConsent() {
+  ui.developerMode.checked = developerModeEnabled;
+  ui.developerConsentAgreement.checked = false;
+  ui.developerConsentEnable.disabled = true;
+  ui.developerConsent.showModal();
+}
+
+function closeDeveloperConsent() {
+  ui.developerConsent.close();
+}
+
 function persistNoticeHeight() {
   if (!ui.notice.getBoundingClientRect) return;
   const height = Math.round(ui.notice.getBoundingClientRect().height);
@@ -268,7 +293,38 @@ ui.create.addEventListener("click", createHarness);
 ui.createFromEditor.addEventListener("click", createHarness);
 ui.harnessFilter.addEventListener("input", renderLibrary);
 ui.refresh.addEventListener("click", refresh);
+ui.developerMode.addEventListener("change", () => {
+  if (ui.developerMode.checked) {
+    openDeveloperConsent();
+  } else {
+    setDeveloperMode(false);
+  }
+});
+ui.developerConsentAgreement.addEventListener("change", () => {
+  ui.developerConsentEnable.disabled = !ui.developerConsentAgreement.checked;
+});
+ui.developerConsentCancel.addEventListener("click", closeDeveloperConsent);
+ui.developerConsentForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!ui.developerConsentAgreement.checked) return;
+  setDeveloperMode(true);
+  closeDeveloperConsent();
+});
+ui.developerConsent.addEventListener("cancel", (event) => {
+  event.preventDefault();
+  closeDeveloperConsent();
+});
+ui.developerConsent.addEventListener("close", () => {
+  ui.developerMode.checked = developerModeEnabled;
+  ui.developerConsentAgreement.checked = false;
+  ui.developerConsentEnable.disabled = true;
+});
 ui.verboseDiagnostics.addEventListener("change", () => {
+  if (!developerModeEnabled) {
+    ui.verboseDiagnostics.checked = false;
+    writeSession("wireBundler.verboseDiagnostics", "false");
+    return;
+  }
   writeSession("wireBundler.verboseDiagnostics", String(ui.verboseDiagnostics.checked));
   Array.from(ui.notice.children).forEach(updateNoticeEntry);
 });

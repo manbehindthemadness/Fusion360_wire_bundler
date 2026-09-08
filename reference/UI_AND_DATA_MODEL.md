@@ -1606,6 +1606,16 @@ Preview never create, refresh, or delete these solid-owned stripe groups. Solid
 geometry persists independently of preview visibility and add-in state. The upper
 palette status area retains informational and failure events in a vertically
 scrollable console using the same surface and text colors as the rest of the palette.
+The top-level Developer mode checkbox defaults off. Enabling it first presents a
+versioned disclosure explaining that development-only tools may capture visible Fusion
+content or simulate input, may require operating-system Screen Recording or
+Accessibility permission, and must be used with suitable test data. The user must
+explicitly affirm that the disclosure was read and understood before Developer mode is
+enabled for the palette session. Cancel, Escape, or disabling the checkbox leaves
+Developer mode off and hides full routing diagnostics. Enabling Developer mode does not
+grant operating-system permission or start external capture or input automation; every
+external QA invocation remains separately opt-in. This session preference is UI state
+and is never stored in a harness definition.
 After successful solid generation, the short-lived command's destroy event clears
 the transient route preview outside the completed modeling transaction. Failed
 generation retains the preview for inspection. Palette hover targets emphasize

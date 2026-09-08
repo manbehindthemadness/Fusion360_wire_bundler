@@ -50,6 +50,54 @@ textarea:focus-visible, summary:focus-visible {
 h1 { margin: 0; font-size: 17px; }
 h2 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
 h3 { margin: 0; font-size: 13px; }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.developer-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.developer-consent {
+  width: 520px;
+  max-width: 92vw;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 18px;
+  background: var(--surface);
+  color: var(--text);
+}
+.developer-consent::backdrop { background: #0007; }
+.developer-consent form { display: grid; gap: 14px; }
+.developer-disclosure {
+  display: grid;
+  gap: 9px;
+  max-height: 50vh;
+  overflow-y: auto;
+  line-height: 1.45;
+}
+.developer-disclosure p { margin: 0; }
+.developer-consent-agreement {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 10px;
+  background: var(--surface-subtle);
+  line-height: 1.4;
+  cursor: pointer;
+}
+.developer-consent-agreement input { margin-top: 2px; }
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .button {
   border: 1px solid var(--border);
   border-radius: 4px;

@@ -11,7 +11,13 @@
 <body>
   <header class="app-header">
     <h1>Harness Builder</h1>
-    <button id="refresh" class="button compact" type="button">Refresh</button>
+    <div class="header-actions">
+      <label class="developer-mode-toggle">
+        <input id="developer-mode" type="checkbox">
+        Developer mode
+      </label>
+      <button id="refresh" class="button compact" type="button">Refresh</button>
+    </div>
   </header>
   <main>
     <div class="notice-toolbar">
@@ -48,6 +54,41 @@
       <div id="editor"></div>
     </section>
   </main>
+  <dialog id="developer-consent" class="developer-consent"
+          aria-labelledby="developer-consent-title"
+          aria-describedby="developer-consent-description">
+    <form id="developer-consent-form" method="dialog">
+      <h2 id="developer-consent-title">Enable Developer mode?</h2>
+      <div id="developer-consent-description" class="developer-disclosure">
+        <p>
+          Developer mode exposes verbose diagnostics and development-only automation
+          controls intended for testing Harness Builder.
+        </p>
+        <p>
+          Some development tools can capture the visible Fusion window or simulate
+          input and may require macOS Screen Recording or Accessibility permission.
+          Captures can include design names, geometry, paths, and other project
+          information visible in Fusion.
+        </p>
+        <p>
+          Enabling Developer mode does not grant operating-system permissions or start
+          capture or input automation. Each external QA run remains separately opt-in.
+          Use these tools only on a development machine with suitable test data.
+        </p>
+      </div>
+      <label class="developer-consent-agreement">
+        <input id="developer-consent-agreement" type="checkbox" required>
+        I have read and understand this disclosure and agree to enable Developer mode
+        for this palette session.
+      </label>
+      <div class="dialog-actions">
+        <button id="developer-consent-cancel" class="button" type="button">Cancel</button>
+        <button id="developer-consent-enable" class="button primary" type="submit" disabled>
+          Enable Developer mode
+        </button>
+      </div>
+    </form>
+  </dialog>
   <script src="palette/foundation.js"></script>
   <script src="palette/route-editors.js"></script>
   <script src="palette/materials.js"></script>

@@ -16,6 +16,12 @@ const ui = {
   libraryView: document.getElementById("library-view"),
   list: document.getElementById("harnesses"),
   notice: document.getElementById("notice"),
+  developerMode: document.getElementById("developer-mode"),
+  developerConsent: document.getElementById("developer-consent"),
+  developerConsentForm: document.getElementById("developer-consent-form"),
+  developerConsentAgreement: document.getElementById("developer-consent-agreement"),
+  developerConsentCancel: document.getElementById("developer-consent-cancel"),
+  developerConsentEnable: document.getElementById("developer-consent-enable"),
   verboseDiagnostics: document.getElementById("verbose-diagnostics"),
   refresh: document.getElementById("refresh"),
 };
@@ -43,6 +49,9 @@ const relationshipEndListOverrides = new Map();
 const DEFAULT_RELATIONSHIP_COLLAPSE_LIMIT = 7;
 const MIN_RELATIONSHIP_COLLAPSE_LIMIT = 1;
 const MAX_RELATIONSHIP_COLLAPSE_LIMIT = 999;
+const DEVELOPER_MODE_DISCLOSURE_VERSION = "1";
+const DEVELOPER_MODE_STORAGE_KEY = "wireBundler.developerMode";
+const DEVELOPER_CONSENT_STORAGE_KEY = "wireBundler.developerConsentVersion";
 const storedExpandedSections = readSession("wireBundler.expandedSections");
 let hasStoredExpansionState = storedExpandedSections !== null;
 let expandedSectionIds = [];
@@ -53,7 +62,13 @@ try {
   expandedSectionIds = [];
 }
 const expandedSections = new Set(expandedSectionIds);
-ui.verboseDiagnostics.checked = readSession("wireBundler.verboseDiagnostics") === "true";
+let developerModeEnabled = readSession(DEVELOPER_MODE_STORAGE_KEY) === "true"
+  && readSession(DEVELOPER_CONSENT_STORAGE_KEY) === DEVELOPER_MODE_DISCLOSURE_VERSION;
+if (!developerModeEnabled) writeSession(DEVELOPER_MODE_STORAGE_KEY, "false");
+ui.developerMode.checked = developerModeEnabled;
+ui.verboseDiagnostics.checked = developerModeEnabled
+  && readSession("wireBundler.verboseDiagnostics") === "true";
+ui.verboseDiagnostics.disabled = !developerModeEnabled;
 const storedNoticeHeight = Number(readSession("wireBundler.noticeHeight"));
 if (Number.isFinite(storedNoticeHeight) && storedNoticeHeight >= 72) {
   ui.notice.style.height = `${Math.min(600, storedNoticeHeight)}px`;

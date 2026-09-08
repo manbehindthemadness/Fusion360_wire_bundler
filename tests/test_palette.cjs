@@ -846,7 +846,10 @@ test('event console retains messages and marks failures', () => {
 });
 
 test('event console hides diagnostics until verbose output is enabled', () => {
-  const storage = new Map();
+  const storage = new Map([
+    ['wireBundler.developerMode', 'true'],
+    ['wireBundler.developerConsentVersion', '1'],
+  ]);
   const { context } = palette(storage);
   const message = 'Wire 001 failed. Routing diagnostic: points_mm=[(1, 2, 3)]';
   context.appendNotice(message, true);
@@ -855,6 +858,83 @@ test('event console hides diagnostics until verbose output is enabled', () => {
   runInNewContext('ui.verboseDiagnostics.checked = true; ui.verboseDiagnostics.events.change();', context);
   assert.equal(entry.textContent, message);
   assert.equal(storage.get('wireBundler.verboseDiagnostics'), 'true');
+});
+
+test('developer mode defaults off and gates verbose diagnostics', () => {
+  const storage = new Map([['wireBundler.verboseDiagnostics', 'true']]);
+  const { context } = palette(storage);
+
+  assert.equal(context.ui.developerMode.checked, false);
+  assert.equal(context.ui.verboseDiagnostics.disabled, true);
+  assert.equal(context.ui.verboseDiagnostics.checked, false);
+
+  context.ui.verboseDiagnostics.checked = true;
+  context.ui.verboseDiagnostics.events.change();
+  assert.equal(context.ui.verboseDiagnostics.checked, false);
+  assert.equal(storage.get('wireBundler.verboseDiagnostics'), 'false');
+});
+
+test('developer mode requires disclosure agreement before activation', () => {
+  const storage = new Map();
+  const { context } = palette(storage);
+
+  context.ui.developerMode.checked = true;
+  context.ui.developerMode.events.change();
+  assert.equal(context.ui.developerConsent.open, true);
+  assert.equal(context.ui.developerMode.checked, false);
+  assert.equal(context.ui.developerConsentEnable.disabled, true);
+
+  context.ui.developerConsentForm.events.submit({ preventDefault() {} });
+  assert.equal(context.ui.developerConsent.open, true);
+  assert.equal(storage.get('wireBundler.developerMode'), 'false');
+
+  context.ui.developerConsentAgreement.checked = true;
+  context.ui.developerConsentAgreement.events.change();
+  assert.equal(context.ui.developerConsentEnable.disabled, false);
+  context.ui.developerConsentForm.events.submit({ preventDefault() {} });
+
+  assert.equal(context.ui.developerConsent.open, false);
+  assert.equal(context.ui.developerMode.checked, true);
+  assert.equal(context.ui.verboseDiagnostics.disabled, false);
+  assert.equal(storage.get('wireBundler.developerMode'), 'true');
+  assert.equal(storage.get('wireBundler.developerConsentVersion'), '1');
+
+  context.ui.developerMode.checked = false;
+  context.ui.developerMode.events.change();
+  assert.equal(context.ui.developerMode.checked, false);
+  assert.equal(context.ui.verboseDiagnostics.disabled, true);
+  assert.equal(storage.get('wireBundler.developerMode'), 'false');
+});
+
+test('developer mode rejects stale consent and remains off after cancel or Escape', () => {
+  const storage = new Map([
+    ['wireBundler.developerMode', 'true'],
+    ['wireBundler.developerConsentVersion', '0'],
+  ]);
+  const { context } = palette(storage);
+  assert.equal(context.ui.developerMode.checked, false);
+  assert.equal(storage.get('wireBundler.developerMode'), 'false');
+
+  context.ui.developerMode.checked = true;
+  context.ui.developerMode.events.change();
+  context.ui.developerConsentCancel.events.click();
+  assert.equal(context.ui.developerConsent.open, false);
+  assert.equal(context.ui.developerMode.checked, false);
+
+  context.ui.developerMode.checked = true;
+  context.ui.developerMode.events.change();
+  context.ui.developerConsent.events.cancel({ preventDefault() {} });
+  assert.equal(context.ui.developerConsent.open, false);
+  assert.equal(context.ui.developerMode.checked, false);
+  assert.equal(storage.get('wireBundler.developerMode'), 'false');
+});
+
+test('developer disclosure explains capture scope and separate opt-in', () => {
+  const html = readFileSync(join(__dirname, '..', 'palette.html'), 'utf8');
+  assert.match(html, /Screen Recording or Accessibility permission/);
+  assert.match(html, /design names, geometry, paths, and other project/);
+  assert.match(html, /Each external QA run remains separately opt-in/);
+  assert.match(html, /I have read and understand this disclosure and agree/);
 });
 
 test('event console exposes a bounded vertical resize control', () => {
