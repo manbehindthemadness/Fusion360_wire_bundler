@@ -162,16 +162,17 @@ separate explicit action. Ordinary add-in use and the shipping self-diagnostic n
 request these permissions.
 
 The opted-in desktop oracle captures the verified Harness Builder window twice in a
-stable state and compares the pixels with a bounded tolerance. Both private temporary
-images are purged; the report retains only verified window metadata and difference
-metrics. Movement or resizing between captures also fails the check. The in-host
-command-history scenario separately opens the real HTML wire-options dialog and checks
-that it fits the embedded browser viewport, has no horizontal overflow, and exposes
-readable controls and actions. Native Fusion dialogs are checked through their exact
-input identities, labels, selection counts, and usable state. Pixel comparison while a
-native dialog is open remains deferred until Fusion exposes a safe way to capture and
-dismiss the dialog within one host-owned operation. QA must never leave a native command
-active across MCP script calls.
+stable state and compares the pixels with a bounded tolerance. It then creates an
+isolated harness, captures Fusion's verified main window before and during the real Add
+Pathway dialog, and dismisses that dialog before the single MCP request returns. A
+private token-scoped two-phase handshake lets the external capture worker acknowledge
+the baseline and dialog images while Fusion continues pumping events. The report
+retains only verified window metadata and difference metrics; every temporary image and
+handshake file is purged. Window movement, identity changes, missing dialog pixels, or
+incomplete command/document cleanup fail the check. The command-history scenario also
+checks the real HTML wire-options dialog geometry and native input identities, labels,
+selection counts, and usable state. QA must never leave a native command active across
+MCP script calls.
 
 Desktop UI capture has a second independent clamp: the adapter must resolve the target
 from the operating system's window inventory and verify that its owning executable or
@@ -345,17 +346,17 @@ commands, palette handler, preview cleanup, and package modules, but a second cy
 the same MCP-hosted script crashed Fusion while its WebView timer processed events.
 Do not invoke Wire Bundler's `Script.stop()` or `Script.run()` from an MCP script. Test
 repeated lifecycle behavior through Fusion's Scripts and Add-Ins dialog until Autodesk
-provides a lifecycle boundary that is safe from an active API script.
+provides a lifecycle boundary that is safe from an active API script. Repeated manual
+stop/start testing through that dialog passed on the current macOS host on 2026-09-08.
 
 On an explicitly configured development machine, add `--desktop-ui` to probe the
-forward-facing Harness Builder window. This opt-in macOS adapter requires Screen
-Recording permission. It reads the fixed palette's bounds from Fusion's API, verifies
-Fusion's exact bundle and executable, matches those bounds to a Core Graphics window
-owned by the verified Fusion process, revalidates the window identity in a fixed Swift
-helper, captures that exact window through Core Graphics, and purges the private
-temporary PNG before reporting. Missing permission or a hidden palette is reported as
-deferred; an identity or ownership mismatch is a failing safety error. The default
-command never invokes it.
+forward-facing Harness Builder window and the native Add Pathway dialog. This opt-in
+macOS adapter requires Screen Recording permission. It reads the fixed palette's bounds
+from Fusion's API and selects the main Fusion frame only as the unique largest usable
+window. Both paths verify Fusion's exact bundle, executable, process, Core Graphics
+owner, and exact window ID before capture. Missing permission or a hidden window is
+reported as deferred; identity, ownership, movement, or cleanup mismatches fail. The
+default command never invokes desktop capture.
 
 `experiments/qa_coverage.json` is the machine-readable M0 coverage ledger. Normal tests
 validate its schema, unique target IDs, evidence paths, and explanations for residual

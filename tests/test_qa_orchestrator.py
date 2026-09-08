@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -13,6 +14,7 @@ from typing import cast
 import pytest
 
 from experiments import qa_orchestrator
+from experiments.desktop_ui_capture import DesktopCapture, FusionWindow
 from experiments.png_oracle import ImageDifference
 from experiments.qa_orchestrator import CheckResult, HttpResponse, McpClient
 
@@ -267,6 +269,97 @@ def test_desktop_ui_unavailable_does_not_fail_fusion_suite(
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     assert exit_code == 0
     assert payload["fusion"]["desktopUiOracle"]["status"] == "deferred"
+
+
+def test_passed_desktop_capture_runs_native_dialog_oracle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Extend the explicit desktop opt-in through the bounded native-dialog capture.
+    """
+    monkeypatch.setattr(qa_orchestrator, "ARTIFACT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        qa_orchestrator,
+        "_run_fusion_suite",
+        lambda _endpoint, _timeout, _selected=None: {"status": "passed", "scenarios": []},
+    )
+    monkeypatch.setattr(
+        qa_orchestrator,
+        "_run_desktop_ui_oracle",
+        lambda _endpoint, _timeout: {"status": "passed"},
+    )
+    monkeypatch.setattr(
+        qa_orchestrator,
+        "_run_native_dialog_ui_oracle",
+        lambda _endpoint, _timeout: {"status": "passed", "capturesPurged": True},
+    )
+
+    exit_code, report_path = qa_orchestrator.run_qa(
+        run_local=False,
+        capture_desktop_ui=True,
+    )
+
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert exit_code == 0
+    assert payload["fusion"]["nativeDialogUiOracle"]["status"] == "passed"
+
+
+def test_native_dialog_capture_worker_acknowledges_two_fixed_phases(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Capture baseline and dialog pixels in order and acknowledge both checkpoints.
+    """
+    token = "0123456789abcdef0123456789abcdef"
+    for phase in ("baseline", "dialog"):
+        (tmp_path / f"{phase}-ready.json").write_text(
+            json.dumps({"token": token, "phase": f"{phase}-ready"}),
+            encoding="utf-8",
+        )
+    window = FusionWindow(1, 42, "Fusion", "Design", 0, 0, 2560, 1400)
+    expected = [
+        DesktopCapture(b"baseline", window),
+        DesktopCapture(b"dialog", window),
+    ]
+    monkeypatch.setattr(
+        "experiments.qa_orchestrator.capture_fusion_main_window",
+        lambda: expected.pop(0),
+    )
+    captures: list[DesktopCapture] = []
+    errors: list[BaseException] = []
+
+    qa_orchestrator._capture_native_dialog_phases(
+        tmp_path,
+        token,
+        captures,
+        errors,
+        threading.Event(),
+    )
+
+    assert [capture.png for capture in captures] == [b"baseline", b"dialog"]
+    assert errors == []
+    for phase in ("baseline", "dialog"):
+        acknowledgement = json.loads((tmp_path / f"{phase}-ack.json").read_text(encoding="utf-8"))
+        assert acknowledgement == {
+            "phase": phase,
+            "status": "captured",
+            "token": token,
+        }
+
+
+def test_native_dialog_bootstrap_owns_open_capture_and_cleanup_in_one_request() -> None:
+    """
+    Dispatch one in-host function so no active native command crosses MCP calls.
+    """
+    token = "0123456789abcdef0123456789abcdef"
+
+    script = qa_orchestrator._native_dialog_capture_script(token)
+
+    assert "run_capture_handshake" in script
+    assert token in script
+    assert script.count("fusion_mcp_execute") == 0
 
 
 def test_desktop_ui_oracle_compares_two_ephemeral_stable_captures(

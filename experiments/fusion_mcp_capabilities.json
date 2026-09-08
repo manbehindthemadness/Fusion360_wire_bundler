@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "observedAt": "2026-09-07",
+  "observedAt": "2026-09-08",
   "endpoint": "http://127.0.0.1:27182/mcp",
   "transport": "streamable-http",
   "server": {
@@ -86,18 +86,26 @@
   },
   "desktopUiCaptureAudit": {
     "status": "passed",
-    "report": "artifacts/verification/qa_suite_20260908T011332.183186Z.json",
+    "report": "artifacts/verification/qa_suite_20260908T150353.768511Z.json",
     "verifiedCapabilities": ["palette-api-bounds", "fusion-bundle-verification", "fusion-process-verification", "fusion-window-owner-verification", "exact-window-id-selection", "temporary-capture-purge", "stable-window-bounds", "pixel-baseline-comparison"],
     "remainingCapabilities": []
+  },
+  "nativeDialogUiAudit": {
+    "status": "passed",
+    "report": "artifacts/verification/qa_suite_20260908T150353.768511Z.json",
+    "dimensions": [5120, 2880],
+    "changedPixelFraction": 0.00037245008680555556,
+    "verifiedCapabilities": ["single-mcp-command-lifetime", "private-two-phase-handshake", "verified-main-window-selection", "native-dialog-pixel-comparison", "native-command-termination", "active-document-restoration", "temporary-capture-purge"]
   },
   "addinLifecycleProbe": {
     "status": "unsafe",
     "report": "artifacts/verification/addin_lifecycle_automated_20260908T142702.893916Z.json",
     "verifiedCapabilities": ["single-host-owned-stop-start", "command-removal-restoration", "palette-handler-restoration", "preview-cleanup", "package-module-reload"],
-    "failureBoundary": "A second stop/start cycle inside the same MCP-hosted API script crashed Fusion 2704.1.53 during event processing; the executable prototype was removed."
+    "failureBoundary": "A second stop/start cycle inside the same MCP-hosted API script crashed Fusion 2704.1.53 during event processing; the executable prototype was removed.",
+    "manualEvidence": "Repeated stop/start cycles through Fusion's Scripts and Add-Ins dialog passed on the current macOS host on 2026-09-08."
   },
   "qaImplications": {
-    "available": ["in-host-script-execution", "focused-scenario-selection", "document-lifecycle-orchestration", "authenticated-cloud-fixtures", "external-component-persistence", "api-documentation", "viewport-screenshot", "deterministic-render-oracle", "generated-stripe-visual-oracle", "palette-api-bounds", "palette-dom-state-observation", "palette-dialog-viewport-geometry", "native-dialog-input-state", "bounded-palette-event-injection", "exact-active-selection-inspection", "verified-fusion-window-discovery", "exact-desktop-pixel-comparison", "active-command-inspection", "undo-redo"],
-    "unresolved": ["safe-native-dialog-pixel-comparison", "safe-repeated-host-owned-addin-start-stop", "windows-host-verification"]
+    "available": ["in-host-script-execution", "focused-scenario-selection", "document-lifecycle-orchestration", "authenticated-cloud-fixtures", "external-component-persistence", "api-documentation", "viewport-screenshot", "deterministic-render-oracle", "generated-stripe-visual-oracle", "palette-api-bounds", "palette-dom-state-observation", "palette-dialog-viewport-geometry", "native-dialog-input-state", "safe-native-dialog-pixel-comparison", "bounded-palette-event-injection", "exact-active-selection-inspection", "verified-fusion-window-discovery", "exact-desktop-pixel-comparison", "active-command-inspection", "undo-redo"],
+    "unresolved": ["safe-repeated-host-owned-addin-start-stop", "windows-host-verification"]
   }
 }

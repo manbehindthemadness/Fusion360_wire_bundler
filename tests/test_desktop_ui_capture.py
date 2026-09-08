@@ -18,6 +18,7 @@ from experiments.desktop_ui_capture import (
     FusionProcess,
     FusionWindow,
     PaletteBounds,
+    _select_verified_main_window,
     _select_verified_window,
     _verified_fusion_processes,
     capture_harness_builder_window,
@@ -59,6 +60,36 @@ def test_reports_absent_harness_window_as_unavailable() -> None:
 
     with pytest.raises(DesktopCaptureUnavailable, match="No Fusion window"):
         _select_verified_window(trusted, (), PaletteBounds(10, 20, 840, 760))
+
+
+def test_selects_unique_largest_verified_fusion_main_window() -> None:
+    """
+    Select the large Fusion frame while excluding its narrower palette window.
+    """
+    trusted = {42: FusionProcess(42, Path("/trusted/Fusion"), Path("/trusted/Fusion.app"))}
+    windows = (
+        FusionWindow(5, 42, "Fusion", "Harness Builder", 0, 0, 840, 1200),
+        FusionWindow(6, 42, "Fusion", "Design", 100, 20, 2560, 1400),
+        FusionWindow(7, 99, "Fusion", "Spoof", 0, 0, 3000, 1600),
+    )
+
+    selected = _select_verified_main_window(trusted, windows)
+
+    assert selected.window_id == 6
+
+
+def test_rejects_ambiguous_largest_fusion_main_windows() -> None:
+    """
+    Refuse capture when two verified Fusion frames have indistinguishable area.
+    """
+    trusted = {42: FusionProcess(42, Path("/trusted/Fusion"), Path("/trusted/Fusion.app"))}
+    windows = (
+        FusionWindow(5, 42, "Fusion", "One", 0, 0, 1600, 900),
+        FusionWindow(6, 42, "Fusion", "Two", 100, 20, 1600, 900),
+    )
+
+    with pytest.raises(DesktopCaptureSafetyError, match="ambiguous"):
+        _select_verified_main_window(trusted, windows)
 
 
 def test_process_verification_requires_exact_bundle_metadata(

@@ -5,19 +5,20 @@
 # The Fusion add-in never imports this module. Normal QA may import its inert definitions
 # but does not execute the capture operation, and therefore requests no macOS permission.
 #
-# It may capture only the fixed Harness Builder palette after independently proving
-# the owning process is Autodesk Fusion by executable path, bundle metadata, PID,
-# Core Graphics owner, and Fusion API palette bounds. Callers cannot supply an app,
-# PID, window ID, or screen rectangle. The temporary PNG is private and is deleted
-# in finally; only non-image metrics may enter a report.
+# It may capture only the fixed Harness Builder palette or Fusion's unique largest
+# visible application window after independently proving the owning process is Autodesk
+# Fusion by executable path, bundle metadata, PID, and Core Graphics owner. Callers
+# cannot supply an app, PID, window ID, or screen rectangle. The temporary PNG is
+# private and is deleted in finally; only non-image metrics may enter a report.
 # =============================================================================
 
 """
-Capture only the verified Harness Builder window on an opted-in development host.
+Capture only fixed verified Fusion windows on an opted-in development host.
 
-This module is external test infrastructure. Fusion API bounds may identify the palette,
-but the caller cannot choose an application, PID, window ID, or screen rectangle. The
-adapter retains no image after returning comparison-ready bytes to the in-memory caller.
+This module is external test infrastructure. Fusion API bounds identify the palette,
+and strict size plus uniqueness constraints identify the main application frame. The
+caller cannot choose an application, PID, window ID, or screen rectangle. The adapter
+retains no image after returning comparison-ready bytes to the in-memory caller.
 """
 
 from __future__ import annotations
@@ -77,7 +78,7 @@ class FusionWindow:
         window_id: Core Graphics window identifier used for exact-window capture.
         owner_pid: Verified Fusion process that owns the window.
         owner_name: Core Graphics owner label.
-        title: Exact Harness Builder title.
+        title: Core Graphics window title, which may be empty.
         x: Global screen X coordinate.
         y: Global screen Y coordinate.
         width: Window width in points.
@@ -144,6 +145,34 @@ def capture_harness_builder_window(palette_bounds: PaletteBounds) -> DesktopCapt
     processes = _verified_fusion_processes(_run(("/bin/ps", "-axo", "pid=,comm=")))
     windows = _parse_fusion_windows(_run(("/usr/bin/xcrun", "swift", str(MACOS_WINDOW_HELPER))))
     window = _select_verified_window(processes, windows, palette_bounds)
+    return _capture_verified_window(window)
+
+
+def capture_fusion_main_window() -> DesktopCapture:
+    """
+    Capture Fusion's unique largest visible application window on macOS.
+
+    Returns:
+        PNG bytes in memory and verified window metadata.
+
+    Raises:
+        DesktopCaptureUnavailable: If the host, permission, or window is unavailable.
+        DesktopCaptureSafetyError: If ownership or unique main-window identity fails.
+    """
+    if platform.system() != "Darwin":
+        raise DesktopCaptureUnavailable(
+            "Desktop UI capture currently has no verified adapter for this platform."
+        )
+    processes = _verified_fusion_processes(_run(("/bin/ps", "-axo", "pid=,comm=")))
+    windows = _parse_fusion_windows(_run(("/usr/bin/xcrun", "swift", str(MACOS_WINDOW_HELPER))))
+    window = _select_verified_main_window(processes, windows)
+    return _capture_verified_window(window)
+
+
+def _capture_verified_window(window: FusionWindow) -> DesktopCapture:
+    """
+    Capture one internally selected and verified Fusion window by exact ID.
+    """
     with TemporaryDirectory(prefix="wire-bundler-ui-") as temporary_directory:
         directory = Path(temporary_directory)
         os.chmod(directory, 0o700)
@@ -300,6 +329,34 @@ def _select_verified_window(
         candidates,
         key=lambda window: abs(window.x - palette_bounds.left) + abs(window.y - palette_bounds.top),
     )
+
+
+def _select_verified_main_window(
+    processes: dict[int, FusionProcess],
+    windows: tuple[FusionWindow, ...],
+) -> FusionWindow:
+    """
+    Select the unique largest usable window owned by the verified Fusion process.
+    """
+    candidates = tuple(
+        window
+        for window in windows
+        if window.owner_pid in processes
+        and window.owner_name == FUSION_OWNER_NAME
+        and window.width >= 1200.0
+        and window.height >= 700.0
+    )
+    if not candidates:
+        raise DesktopCaptureUnavailable("No usable visible Fusion application window was found.")
+    largest_area = max(window.width * window.height for window in candidates)
+    largest = tuple(
+        window for window in candidates if abs((window.width * window.height) - largest_area) <= 1.0
+    )
+    if len(largest) != 1:
+        raise DesktopCaptureSafetyError(
+            "Fusion main-window identity is ambiguous; expected one largest visible window."
+        )
+    return largest[0]
 
 
 def _run(command: tuple[str, ...], capture_operation: bool = False) -> str:

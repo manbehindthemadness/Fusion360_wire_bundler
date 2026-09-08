@@ -3,8 +3,9 @@
 #
 # OS-level capture is reachable only through the explicit --desktop-ui command-line
 # flag. The default end-to-end QA procedure does not invoke it. The capture adapter
-# enforces Fusion identity and exact-window ownership, never accepts an arbitrary
-# target or rectangle, and purges all pixel files before this orchestrator reports.
+# enforces Fusion identity and exact-window ownership for the fixed palette and main
+# application frame, never accepts an arbitrary target or rectangle, and purges all
+# pixel and handshake files before this orchestrator reports.
 # =============================================================================
 
 """
@@ -18,21 +19,27 @@ import base64
 import http.client
 import json
 import math
+import os
 import platform
+import shutil
 import subprocess
 import sys
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from time import perf_counter
+from time import monotonic, perf_counter, sleep
 from typing import Optional
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from experiments.desktop_ui_capture import (
+    DesktopCapture,
     DesktopCaptureSafetyError,
     DesktopCaptureUnavailable,
     PaletteBounds,
+    capture_fusion_main_window,
     capture_harness_builder_window,
     desktop_capture_observation,
 )
@@ -48,6 +55,9 @@ FUSION_RESULT_PREFIX = "WIRE_BUNDLER_QA_RESULT="
 VISUAL_RESULT_PREFIX = "WIRE_BUNDLER_VISUAL_RESULT="
 GENERATED_VISUAL_RESULT_PREFIX = "WIRE_BUNDLER_GENERATED_VISUAL_RESULT="
 PALETTE_BOUNDS_RESULT_PREFIX = "WIRE_BUNDLER_PALETTE_BOUNDS_RESULT="
+NATIVE_DIALOG_RESULT_PREFIX = "WIRE_BUNDLER_NATIVE_DIALOG_RESULT="
+NATIVE_DIALOG_HANDSHAKE_ROOT = PROJECT_ROOT / "artifacts" / "native_dialog_handshake"
+MINIMUM_NATIVE_DIALOG_CHANGE = 0.00001
 VISUAL_WIDTH = 640
 VISUAL_HEIGHT = 480
 LOCAL_CHECK_NAMES = ("pytest", "palette", "ruff-lint", "ruff-format", "diff-check")
@@ -288,6 +298,14 @@ def run_qa(
             fusion_result["desktopUiOracle"] = desktop_result
             if desktop_result.get("status") == "failed":
                 fusion_result["status"] = "failed"
+            elif desktop_result.get("status") == "passed":
+                native_result = _run_native_dialog_ui_oracle(
+                    mcp_url,
+                    fusion_timeout_seconds,
+                )
+                fusion_result["nativeDialogUiOracle"] = native_result
+                if native_result.get("status") == "failed":
+                    fusion_result["status"] = "failed"
     else:
         fusion_result = {"status": "skipped", "detail": "Disabled by command option."}
 
@@ -580,6 +598,209 @@ def _run_desktop_ui_oracle(endpoint: str, timeout_seconds: float) -> dict[str, o
             f"{MAXIMUM_STABLE_DESKTOP_CHANGE:.2%}."
         )
     return result
+
+
+def _run_native_dialog_ui_oracle(
+    endpoint: str,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    """
+    Compare Fusion's main window before and during one safely bounded native dialog.
+
+    The external capture worker and Fusion coordinate through two private, token-scoped
+    acknowledgements while a single MCP request owns the command from open through
+    termination.
+    """
+    token = uuid4().hex
+    handshake_directory = NATIVE_DIALOG_HANDSHAKE_ROOT / token
+    handshake_directory.mkdir(parents=True)
+    os.chmod(handshake_directory, 0o700)
+    captures: list[DesktopCapture] = []
+    worker_errors: list[BaseException] = []
+    stop_requested = threading.Event()
+    worker = threading.Thread(
+        target=_capture_native_dialog_phases,
+        args=(handshake_directory, token, captures, worker_errors, stop_requested),
+        name="wire-bundler-native-dialog-capture",
+        daemon=True,
+    )
+    client = McpClient(endpoint, timeout_seconds)
+    host_result: dict[str, object] = {}
+    host_error: Optional[BaseException] = None
+    try:
+        client.initialize()
+        worker.start()
+        tool_result = client.call_tool(
+            "fusion_mcp_execute",
+            {
+                "featureType": "script",
+                "object": {"script": _native_dialog_capture_script(token)},
+            },
+        )
+        host_result = _parse_execute_result(tool_result, NATIVE_DIALOG_RESULT_PREFIX)
+    except (
+        ConnectionError,
+        OSError,
+        RuntimeError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as error:
+        host_error = error
+    finally:
+        try:
+            client.close()
+        except (ConnectionError, OSError, RuntimeError):
+            pass
+        if worker.ident is not None:
+            worker.join(timeout=32.0)
+        if worker.is_alive():
+            stop_requested.set()
+            worker.join(timeout=3.0)
+        shutil.rmtree(handshake_directory, ignore_errors=True)
+
+    if worker.is_alive():
+        return {
+            "status": "failed",
+            "error": "Native-dialog capture worker did not terminate.",
+            "capturesPurged": True,
+        }
+    if worker_errors:
+        error = worker_errors[0]
+        status = "failed" if isinstance(error, DesktopCaptureSafetyError) else "deferred"
+        key = "error" if status == "failed" else "reason"
+        return {"status": status, key: str(error), "capturesPurged": True}
+    if host_error is not None:
+        return {"status": "failed", "error": str(host_error), "capturesPurged": True}
+    if len(captures) != 2:
+        return {
+            "status": "failed",
+            "error": f"Expected two native-dialog captures, received {len(captures)}.",
+            "capturesPurged": True,
+        }
+    baseline = captures[0]
+    dialog = captures[1]
+    try:
+        difference = asdict(compare_pngs(baseline.png, dialog.png))
+    except (AttributeError, ValueError) as error:
+        return {"status": "failed", "error": str(error), "capturesPurged": True}
+    window_stable = _same_desktop_window(baseline.window, dialog.window)
+    changed_fraction = float(difference["changed_pixel_fraction"])
+    result = {
+        "status": "passed",
+        "host": host_result,
+        "observations": [
+            desktop_capture_observation(baseline),
+            desktop_capture_observation(dialog),
+        ],
+        "comparison": {
+            **difference,
+            "minimum_changed_pixel_fraction": MINIMUM_NATIVE_DIALOG_CHANGE,
+            "window_stable": window_stable,
+        },
+        "capturesPurged": True,
+    }
+    if host_result.get("terminated") is not True or host_result.get("documentRestored") is not True:
+        result["status"] = "failed"
+        result["error"] = "Fusion did not confirm native-command and document cleanup."
+    elif not window_stable:
+        result["status"] = "failed"
+        result["error"] = "Fusion's main window moved, resized, or changed identity during capture."
+    elif changed_fraction < MINIMUM_NATIVE_DIALOG_CHANGE:
+        result["status"] = "failed"
+        result["error"] = (
+            f"Native dialog changed only {changed_fraction:.4%} of pixels; minimum is "
+            f"{MINIMUM_NATIVE_DIALOG_CHANGE:.4%}."
+        )
+    return result
+
+
+def _capture_native_dialog_phases(
+    directory: Path,
+    token: str,
+    captures: list[DesktopCapture],
+    errors: list[BaseException],
+    stop_requested: threading.Event,
+) -> None:
+    """
+    Capture the fixed Fusion main window at both in-host handshake checkpoints.
+    """
+    for phase in ("baseline", "dialog"):
+        try:
+            _wait_for_capture_phase(
+                directory / f"{phase}-ready.json",
+                token,
+                phase,
+                stop_requested,
+            )
+            capture = capture_fusion_main_window()
+            captures.append(capture)
+            _write_capture_ack(directory, token, phase, "captured")
+        except (
+            DesktopCaptureSafetyError,
+            DesktopCaptureUnavailable,
+            OSError,
+            RuntimeError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as error:
+            errors.append(error)
+            _write_capture_ack(directory, token, phase, "error", str(error))
+            return
+
+
+def _wait_for_capture_phase(
+    path: Path,
+    token: str,
+    phase: str,
+    stop_requested: threading.Event,
+) -> None:
+    """
+    Wait for one exact token and phase announcement from the in-host script.
+    """
+    deadline = monotonic() + 35.0
+    while monotonic() < deadline:
+        if stop_requested.is_set():
+            raise RuntimeError(f"Native-dialog {phase} capture was cancelled.")
+        if path.is_file():
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            expected_phase = f"{phase}-ready"
+            if (
+                not isinstance(payload, dict)
+                or payload.get("token") != token
+                or payload.get("phase") != expected_phase
+            ):
+                raise RuntimeError(f"Invalid native-dialog {phase} checkpoint.")
+            return
+        sleep(0.01)
+    raise RuntimeError(f"Timed out waiting for native-dialog {phase} checkpoint.")
+
+
+def _write_capture_ack(
+    directory: Path,
+    token: str,
+    phase: str,
+    status: str,
+    error: str = "",
+) -> None:
+    """
+    Atomically acknowledge one capture so Fusion can continue or clean up.
+    """
+    destination = directory / f"{phase}-ack.json"
+    temporary = directory / f".{phase}-ack.tmp"
+    payload = {"token": token, "phase": phase, "status": status}
+    if error:
+        payload["error"] = error
+    temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    temporary.replace(destination)
+
+
+def _same_desktop_window(first: object, second: object) -> bool:
+    """
+    Require stable identity, ownership, and bounds across both main-window captures.
+    """
+    fields = ("window_id", "owner_pid", "owner_name", "x", "y", "width", "height")
+    return all(getattr(first, field, None) == getattr(second, field, None) for field in fields)
 
 
 def _read_palette_bounds(endpoint: str, timeout_seconds: float) -> PaletteBounds:
@@ -1074,6 +1295,31 @@ def run(_context: str):
         {scenario_selection},
     )
     print("{FUSION_RESULT_PREFIX}" + json.dumps(result, sort_keys=True))
+'''
+
+
+def _native_dialog_capture_script(token: str) -> str:
+    """
+    Build the single-request native-dialog capture and cleanup bootstrap.
+    """
+    root = json.dumps(str(PROJECT_ROOT))
+    encoded_token = json.dumps(token)
+    return f'''import importlib
+import json
+import sys
+
+import adsk.core
+
+
+def run(_context: str):
+    root = {root}
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    import experiments.experiment_native_dialog_capture as module
+
+    module = importlib.reload(module)
+    result = module.run_capture_handshake(adsk.core.Application.get(), {encoded_token})
+    print("{NATIVE_DIALOG_RESULT_PREFIX}" + json.dumps(result, sort_keys=True))
 '''
 
 
