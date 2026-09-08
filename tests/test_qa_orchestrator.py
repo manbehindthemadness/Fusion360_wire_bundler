@@ -402,6 +402,16 @@ def test_fusion_bootstrap_forwards_focused_scenario_selection() -> None:
     assert "run_automated_fusion_suite(" in script
 
 
+def test_fusion_bootstrap_uses_python_none_for_complete_suite() -> None:
+    """
+    Keep the default scenario selection valid inside the generated Python script.
+    """
+    script = qa_orchestrator._fusion_suite_script()
+
+    assert "\n        None,\n" in script
+    assert "\n        null,\n" not in script
+
+
 def test_extracts_png_from_mcp_json_text_screenshot_envelope() -> None:
     """
     Decode the screenshot shape advertised by the local Fusion MCP server.

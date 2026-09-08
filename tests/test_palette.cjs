@@ -38,6 +38,11 @@ class Element {
     } };
     this.textContent = '';
     this.value = '';
+    this.hidden = false;
+    this.clientWidth = tag === 'dialog' ? 430 : 120;
+    this.clientHeight = tag === 'dialog' ? 500 : 24;
+    this.scrollWidth = this.clientWidth;
+    this.scrollHeight = this.clientHeight;
     /** @type {Element|null} */
     this.parentElement = null;
   }
@@ -77,7 +82,7 @@ class Element {
   focus() {}
   select() {}
   showModal() { this.open = true; }
-  close() { this.open = false; this.events.close(); }
+  close() { this.open = false; if (this.events.close) this.events.close(); }
   replaceChildren(...children) {
     for (const child of children) if (typeof child === 'object') child.parentElement = this;
     this.children = children;
@@ -88,6 +93,12 @@ class Element {
     if (key === 'class') this.className = value;
   }
   scrollIntoView() { this.scrolledIntoView = true; }
+  getBoundingClientRect() {
+    const width = this.clientWidth;
+    const height = this.clientHeight;
+    return { left: 10, top: 10, right: 10 + width, bottom: 10 + height, width, height };
+  }
+  getClientRects() { return this.hidden ? [] : [this.getBoundingClientRect()]; }
   dispatchEvent(event) {
     if (this.events[event.type]) this.events[event.type](event);
     return true;
@@ -106,6 +117,8 @@ function palette(storage = new Map(), preferences = storage) {
       getElementById: () => new Element('div'),
     },
     window: {
+      innerWidth: 800,
+      innerHeight: 700,
       Event: class Event { constructor(type) { this.type = type; } },
       sessionStorage: {
         getItem: (key) => storage.get(key) || null,
@@ -980,6 +993,63 @@ test('palette QA probe is denied without current developer consent', () => {
   }));
 
   assert.equal(result, 'DENIED');
+});
+
+test('developer QA probe verifies the fixed wire-options dialog geometry', () => {
+  const preferences = new Map([
+    ['wireBundler.developerMode', 'true'],
+    ['wireBundler.developerConsentVersion', '1'],
+  ]);
+  const { context } = palette(new Map(), preferences);
+  const definition = harness();
+  const sent = [];
+  context.window.scrollTo = () => {};
+  context.send = async (action, payload) => {
+    sent.push({ action, payload });
+    return action === 'get_appearance_libraries' ? { ok: true, libraries: [] } : { ok: true };
+  };
+  runInNewContext(
+    'currentState = { harnesses: [definition], notice: "", catalog: null };',
+    Object.assign(context, { definition }),
+  );
+
+  const result = context.window.fusionJavaScriptHandler.handle('qa_probe', JSON.stringify({
+    operation: 'observe_wire_dialog', harnessId: 'h', wireId: 'w1',
+  }));
+
+  assert.equal(result, 'OK');
+  assert.equal(context.document.body.children.some((child) => child.tag === 'dialog'), false);
+  assert.deepEqual(sent[0], { action: 'get_appearance_libraries', payload: undefined });
+});
+
+test('developer QA dialog probe rejects horizontal overflow', () => {
+  const preferences = new Map([
+    ['wireBundler.developerMode', 'true'],
+    ['wireBundler.developerConsentVersion', '1'],
+  ]);
+  const { context } = palette(new Map(), preferences);
+  const definition = harness();
+  const createElement = context.document.createElement;
+  context.document.createElement = (tag) => {
+    const element = createElement(tag);
+    if (tag === 'dialog') element.scrollWidth = element.clientWidth + 20;
+    return element;
+  };
+  context.window.scrollTo = () => {};
+  context.send = async (action) => (
+    action === 'get_appearance_libraries' ? { ok: true, libraries: [] } : { ok: true }
+  );
+  runInNewContext(
+    'currentState = { harnesses: [definition], notice: "", catalog: null };',
+    Object.assign(context, { definition }),
+  );
+
+  const result = context.window.fusionJavaScriptHandler.handle('qa_probe', JSON.stringify({
+    operation: 'observe_wire_dialog', harnessId: 'h', wireId: 'w1',
+  }));
+
+  assert.equal(result, 'MISMATCH');
+  assert.equal(context.document.body.children.some((child) => child.tag === 'dialog'), false);
 });
 
 test('developer QA probe dispatches fixed connection, pathway, and wire hover events', () => {

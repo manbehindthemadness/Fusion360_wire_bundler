@@ -1029,8 +1029,8 @@ def _fusion_suite_script(selected_scenarios: Optional[Sequence[str]] = None) -> 
     Build the small in-host bootstrap submitted to ``fusion_mcp_execute``.
     """
     root = json.dumps(str(PROJECT_ROOT))
-    scenario_selection = json.dumps(
-        list(selected_scenarios) if selected_scenarios is not None else None
+    scenario_selection = (
+        json.dumps(list(selected_scenarios)) if selected_scenarios is not None else "None"
     )
     return f'''import importlib
 import json

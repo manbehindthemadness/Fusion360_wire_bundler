@@ -164,8 +164,14 @@ request these permissions.
 The opted-in desktop oracle captures the verified Harness Builder window twice in a
 stable state and compares the pixels with a bounded tolerance. Both private temporary
 images are purged; the report retains only verified window metadata and difference
-metrics. Movement or resizing between captures also fails the check. Interactive
-dialog-state comparisons remain future automation work.
+metrics. Movement or resizing between captures also fails the check. The in-host
+command-history scenario separately opens the real HTML wire-options dialog and checks
+that it fits the embedded browser viewport, has no horizontal overflow, and exposes
+readable controls and actions. Native Fusion dialogs are checked through their exact
+input identities, labels, selection counts, and usable state. Pixel comparison while a
+native dialog is open remains deferred until Fusion exposes a safe way to capture and
+dismiss the dialog within one host-owned operation. QA must never leave a native command
+active across MCP script calls.
 
 Desktop UI capture has a second independent clamp: the adapter must resolve the target
 from the operating system's window inventory and verify that its owning executable or
@@ -332,6 +338,14 @@ uv run python experiments/run_qa.py --fusion-only --fusion-scenario command_hist
 `diff-check`. `--fusion-scenario` accepts the scenario names listed by `--help` and
 skips both viewport visual oracles; an explicitly requested `--desktop-ui` check still
 runs. Omit the selection options for the complete pre-milestone suite.
+
+Repeated add-in lifecycle control remains outside the automated suite. On Fusion
+2704.1.53, one public `Application.scripts` stop/start cycle completed and restored the
+commands, palette handler, preview cleanup, and package modules, but a second cycle in
+the same MCP-hosted script crashed Fusion while its WebView timer processed events.
+Do not invoke Wire Bundler's `Script.stop()` or `Script.run()` from an MCP script. Test
+repeated lifecycle behavior through Fusion's Scripts and Add-Ins dialog until Autodesk
+provides a lifecycle boundary that is safe from an active API script.
 
 On an explicitly configured development machine, add `--desktop-ui` to probe the
 forward-facing Harness Builder window. This opt-in macOS adapter requires Screen

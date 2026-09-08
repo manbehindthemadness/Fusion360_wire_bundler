@@ -95,6 +95,53 @@ function persistNoticeHeight() {
 
 let qaHoverTarget = null;
 
+function qaHasReadableBox(node) {
+  if (!node?.getBoundingClientRect) return false;
+  if (node.getClientRects && node.getClientRects().length === 0) return false;
+  const rect = node.getBoundingClientRect();
+  return [rect.left, rect.top, rect.right, rect.bottom, rect.width, rect.height]
+    .every(Number.isFinite) && rect.width >= 16 && rect.height >= 12;
+}
+
+function qaWireDialogFitsViewport(card) {
+  const trigger = card.querySelector(".wire-options-button");
+  if (!trigger?.dispatchEvent) return false;
+  trigger.dispatchEvent(new window.Event("click"));
+  const dialog = Array.from(document.body.children).reverse().find(
+    (candidate) => candidate.open
+      && candidate.className?.split(" ").includes("material-options"),
+  );
+  if (!dialog) return false;
+  try {
+    const rect = dialog.getBoundingClientRect();
+    const viewportWidth = window.innerWidth || document.documentElement?.clientWidth || 0;
+    const viewportHeight = window.innerHeight || document.documentElement?.clientHeight || 0;
+    const heading = dialog.querySelector("h2");
+    const buttons = Array.from(dialog.querySelectorAll("button"));
+    const actions = ["Cancel", "Apply", "Save"].map(
+      (label) => buttons.find((button) => button.textContent === label),
+    );
+    const visibleControls = Array.from(
+      dialog.querySelectorAll("input, select, textarea, button"),
+    ).filter(qaHasReadableBox);
+    return dialog.open
+      && qaHasReadableBox(dialog)
+      && viewportWidth > 0
+      && viewportHeight > 0
+      && rect.left >= -1
+      && rect.top >= -1
+      && rect.right <= viewportWidth + 1
+      && rect.bottom <= viewportHeight + 1
+      && dialog.scrollWidth <= dialog.clientWidth + 1
+      && qaHasReadableBox(heading)
+      && heading.textContent.startsWith("Wire options · ")
+      && actions.every(qaHasReadableBox)
+      && visibleControls.length >= 6;
+  } finally {
+    dialog.close();
+  }
+}
+
 function qaWireCard(harnessId, wireId) {
   const harness = currentState.harnesses.find(
     (candidate) => harnessKey(candidate) === harnessId,
@@ -132,6 +179,11 @@ function handleQaProbe(data) {
     const label = card.querySelector(".member-reference");
     if (ui.editorView.hidden || !ui.libraryView.hidden
         || label?.textContent !== payload.expectedLabel) return "MISMATCH";
+    void send("clear_highlight").catch(() => {});
+    return "OK";
+  }
+  if (payload.operation === "observe_wire_dialog") {
+    if (!qaWireDialogFitsViewport(card)) return "MISMATCH";
     void send("clear_highlight").catch(() => {});
     return "OK";
   }

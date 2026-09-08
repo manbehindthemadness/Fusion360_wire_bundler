@@ -38,11 +38,16 @@ from wire_bundler.addin import (  # noqa: E402
     ADD_PATHWAY_COMMAND_ID,
     ADD_WIRES_COMMAND_ID,
     APPEND_GATES_COMMAND_ID,
+    COMMAND_ID,
     DESTINATION_CONNECTIONS_INPUT_ID,
     EDIT_END_COMMAND_ID,
     PALETTE_ID,
     PATHWAY_GATES_INPUT_ID,
+    PATHWAY_NAME_INPUT_ID,
+    ROUTING_MODE_INPUT_ID,
     SOURCE_CONNECTIONS_INPUT_ID,
+    WIRE_DIAMETER_INPUT_ID,
+    WIRE_PATHWAY_INPUT_ID,
 )
 from wire_bundler.application import (  # noqa: E402
     add_pathway,
@@ -101,6 +106,7 @@ class _NativeSelectionCase:
     configure_inputs: Callable[[adsk.core.CommandInputs], None]
     matches_expected: Callable[[HarnessDefinition], bool]
     palette_changes: bool = True
+    expected_input_ids: tuple[str, ...] = ()
 
 
 class _CommandCaptureHandler(adsk.core.CommandCreatedEventHandler):
@@ -194,6 +200,9 @@ def verify_command_history(
 
         with report.step("Palette hover selects connection profiles and pathway gates"):
             _verify_profile_hover_selections(application, design, gateway)
+
+        with report.step("Wire-options dialog fits the live palette viewport"):
+            _verify_wire_dialog_layout(application, gateway)
 
         edit_actions = _verify_persistent_edit_matrix(application, gateway, report)
         selection_actions = _verify_selection_backed_history(
@@ -327,8 +336,10 @@ def verify_command_history(
                 "selectionBackedActions": selection_actions,
                 "selectionBackedCount": len(selection_actions),
                 "nativeSelectionInputs": True,
+                "nativeDialogInputState": True,
                 "paletteProjectionUndoRedo": True,
                 "paletteDomUndoRedo": True,
+                "paletteDialogGeometry": True,
                 "paletteHoverSelections": [
                     "connection_profiles",
                     "pathway_gates",
@@ -514,6 +525,11 @@ def _verify_selection_backed_history(
                 PATHWAY_ID,
                 pathway_gate.entityToken,
             ),
+            expected_input_ids=(
+                PATHWAY_NAME_INPUT_ID,
+                ROUTING_MODE_INPUT_ID,
+                PATHWAY_GATES_INPUT_ID,
+            ),
         ),
         _NativeSelectionCase(
             "append pathway gate",
@@ -526,6 +542,7 @@ def _verify_selection_backed_history(
             lambda current: (
                 _pathway_last_gate_token(current, PATHWAY_ID) == appended_gate.entityToken
             ),
+            expected_input_ids=(PATHWAY_GATES_INPUT_ID,),
         ),
         _NativeSelectionCase(
             "add end member",
@@ -552,6 +569,7 @@ def _verify_selection_backed_history(
                 _connection_member_tokens(current, SOURCE_CONNECTION_ID)
                 == (*source_tokens, added_member.entityToken)
             ),
+            expected_input_ids=(PATHWAY_GATES_INPUT_ID,),
         ),
         _NativeSelectionCase(
             "replace end member",
@@ -579,6 +597,7 @@ def _verify_selection_backed_history(
                 == (replaced_member.entityToken, *source_tokens[1:])
             ),
             False,
+            expected_input_ids=(PATHWAY_GATES_INPUT_ID,),
         ),
         _NativeSelectionCase(
             "add wire",
@@ -595,6 +614,12 @@ def _verify_selection_backed_history(
                 current,
                 wire_source.entityToken,
                 wire_destination.entityToken,
+            ),
+            expected_input_ids=(
+                WIRE_PATHWAY_INPUT_ID,
+                WIRE_DIAMETER_INPUT_ID,
+                SOURCE_CONNECTIONS_INPUT_ID,
+                DESTINATION_CONNECTIONS_INPUT_ID,
             ),
         ),
     )
@@ -669,9 +694,11 @@ def _execute_native_input_command(
         command = capture.command
         if command is None:
             raise RuntimeError(f"Fusion did not expose the live command for {case.name}.")
+        _assert_native_dialog_inputs(command.commandInputs, case)
         case.configure_inputs(command.commandInputs)
         for _index in range(3):
             adsk.doEvents()
+        _assert_native_dialog_inputs(command.commandInputs, case)
         if not command.doExecute(True):
             raise RuntimeError(f"Fusion did not accept the configured {case.name} command.")
         executed = True
@@ -688,6 +715,30 @@ def _execute_native_input_command(
                 select_definition.execute()
         if not definition.commandCreated.remove(capture):
             raise RuntimeError(f"Fusion could not release the {case.name} command observer.")
+
+
+def _assert_native_dialog_inputs(
+    inputs: adsk.core.CommandInputs,
+    case: _NativeSelectionCase,
+) -> None:
+    """
+    Verify that one live native dialog exposes readable, usable production inputs.
+
+    Args:
+        inputs: Inputs owned by the captured production command.
+        case: Expected stable input identities and diagnostic name.
+    """
+    usable_inputs = 0
+    for input_id in case.expected_input_ids:
+        command_input = inputs.itemById(input_id)
+        if command_input is None:
+            raise AssertionError(f"{case.name} omitted native input {input_id!r}.")
+        if not str(command_input.name).strip():
+            raise AssertionError(f"{case.name} input {input_id!r} has no readable label.")
+        if command_input.isVisible and command_input.isEnabled:
+            usable_inputs += 1
+    if usable_inputs == 0:
+        raise AssertionError(f"{case.name} has no visible and enabled native input.")
 
 
 def _restore_default_select_command(
@@ -1022,9 +1073,7 @@ def _observe_wire_palette_dom(
     profile = adsk.fusion.Profile.cast(entities[0] if entities else None)
     if profile is None:
         raise AssertionError("Palette DOM probe source profile no longer resolves.")
-    palette = application.userInterface.palettes.itemById(PALETTE_ID)
-    if palette is None or not palette.isVisible:
-        raise RuntimeError("Harness Builder palette must be visible for DOM verification.")
+    palette = _ensure_palette_visible(application)
     selections = application.userInterface.activeSelections
     if not selections.clear() or not selections.add(profile):
         raise RuntimeError("Fusion could not prepare the palette DOM probe sentinel.")
@@ -1039,6 +1088,79 @@ def _observe_wire_palette_dom(
     )
     current_addin = importlib.import_module("wire_bundler.addin")
     vars(current_addin)["_send_palette_state"](application)
+    _await_palette_probe(
+        application,
+        palette,
+        payload,
+        f"Palette DOM did not render {expected_label!r} during {phase}; "
+        "Developer mode with current disclosure consent is required.",
+    )
+
+
+def _verify_wire_dialog_layout(
+    application: adsk.core.Application,
+    gateway: FusionHarnessGateway,
+) -> None:
+    """
+    Verify the real wire-options dialog against the live palette viewport.
+
+    The bounded palette probe opens the production dialog through its real button,
+    checks its browser geometry and labeled controls, closes it without mutation,
+    and clears a known Fusion selection only after every assertion passes.
+
+    Args:
+        application: Active Fusion application.
+        gateway: Persistence gateway bound to the fixture.
+    """
+    definition = _read_definition(gateway)
+    _observe_wire_palette_dom(application, definition, "before dialog geometry")
+    wire = next(item for item in definition.wires if item.wire_id == WIRE_ID)
+    connection = next(
+        item for item in definition.connections if item.connection_id == wire.start_connection_id
+    )
+    design = adsk.fusion.Design.cast(application.activeProduct)
+    entities = design.findEntityByToken(connection.entity_token) if design is not None else ()
+    profile = adsk.fusion.Profile.cast(entities[0] if entities else None)
+    if profile is None:
+        raise AssertionError("Wire dialog probe source profile no longer resolves.")
+    palette = application.userInterface.palettes.itemById(PALETTE_ID)
+    if palette is None or not palette.isVisible:
+        raise RuntimeError("Harness Builder palette must be visible for dialog verification.")
+    selections = application.userInterface.activeSelections
+    if not selections.clear() or not selections.add(profile):
+        raise RuntimeError("Fusion could not prepare the wire dialog probe sentinel.")
+    payload = json.dumps(
+        {
+            "operation": "observe_wire_dialog",
+            "harnessId": str(definition.harness_id),
+            "wireId": str(wire.wire_id),
+        }
+    )
+    _await_palette_probe(
+        application,
+        palette,
+        payload,
+        "Wire-options dialog did not fit the live palette viewport with readable controls; "
+        "Developer mode with current disclosure consent is required.",
+    )
+
+
+def _await_palette_probe(
+    application: adsk.core.Application,
+    palette: adsk.core.Palette,
+    payload: str,
+    failure_message: str,
+) -> None:
+    """
+    Repeat one asynchronous palette probe until its selection sentinel clears.
+
+    Args:
+        application: Active Fusion application.
+        palette: Visible Harness Builder palette.
+        payload: Fixed probe request serialized for the HTML boundary.
+        failure_message: Diagnostic raised when the probe does not signal success.
+    """
+    selections = application.userInterface.activeSelections
     deadline = monotonic() + 5.0
     while monotonic() < deadline:
         palette.sendInfoToHTML("qa_probe", payload)
@@ -1048,10 +1170,7 @@ def _observe_wire_palette_dom(
             return
         sleep(0.05)
     selections.clear()
-    raise RuntimeError(
-        f"Palette DOM did not render {expected_label!r} during {phase}; "
-        "Developer mode with current disclosure consent is required."
-    )
+    raise RuntimeError(failure_message)
 
 
 def _verify_profile_hover_selections(
@@ -1187,9 +1306,7 @@ def _reload_palette_resources(application: adsk.core.Application) -> str:
     Returns:
         Original palette URL restored during scenario cleanup.
     """
-    palette = application.userInterface.palettes.itemById(PALETTE_ID)
-    if palette is None or not palette.isVisible:
-        raise RuntimeError("Harness Builder palette must be visible for DOM verification.")
+    palette = _ensure_palette_visible(application)
     original_url = str(palette.htmlFileURL)
     base_url = (ADDIN_ROOT / "palette.html").resolve().as_uri()
     palette.htmlFileURL = f"{base_url}?wire_bundler_qa={int(monotonic() * 1_000_000)}"
@@ -1197,6 +1314,36 @@ def _reload_palette_resources(application: adsk.core.Application) -> str:
         adsk.doEvents()
         sleep(0.05)
     return original_url
+
+
+def _ensure_palette_visible(application: adsk.core.Application) -> adsk.core.Palette:
+    """
+    Open the palette through its host-owned launcher and return it when visible.
+
+    Args:
+        application: Active Fusion application.
+
+    Returns:
+        Registered, visible Harness Builder palette.
+    """
+    user_interface = application.userInterface
+    palette = user_interface.palettes.itemById(PALETTE_ID)
+    if palette is None or not palette.isVisible:
+        launcher = user_interface.commandDefinitions.itemById(COMMAND_ID)
+        if launcher is None or not launcher.execute():
+            raise RuntimeError(
+                "Harness Builder launcher is unavailable; load the add-in through Fusion first."
+            )
+
+        def visible_palette() -> bool:
+            candidate = user_interface.palettes.itemById(PALETTE_ID)
+            return candidate is not None and candidate.isVisible
+
+        wait_for(application, visible_palette, "open Harness Builder palette")
+        palette = user_interface.palettes.itemById(PALETTE_ID)
+    if palette is None or not palette.isVisible:
+        raise RuntimeError("Harness Builder palette did not become visible for DOM verification.")
+    return palette
 
 
 def _restore_palette_url(application: adsk.core.Application, original_url: str) -> None:

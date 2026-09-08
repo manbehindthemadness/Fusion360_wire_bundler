@@ -109,7 +109,7 @@
       "status": "candidate",
       "layers": ["fusion-command", "fusion-api", "mcp"],
       "evidence": ["tests/test_addin_palette_lifecycle.py"],
-      "capabilities": ["host-owned-addin-start-stop", "command-registry-inspection", "palette-registry-inspection"]
+      "capabilities": ["safe-repeated-host-owned-addin-start-stop", "command-registry-inspection", "palette-registry-inspection"]
     },
     {
       "id": "M0-LINK-001",
@@ -144,8 +144,8 @@
       "behavior": "Native and HTML dialogs open within their bounds with readable controls and no unintended scrollbars.",
       "status": "partial",
       "layers": ["palette", "fusion-api", "mcp", "os-window"],
-      "evidence": ["tests/test_palette.cjs", "tests/test_desktop_ui_capture.py", "tests/test_qa_orchestrator.py", "experiments/desktop_ui_capture.py", "experiments/macos_fusion_windows.swift", "experiments/qa_orchestrator.py"],
-      "capabilities": ["native-selector-state", "interactive-dialog-state-comparison"]
+      "evidence": ["tests/test_palette.cjs", "tests/test_desktop_ui_capture.py", "tests/test_qa_orchestrator.py", "palette/host.js", "experiments/experiment_command_history.py", "experiments/desktop_ui_capture.py", "experiments/macos_fusion_windows.swift", "experiments/qa_orchestrator.py"],
+      "capabilities": ["safe-native-dialog-pixel-comparison"]
     },
     {
       "id": "M0-CLOUD-001",
