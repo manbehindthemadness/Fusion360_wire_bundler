@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "milestone": "M2",
+  "requiredPlatforms": ["macos", "windows"],
+  "targets": [
+    {
+      "id": "M2-DOM-001",
+      "area": "topology-persistence",
+      "behavior": "Schema-v5 junctions, slice planes, external ends, physical legs, electrical relationships, and pathway memberships round-trip with stable identities while schema versions 1 through 4 migrate deterministically.",
+      "status": "candidate",
+      "layers": ["pytest"],
+      "evidence": [],
+      "capabilities": []
+    },
+    {
+      "id": "M2-DOM-002",
+      "area": "topology-validation",
+      "behavior": "Cycles, downstream physical-leg recombination, dangling references, reused physical identities, invalid dispositions, and incomplete routes are diagnosed deterministically; partial or orphaned active routes remain editable but block harness preview and geometry, while pathways with no members remain valid and are excluded from processing.",
+      "status": "candidate",
+      "layers": ["pytest"],
+      "evidence": [],
+      "capabilities": []
+    },
+    {
+      "id": "M2-JUNC-001",
+      "area": "junction-placement",
+      "behavior": "A stable selectable slice plane can be positioned by direct pathway drag or an exact document-unit value, persists its physical location, and updates both attachments of a shared-plane cross junction together.",
+      "status": "candidate",
+      "layers": ["pytest", "palette", "fusion-command", "fusion-api", "mcp"],
+      "evidence": [],
+      "capabilities": ["junction-control-selection", "pathway-constrained-drag", "document-unit-conversion"]
+    },
+    {
+      "id": "M2-JUNC-002",
+      "area": "junction-creation",
+      "behavior": "Connecting an existing empty pathway endpoint to a slice plane creates a Y junction without creating external ends; batch creation initially BRANCH-connects all eligible members when selected and otherwise leaves the branch pathway empty.",
+      "status": "candidate",
+      "layers": ["pytest", "palette", "fusion-command", "fusion-api", "mcp"],
+      "evidence": [],
+      "capabilities": []
+    },
+    {
+      "id": "M2-JUNC-003",
+      "area": "junction-disposition",
+      "behavior": "EXCLUDE_BRANCH, BRANCH, and REDIRECT_BRANCH compute deterministic per-span membership; BRANCH creates distinct stable physical legs and ideal-splice electrical relationships for one or more attachments, while REDIRECT_BRANCH targets exactly one attachment.",
+      "status": "candidate",
+      "layers": ["pytest", "palette", "fusion-api", "mcp"],
+      "evidence": [],
+      "capabilities": []
+    },
+    {
+      "id": "M2-JUNC-004",
+      "area": "junction-routing",
+      "behavior": "Junction members receive deterministic order-preserving local transitions using simple smooth primitives; self-intersections, envelope collisions, and out-of-bounds routes fail explicitly without global weaving or arbitrary member permutation.",
+      "status": "candidate",
+      "layers": ["pytest", "fusion-script", "fusion-api", "mcp"],
+      "evidence": [],
+      "capabilities": []
+    },
+    {
+      "id": "M2-JUNC-005",
+      "area": "junction-envelope",
+      "behavior": "A routing-gate-backed junction containing branch legs defaults its required local diameter to twice the ordinary packed bundle diameter and exposes a persistent positive unitless factor override in the junction diagram-node popup; redirects, exclusions, empty junctions, and virtual slice planes apply no factor.",
+      "status": "candidate",
+      "layers": ["pytest", "palette", "fusion-command", "fusion-api", "mcp"],
+      "evidence": [],
+      "capabilities": ["junction-membership-envelope", "document-unit-conversion"]
+    },
+    {
+      "id": "M2-ROUTE-001",
+      "area": "route-membership",
+      "behavior": "Individual member faces and pathway segments can be attached or detached at a slice plane, and preview, generation, capacity, and collision checks consume the same per-span membership graph.",
+      "status": "candidate",
+      "layers": ["pytest", "palette", "fusion-script", "fusion-api", "mcp"],
+      "evidence": [],
+      "capabilities": []
+    },
+    {
+      "id": "M2-EXT-001",
+      "area": "pathway-extensions",
+      "behavior": "An extension maps selected member faces between selected A/B endpoint gates of two ordinary pathways; OPEN, TERMINATED, and EXTENDED are derived from graph continuity, and unselected members do not continue.",
+      "status": "candidate",
+      "layers": ["pytest", "palette", "fusion-command", "fusion-api", "mcp"],
+      "evidence": [],
+      "capabilities": []
+    },
+    {
+      "id": "M2-END-001",
+      "area": "external-ends",
+      "behavior": "The per-wire diagram can add a stable external end and connect it to a selected pathway start or exit gate; a local end on a continuing trace becomes an ordinary pigtail branch, while junction memberships never inflate external end or connection counts.",
+      "status": "candidate",
+      "layers": ["pytest", "palette", "fusion-command", "fusion-api", "mcp"],
+      "evidence": [],
+      "capabilities": []
+    },
+    {
+      "id": "M2-REL-001",
+      "area": "relationship-diagrams",
+      "behavior": "Top-level and per-wire diagrams branch vertically through pathway, junction, and pathway nodes; each projection shows the correct scope and supports the same permitted segment mutations.",
+      "status": "candidate",
+      "layers": ["pytest", "palette", "fusion-api", "mcp", "os-window"],
+      "evidence": [],
+      "capabilities": []
+    },
+    {
+      "id": "M2-UNIT-001",
+      "area": "measurement-units",
+      "behavior": "All length and distance controls display, parse, and format in the active Fusion document units while canonical millimeter persistence and physical geometry remain unchanged when display units change.",
+      "status": "candidate",
+      "layers": ["pytest", "palette", "fusion-command", "fusion-api", "mcp"],
+      "evidence": [],
+      "capabilities": ["document-unit-read", "document-unit-change"]
+    },
+    {
+      "id": "M2-LIFE-001",
+      "area": "topology-lifecycle",
+      "behavior": "Junction and extension creation, placement, batch membership, per-member attachment, end creation, and deletion each form one reversible history action and survive save/reload without stale previews, bodies, or relationship projections.",
+      "status": "candidate",
+      "layers": ["pytest", "palette", "fusion-command", "fusion-api", "mcp"],
+      "evidence": [],
+      "capabilities": []
+    },
+    {
+      "id": "M2-MUT-001",
+      "area": "topology-deletion",
+      "behavior": "Deleting one member attachment removes only that edge and preserves resulting partial topology for repair; explicit downstream cleanup reports its scope, and both operations are atomic and undoable.",
+      "status": "candidate",
+      "layers": ["pytest", "palette", "fusion-command", "fusion-api", "mcp"],
+      "evidence": [],
+      "capabilities": []
+    },
+    {
+      "id": "M2-NAME-001",
+      "area": "target-derived-naming",
+      "behavior": "A target-derived connection name is copied with its source reference and provenance, later Fusion renames do not silently alter it, explicit refresh is available, and custom Harness Builder names are never overwritten.",
+      "status": "candidate",
+      "layers": ["pytest", "palette", "fusion-command", "fusion-api", "mcp"],
+      "evidence": [],
+      "capabilities": ["target-name-read", "target-reference-persistence"]
+    },
+    {
+      "id": "M2-TERM-001",
+      "area": "terminator-sections",
+      "behavior": "Every external end supports ordered per-member guide profiles and a bounded smooth profile-normal transition to its adjacent routing gate; M2 creates no connector boot, backshell, crimp, seal, or other termination-hardware body.",
+      "status": "candidate",
+      "layers": ["pytest", "palette", "fusion-script", "fusion-api", "mcp"],
+      "evidence": [],
+      "capabilities": []
+    }
+  ]
+}

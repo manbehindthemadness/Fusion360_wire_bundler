@@ -11,6 +11,7 @@ from experiments.qa_coverage import LEDGER_PATH, load_coverage_ledger
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MCP_CAPABILITIES_PATH = PROJECT_ROOT / "experiments" / "fusion_mcp_capabilities.json"
+M2_LEDGER_PATH = PROJECT_ROOT / "experiments" / "qa_coverage_m2.json"
 
 
 def test_repository_coverage_ledger_is_valid_and_references_existing_evidence() -> None:
@@ -26,6 +27,32 @@ def test_repository_coverage_ledger_is_valid_and_references_existing_evidence() 
     for target in ledger.targets:
         for evidence in target.evidence:
             assert (PROJECT_ROOT / evidence).is_file(), f"Missing evidence for {target.target_id}"
+
+
+def test_m2_coverage_ledger_is_valid_and_starts_as_candidate_work() -> None:
+    """
+    Keep planned topology behavior explicit before production implementation begins.
+    """
+    ledger = load_coverage_ledger(M2_LEDGER_PATH)
+
+    assert ledger.milestone == "M2"
+    assert len(ledger.targets) >= 10
+    assert ledger.counts_by_status()["candidate"] == len(ledger.targets)
+    assert {target.target_id for target in ledger.targets} >= {
+        "M2-DOM-001",
+        "M2-JUNC-001",
+        "M2-JUNC-004",
+        "M2-JUNC-005",
+        "M2-ROUTE-001",
+        "M2-EXT-001",
+        "M2-END-001",
+        "M2-REL-001",
+        "M2-UNIT-001",
+        "M2-LIFE-001",
+        "M2-MUT-001",
+        "M2-NAME-001",
+        "M2-TERM-001",
+    }
 
 
 def test_rejects_duplicate_target_ids(tmp_path: Path) -> None:

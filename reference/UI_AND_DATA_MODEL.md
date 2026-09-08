@@ -24,6 +24,21 @@ first, extended, branched, or used to traverse a route in reverse. Legacy
 `start_connection_id` and `end_connection_id` fields remain internal persistence
 details until a deliberate schema migration replaces them.
 
+M2 extends a branched electrical route beyond two external ends. Every external
+termination remains a stable **end**; a junction is internal route continuity and must
+not create a synthetic end or connection count. The UI may group electrically related
+physical legs as one wire network, while persistence keeps a stable identity for every
+physical leg and records their explicit electrical relationship.
+
+## Measurement units
+
+All user-facing lengths and distances must follow the active Fusion document's unit
+configuration, including millimeters, inches, and any other length format supported by
+Fusion's units manager. Numeric fields display, parse, validate, and format through the
+document units rather than assuming a suffix. Domain and persistence values remain
+canonical millimeters, and Fusion adapters perform the conversion at the host boundary.
+Changing document display units must not change stored geometry or physical size.
+
 ## Assembly Hierarchy
 
 A generated harness should be created as a child of the currently selected parent assembly or component.
@@ -517,6 +532,13 @@ Most wires may require no additional guide profiles, so these controls can remai
 
 A wire that requires special termination geometry can be edited independently.
 
+M2 persists the ordered connection profile and zero or more ordered per-member guide
+profile references at every external end. It generates the smooth profile-normal
+transition through those guides to the adjacent routing gate using the same bounded
+route primitives and explicit collision failures as the main router. Connector boots,
+backshells, crimps, seals, and other physical termination hardware remain outside M2;
+the terminator section creates guide-controlled wire geometry only.
+
 ---
 
 # Routing Gate Editor
@@ -856,10 +878,68 @@ A future regeneration operation could then ask the user whether to:
 
 ---
 
-# Pathway Junction Wire Disposition
+# Pathway Junctions and Wire Membership
 
-A Y junction attaches a branch pathway to a movable slice plane on its parent
-pathway. Each parent wire must have an explicit disposition at that junction:
+The product term is **junction**. The create operation and ordinary three-legged result
+are called a **Y junction**, regardless of whether the displayed geometry resembles a
+Y or a right-angled T. This avoids making route semantics depend on angle. A pathway
+crossing without electrical continuity is not a junction.
+
+A junction is a persistent internal node attached to a movable slice plane on a parent
+pathway. The slice plane bisects that pathway into an upstream and downstream segment.
+It owns a stable identity, parent-pathway identity, reference-start identity, and a
+canonical distance in millimeters measured along the pathway from that reference
+start. Its frame is derived from the pathway tangent and transported pathway frame at
+that distance. Reordering or editing a pathway must preserve the selected physical
+location when possible and otherwise produce an explicit repairable validation finding.
+
+The slice plane appears in the canvas as a selectable control shape. Direct dragging
+moves it along the parent pathway and a numeric field provides exact placement in the
+active Fusion document units. Both interactions commit one ordinary edit transaction,
+clamp or reject invalid endpoint/collision positions explicitly, and regenerate only
+affected membership and geometry.
+
+At a Y junction, continuing parent wires and newly created branch legs temporarily
+occupy the same local region. When the slice plane is a routing gate, capacity
+validation uses a conservative junction-diameter factor to allow for those additional
+physical bodies:
+
+```text
+required_junction_diameter = ordinary_bundle_diameter × junction_diameter_factor
+default_junction_diameter_factor = 2.0
+```
+
+The ordinary bundle diameter is the existing packed-envelope result for the parent
+routing-gate membership before the branch expansion. The factor is a bounded positive,
+unitless approximation rather than a wall-thickness measurement or a second packing
+solver. The junction node popup exposes **Junction diameter factor**, defaulting to
+`2.0`, and displays the resulting required diameter in the active Fusion document
+units. Persistence stores a nullable factor override so an unset value follows the
+default.
+
+This constraint applies only when a routing gate is the slice plane and at least one
+`BRANCH` disposition creates an additional physical leg. Redirected and excluded
+members do not duplicate a body for this calculation. Empty junctions, virtual slice
+planes, and unconstrained pathway locations apply no diameter factor. Multiple branch
+attachments may require a larger user override, while detailed local collision checks
+remain authoritative. Changing the factor invalidates junction fit, local routing,
+preview, and generated geometry for the affected members.
+
+A Y junction attaches one endpoint of an already-created ordinary empty pathway to the
+slice plane. The pathway remains a normal reusable pathway; attaching it creates its
+entry relationship and derived entry interface rather than a new external connection.
+That interface exposes one member face for every eligible wire at the slice, equivalent
+to selecting those faces as a batch of pathway-entry candidates. Individual member
+faces may also be attached or detached.
+
+Selecting a junction node exposes a top-level **Create Y junction for all members**
+operation. When chosen, all eligible members are connected to the branch pathway with
+`BRANCH` as the initial disposition; individual members may then be excluded or
+redirected. When it is not chosen, the attached branch pathway remains empty until
+members are connected individually. This batch operation and later per-member edits
+must produce the same persisted topology.
+
+Each incoming member has an explicit disposition at that junction:
 
 ```text
 EXCLUDE_BRANCH    Present on Pathway A after the slice; absent from Pathway B
@@ -868,9 +948,9 @@ REDIRECT_BRANCH   Present on Pathway A only up to the slice, then on Pathway B
 ```
 
 The UI may present `EXCLUDE_BRANCH` as a per-wire exclusion and
-`REDIRECT_BRANCH` as a Redirect option. Persist the disposition against the
-stable incoming wire UUID rather than relying on list position or a changing
-default.
+`REDIRECT_BRANCH` as a Redirect option. Persist the disposition against the stable
+incoming physical-wire UUID and junction UUID rather than relying on list position or
+a changing default.
 
 A redirected wire is removed from every downstream routing-gate packing and
 generated span on Pathway A. Its route consists of the parent-pathway prefix, a
@@ -878,26 +958,102 @@ generated junction transition, Pathway B, and the branch exit termination. This
 supports controlled partial exits such as individual ground straps. Moving the
 slice plane regenerates the transition while preserving wire identity.
 
-`BRANCH` represents a true Y connection: the parent route continues after the
-slice and an additional branch leg enters Pathway B. The branch leg must receive
-its own stable physical-wire identity and an explicit electrical relationship to
-the incoming wire; one wire UUID must never silently identify two generated
-bodies. The detailed splice and electrical-net representation remains a separate
-data-model decision within Y-junction implementation.
+`BRANCH` represents a true Y connection: the parent route continues after the slice
+and an additional branch leg enters Pathway B. The branch leg receives its own stable
+physical-wire identity and an explicit electrical relationship to the incoming wire;
+one wire UUID must never identify two generated bodies. The relationship groups those
+legs into one logical wire network for diagrams and editing without erasing physical
+identity.
+
+For M2, that electrical relationship represents an ideal splice. It may carry optional
+descriptive metadata but creates no splice-hardware body. One incoming member may
+`BRANCH` into more than one pathway attachment at a shared slice plane. A member may
+`REDIRECT_BRANCH` into exactly one attachment at that plane. Separate physical legs do
+not recombine downstream during M2; a topology with multiple incoming legs attempting
+to become one continuing physical leg is invalid until explicit recombination semantics
+are introduced in a later milestone.
+
+An internal junction membership is not an end, connection, or terminator. It appears
+in connection counts only as part of the route graph and appears in member summaries as
+the junction node. Ends are reserved for actual external starts and finishes. A
+physical leg is eligible for preview or generation only when it participates in a
+continuous route from a real end through its assigned pathway segments to another real
+end. Dangling junction memberships remain editable while the user builds the route,
+but validation classifies them as partial or orphaned and blocks all harness preview and
+geometry creation until they are resolved. A pathway with no member wires is valid,
+excluded from routing and geometry processing, and does not by itself block generation.
+
+Two Y-junction attachments may share the same slice-plane identity to form a four-way
+cross junction. They share placement and parent member faces but retain separate branch
+pathway endpoint relationships and per-member dispositions. Moving their common slice
+plane moves both attachments in one transaction. More than two attachments at one
+plane use the same general rule and need no separate physical node type.
 
 Gate-capacity and wire-to-wire collision validation must use the resulting
 per-span membership: all incoming wires before the slice; excluded and branched
 parent wires after the slice on Pathway A; and redirected wires plus new branch
 legs on Pathway B.
 
+Junction transitions use a bounded deterministic local router. Member identity fixes
+the source-to-destination correspondence, and the attached pathway's entry packing is
+derived from the slice-plane member order with stable UUID tie-breaking. The router
+preserves that order whenever possible rather than permuting members in search of a
+shorter path.
+
+Each outgoing physical leg uses the simplest valid smooth transition between its
+slice-plane face and the attached pathway gate, with endpoint tangents supplied by the
+two interface frames. The implementation may reuse the existing single-cubic and
+two-arc S-bend primitives, bounded to the local junction region. It must reject
+self-intersections, pairwise wire-envelope collisions, and departures outside the
+applicable routing-gate aperture or junction envelope.
+
+The local router does not perform global path optimization, repeated weaving, or
+arbitrary member permutations. If the deterministic simple transitions do not fit,
+validation identifies the conflicting members and asks the user to move the slice or
+gate, enlarge the available envelope, change membership, or add an explicit guide.
+Moving the slice plane or an attached gate reruns only the affected junction routing.
+
+Both the top-level relationship graphic and the per-wire graphic render a junction as
+a vertical branch from the parent sequence:
+
+```text
+Pathway A
+    │
+Junction
+    │
+Pathway B
+    │
+next pathway, junction, or external end
+```
+
+The top-level view shows pathway and junction membership for the selected scope. The
+per-wire view shows only segments and junction memberships belonging to that logical
+wire network. Both views allow permitted per-member pathway-segment attachments to be
+added or removed at the slice plane. The per-wire view also allows a new external end
+to be added, then connected to a selected pathway start or exit gate. Adding an end
+creates the stable end and physical leg required to complete that route; deleting it
+must leave any now-dangling topology explicit and ungenerated until repaired or removed.
+
+Deleting a member attachment removes only that selected graph edge. It leaves any
+resulting partial or orphaned route visible for repair and does not silently prune
+downstream membership. A separately labeled cleanup action may remove unused downstream
+topology after presenting its complete scope; both operations are atomic and undoable.
+
+The common workflow remains simple: create external ends, assign pathways that connect
+them, and let every eligible route segment render automatically. Segment-level editing
+exists for complex routes and uses the same graph operations rather than a separate
+representation.
+
 ---
 
-# Pathway Extensions and Open Exits
+# Pathway Extensions and Derived Exit States
 
-An extension attaches Pathway B directly to Pathway A's exit interface. Unlike a
-Y junction, it has no mid-path slice, split, or duplicated branch leg. Every wire
-that has not been terminated at Pathway A's exit continues through Pathway B with
-the same stable wire identity.
+An extension joins a selected A or B endpoint routing gate on Pathway A to a selected
+A or B endpoint routing gate on Pathway B. Pathway B is created beforehand as an
+ordinary pathway and may remain empty. Unlike a Y junction, an extension has no
+mid-path slice. The user explicitly selects which member faces continue across the
+two gates; each selected member continues through Pathway B with the same stable
+physical-wire identity and unselected members do not acquire pathway membership.
 
 ```text
 Pathway A → Exit A → Pathway B → Exit B → optional further extension
@@ -905,20 +1061,35 @@ Pathway A → Exit A → Pathway B → Exit B → optional further extension
                          └── locally terminated wires leave the route here
 ```
 
-At each exit interface, every arriving wire has an explicit lifecycle state:
+`OPEN`, `TERMINATED`, and `EXTENDED` are validation and presentation states derived
+from the graph at each member frontier. They are not independent switches that can
+disagree with the route:
 
 ```text
-OPEN          Available for termination or extension
-TERMINATED    Connected locally and absent from later pathway segments
-EXTENDED      Continues through the attached extension pathway
+OPEN          Has no external end and no continuing pathway membership
+TERMINATED    Reaches an external end and has no continuing pathway membership
+EXTENDED      Continues through an attached extension pathway
 ```
 
-Creating an extension initially assigns all `OPEN` wires to the new pathway.
-Users may terminate selected wires at the current exit; only the remaining wires
-continue. The new pathway derives its entry positions, orientations, profiles,
-and conductor identities from the previous exit interface rather than requiring
-the source connections to be selected again. Its generated exit interface can be
-terminated normally or extended again.
+Partial construction is an expected editing state: a user may create one end, route
+its member through several pathways, and add one or more later ends afterward. Any
+`OPEN` frontier or orphaned non-empty membership blocks preview and final geometry for
+the harness until every active trace reaches a valid end. Empty pathways are ignored
+until at least one member is assigned.
+
+Adding an end to a member face with no continuation farther down that trace makes the
+frontier `TERMINATED`. If that member also continues through an extension, the main
+trace remains `EXTENDED` and the local end becomes an exit pigtail: a new physical
+branch leg with its own stable identity, an electrical relationship to the continuing
+trace, and an external end. Diagrams need only show the ordinary branch trace and end
+node; no special pigtail node or exit-state glyph is required.
+
+An extension pathway derives each selected member's entry position, orientation,
+profile, and conductor identity from the chosen Pathway A gate face. The corresponding
+Pathway B gate becomes that member's entry interface. Its other gate may terminate at
+an external end or connect through another extension. Connecting or disconnecting
+members at an extension uses the same per-member graph mutation used by junction slice
+planes.
 
 A wire route is therefore an ordered chain of pathway legs, with capacity and
 wire-to-wire collision validation calculated from the membership of each leg.
@@ -1329,9 +1500,10 @@ the same rule to nested members: Harness Builder offers a name from the most spe
 stable metadata available, including explicit connection or pin metadata, a user-named
 target face, its owning body/component/occurrence, and finally the existing generated
 fallback. The stored connection records the target reference and naming provenance.
-An explicit Harness Builder name always wins. The schema must decide whether inherited
-names track later Fusion renames or are copied at connection time; refresh must never
-overwrite a custom name.
+An explicit Harness Builder name always wins. A target-derived name is copied when the
+connection is created, together with its target reference and naming provenance; later
+Fusion renames do not silently change it. An explicit refresh may offer the current
+target-derived name but must never overwrite a custom Harness Builder name.
 
 The per-wire graphic can expand a composite recursively and navigate to each member's
 configuration. The master graphic collapses it to external connections and pathways

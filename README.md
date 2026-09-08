@@ -210,11 +210,12 @@ Work proceeds in this dependency order:
 1. **Settle the topology contract and fixtures.** Define the schema-version-5 graph
    entities and stable IDs; preserve the exact `EXCLUDE_BRANCH`, `BRANCH`, and
    `REDIRECT_BRANCH` dispositions; give every true branch leg its own physical-wire
-   UUID and explicit electrical relationship; represent `OPEN`, `TERMINATED`, and
-   `EXTENDED` exit states; reject cycles initially; and decide whether target-derived
-   names track later Fusion renames or are copied when connected. Update the
-   authoritative UI/data-model specification and add the M2 acceptance targets to the
-   QA ledger before production code.
+   UUID and explicit electrical relationship; derive `OPEN`, `TERMINATED`, and
+   `EXTENDED` exit states from the graph; reject cycles and branch recombination
+   initially; and copy target-derived names with provenance and explicit refresh. Update
+   the authoritative UI/data-model specification and add the M2 acceptance targets to the
+   dedicated [`experiments/qa_coverage_m2.json`](experiments/qa_coverage_m2.json)
+   ledger before production code.
 2. **Build the host-independent topology kernel.** Extend the immutable domain model,
    deterministic codec and versions 1–4 migration, validation, and reusable fixtures.
    Compute ordered pathway legs and per-span wire membership from the graph, rejecting
@@ -230,12 +231,18 @@ Work proceeds in this dependency order:
    reserve the documented cross-link indicator while cycles remain invalid.
 5. **Add Fusion topology realization.** Create movable junction slice references,
    derived exit interfaces, extension entry frames, and deterministic branch/redirect
-   transitions. Preview and generation must use the same per-span membership and retain
-   stable physical-wire identity in every generated body.
+   transitions. Junction routing uses bounded, order-preserving local curves and reports
+   conflicts instead of weaving members through a global optimizer. Preview and
+   generation must use the same per-span membership and retain stable physical-wire
+   identity in every generated body. A routing-gate slice containing branch legs
+   defaults its required local diameter to twice the ordinary packed bundle diameter
+   and exposes an adjustable per-junction factor in the diagram node popup.
 6. **Add terminators and target-derived connection naming.** Model symmetric End A/End
    B terminator sections with optional per-wire guides, connect them to routing gates,
    and carry target references plus naming provenance into generated metadata. Explicit
-   user names always win and refresh never overwrites them.
+   user names always win and refresh never overwrites them. M2 terminators create
+   guide-controlled wire transitions; modeled connector boots, backshells, crimps,
+   seals, and other hardware remain future work.
 7. **Close M2 through the established QA layers.** Cover schema migration, graph
    validation, mutation rollback, Undo/Redo, save/reload, relationship projections,
    preview/generation cleanup, junction movement, branch/redirect/extension geometry,
@@ -291,6 +298,7 @@ For each milestone:
 | `reference/RIBBON_SPECS.md` | Future profile-gate and ribbon geometry reference for M3. |
 | `reference/TERMINATION_TRANSLATION.md` | Future terminator and guide-transition geometry reference for M2 and M3. |
 | `reference/UI_WORKFLOW.md` | Broad UX vision and illustrative flows. When an older illustration conflicts with current behavior or the authoritative contracts above, follow `README.md` and `UI_AND_DATA_MODEL.md`. |
+| `experiments/qa_coverage.json` and `experiments/qa_coverage_m2.json` | Machine-readable acceptance and automation status for the completed M0 baseline and planned M2 topology work. |
 
 New requirements enter the roadmap once and receive detailed contracts in the relevant
 reference section. When implemented, update **Current milestone**, tests, and live
