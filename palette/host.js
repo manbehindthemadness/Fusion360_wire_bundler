@@ -93,6 +93,20 @@ function persistNoticeHeight() {
   if (Number.isFinite(height)) writeSession("wireBundler.noticeHeight", String(height));
 }
 
+let qaHoverTarget = null;
+
+function qaWireCard(harnessId, wireId) {
+  const harness = currentState.harnesses.find(
+    (candidate) => harnessKey(candidate) === harnessId,
+  );
+  const wire = harness?.wires?.find((candidate) => candidate.wireId === wireId);
+  if (!harness || !wire) return {};
+  openHarness(harnessId);
+  const card = Array.from(ui.editor.querySelectorAll("div"))
+    .find((candidate) => candidate.dataset.wireId === wireId);
+  return { harness, wire, card };
+}
+
 function handleQaProbe(data) {
   if (!developerModeEnabled) return "DENIED";
   let payload;
@@ -103,22 +117,40 @@ function handleQaProbe(data) {
   }
   const validText = (value) => typeof value === "string" && value.length > 0
     && value.length <= 160;
-  if (payload?.operation !== "observe_wire"
-      || !validText(payload.harnessId)
-      || !validText(payload.wireId)
-      || !validText(payload.expectedLabel)) return "INVALID";
-  const harness = currentState.harnesses.find(
-    (candidate) => harnessKey(candidate) === payload.harnessId,
-  );
-  const wire = harness?.wires?.find((candidate) => candidate.wireId === payload.wireId);
-  if (!harness || !wire || wireLabel(wire) !== payload.expectedLabel) return "MISMATCH";
-  openHarness(payload.harnessId);
-  const card = Array.from(ui.editor.querySelectorAll("div"))
-    .find((candidate) => candidate.dataset.wireId === payload.wireId);
-  const label = card?.querySelector(".member-reference");
-  if (ui.editorView.hidden || !ui.libraryView.hidden || !card
-      || label?.textContent !== payload.expectedLabel) return "MISMATCH";
-  void send("clear_highlight").catch(() => {});
+  if (payload?.operation === "leave_hover") {
+    if (!qaHoverTarget) return "MISMATCH";
+    qaHoverTarget.dispatchEvent(new window.Event("mouseleave"));
+    qaHoverTarget = null;
+    return "OK";
+  }
+  if (!validText(payload?.harnessId) || !validText(payload?.wireId)) return "INVALID";
+  const { wire, card } = qaWireCard(payload.harnessId, payload.wireId);
+  if (!wire || !card) return "MISMATCH";
+  if (payload.operation === "observe_wire") {
+    if (!validText(payload.expectedLabel)
+        || wireLabel(wire) !== payload.expectedLabel) return "MISMATCH";
+    const label = card.querySelector(".member-reference");
+    if (ui.editorView.hidden || !ui.libraryView.hidden
+        || label?.textContent !== payload.expectedLabel) return "MISMATCH";
+    void send("clear_highlight").catch(() => {});
+    return "OK";
+  }
+  let target = null;
+  if (payload.operation === "hover_wire") {
+    target = card.children[0];
+  } else if (payload.operation === "hover_connection"
+      && ["start", "end"].includes(payload.endpoint)) {
+    target = Array.from(card.querySelectorAll("g"))
+      .find((candidate) => candidate.dataset.endpoint === payload.endpoint);
+  } else if (payload.operation === "hover_pathway" && validText(payload.pathwayId)) {
+    target = Array.from(card.querySelectorAll("g"))
+      .find((candidate) => candidate.dataset.pathwayId === payload.pathwayId);
+  } else {
+    return "INVALID";
+  }
+  if (!target?.dispatchEvent) return "MISMATCH";
+  qaHoverTarget = target;
+  target.dispatchEvent(new window.Event("mouseenter"));
   return "OK";
 }
 

@@ -122,6 +122,11 @@ stable harness and wire identities plus the expected label; it does not accept s
 or executable code. The live scenario refreshes local palette resources and restores the
 ordinary palette URL during cleanup.
 
+The same bounded probe dispatches the palette's real hover and leave events for a wire
+endpoint, pathway, and generated wire. The live scenario compares Fusion's complete
+active-selection token set with the expected root-context profiles, gates, or generated
+body and verifies that leaving each target clears the selection.
+
 The viewport layer includes a deterministic generated-wire oracle. It builds an
 isolated striped wire, verifies that hiding the component-owned stripe meshes changes
 the rendered result, compares isometric and top views, and checks rebuild, parent

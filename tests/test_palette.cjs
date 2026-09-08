@@ -88,6 +88,10 @@ class Element {
     if (key === 'class') this.className = value;
   }
   scrollIntoView() { this.scrolledIntoView = true; }
+  dispatchEvent(event) {
+    if (this.events[event.type]) this.events[event.type](event);
+    return true;
+  }
 }
 
 /** Evaluate the complete palette script with the Fusion transport mocked. */
@@ -102,6 +106,7 @@ function palette(storage = new Map(), preferences = storage) {
       getElementById: () => new Element('div'),
     },
     window: {
+      Event: class Event { constructor(type) { this.type = type; } },
       sessionStorage: {
         getItem: (key) => storage.get(key) || null,
         setItem: (key, value) => storage.set(key, value),
@@ -975,6 +980,41 @@ test('palette QA probe is denied without current developer consent', () => {
   }));
 
   assert.equal(result, 'DENIED');
+});
+
+test('developer QA probe dispatches fixed connection, pathway, and wire hover events', () => {
+  const preferences = new Map([
+    ['wireBundler.developerMode', 'true'],
+    ['wireBundler.developerConsentVersion', '1'],
+  ]);
+  const { context } = palette(new Map(), preferences);
+  const definition = harness();
+  const calls = [];
+  context.window.scrollTo = () => {};
+  context.highlightMember = (_harness, type, id) => calls.push({ type, id });
+  context.send = async (action) => calls.push({ action });
+  runInNewContext(
+    'currentState = { harnesses: [definition], notice: "" };',
+    Object.assign(context, { definition }),
+  );
+  const probe = (payload) => context.window.fusionJavaScriptHandler.handle(
+    'qa_probe', JSON.stringify({ harnessId: 'h', wireId: 'w1', ...payload }),
+  );
+
+  assert.equal(probe({ operation: 'hover_connection', endpoint: 'start' }), 'OK');
+  assert.equal(probe({ operation: 'leave_hover' }), 'OK');
+  assert.equal(probe({ operation: 'hover_pathway', pathwayId: 'p' }), 'OK');
+  assert.equal(probe({ operation: 'leave_hover' }), 'OK');
+  assert.equal(probe({ operation: 'hover_wire' }), 'OK');
+  assert.equal(probe({ operation: 'leave_hover' }), 'OK');
+  assert.deepEqual(calls, [
+    { type: 'connection', id: 'a1' },
+    { action: 'clear_highlight' },
+    { type: 'pathway_gates', id: 'p' },
+    { action: 'clear_highlight' },
+    { type: 'preview_wire', id: 'w1' },
+    { action: 'clear_highlight' },
+  ]);
 });
 
 test('developer mode rejects stale consent and remains off after cancel or Escape', () => {

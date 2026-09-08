@@ -54,7 +54,10 @@ from wire_bundler.application.edit_harness import edit_end_members  # noqa: E402
 from wire_bundler.domain import HarnessDefinition, RoutingMode, loads  # noqa: E402
 from wire_bundler.fusion import FusionHarnessGateway  # noqa: E402
 from wire_bundler.fusion.route_preview import has_route_previews  # noqa: E402
-from wire_bundler.fusion.wire_solids import generated_wire_occurrences  # noqa: E402
+from wire_bundler.fusion.wire_solids import (  # noqa: E402
+    generated_wire_bodies,
+    generated_wire_occurrences,
+)
 
 SCENARIO_NAME = "command_history"
 ARTIFACT_ROOT = ADDIN_ROOT / "artifacts" / "verification"
@@ -189,6 +192,9 @@ def verify_command_history(
                 raise AssertionError("Command-history wire unexpectedly started with a name.")
             _augment_command_fixture(design, gateway)
 
+        with report.step("Palette hover selects connection profiles and pathway gates"):
+            _verify_profile_hover_selections(application, design, gateway)
+
         edit_actions = _verify_persistent_edit_matrix(application, gateway, report)
         selection_actions = _verify_selection_backed_history(
             application,
@@ -228,6 +234,17 @@ def verify_command_history(
                 application,
                 lambda: _generated_wire_count(harness) == 1 and not has_route_previews(design),
                 "wire solid generation and preview cleanup",
+            )
+            bodies = generated_wire_bodies(design.rootComponent, harness, (WIRE_ID,))
+            if len(bodies) != 1:
+                raise AssertionError(
+                    f"Expected one generated root-context wire body, found {len(bodies)}."
+                )
+            _verify_palette_hover_selection(
+                application,
+                _read_definition(gateway),
+                "hover_wire",
+                tuple(body.entityToken for body in bodies),
             )
             _execute_native_history_command(application, "UndoCommand")
             wait_for(
@@ -312,6 +329,11 @@ def verify_command_history(
                 "nativeSelectionInputs": True,
                 "paletteProjectionUndoRedo": True,
                 "paletteDomUndoRedo": True,
+                "paletteHoverSelections": [
+                    "connection_profiles",
+                    "pathway_gates",
+                    "generated_wire_body",
+                ],
                 "previewUndoRedo": True,
                 "generateUndoRedo": True,
                 "rebuildUndoRedo": True,
@@ -1030,6 +1052,129 @@ def _observe_wire_palette_dom(
         f"Palette DOM did not render {expected_label!r} during {phase}; "
         "Developer mode with current disclosure consent is required."
     )
+
+
+def _verify_profile_hover_selections(
+    application: adsk.core.Application,
+    design: adsk.fusion.Design,
+    gateway: FusionHarnessGateway,
+) -> None:
+    """
+    Verify real diagram hover events for endpoint profiles and pathway gates.
+
+    Args:
+        application: Active Fusion application.
+        design: Command-history fixture design.
+        gateway: Persistence gateway bound to the fixture.
+    """
+    definition = _read_definition(gateway)
+    wire = next(item for item in definition.wires if item.wire_id == WIRE_ID)
+    connection = next(
+        item for item in definition.connections if item.connection_id == wire.start_connection_id
+    )
+    pathway = next(item for item in definition.pathways if item.pathway_id == PATHWAY_ID)
+    controls = {control.control_id: control for control in definition.controls}
+    connection_tokens = tuple(
+        _resolved_profile_token(design, token) for token in connection.member_tokens
+    )
+    gate_tokens = tuple(
+        _resolved_profile_token(design, controls[control_id].entity_token)
+        for control_id in pathway.ordered_control_ids
+    )
+    _verify_palette_hover_selection(
+        application,
+        definition,
+        "hover_connection",
+        connection_tokens,
+        endpoint="start",
+    )
+    _verify_palette_hover_selection(
+        application,
+        definition,
+        "hover_pathway",
+        gate_tokens,
+        pathwayId=str(pathway.pathway_id),
+    )
+
+
+def _resolved_profile_token(design: adsk.fusion.Design, entity_token: str) -> str:
+    """
+    Require one stored token to resolve to a root-context sketch profile.
+
+    Args:
+        design: Fixture design used for token resolution.
+        entity_token: Persisted Fusion entity token.
+
+    Returns:
+        Token exposed by the resolved root-context profile.
+    """
+    entities = design.findEntityByToken(entity_token)
+    profile = adsk.fusion.Profile.cast(entities[0] if entities else None)
+    if profile is None:
+        raise AssertionError("Palette hover fixture profile no longer resolves.")
+    return str(profile.entityToken)
+
+
+def _verify_palette_hover_selection(
+    application: adsk.core.Application,
+    definition: HarnessDefinition,
+    operation: str,
+    expected_tokens: tuple[str, ...],
+    **target: str,
+) -> None:
+    """
+    Dispatch one fixed DOM hover and inspect Fusion's exact active selections.
+
+    Args:
+        application: Active Fusion application.
+        definition: State expected in the live palette.
+        operation: Fixed hover operation understood by the QA probe.
+        expected_tokens: Exact root-context entities Fusion must select.
+        target: Bounded target fields such as endpoint or pathway identity.
+    """
+    _observe_wire_palette_dom(application, definition, f"before {operation}")
+    palette = application.userInterface.palettes.itemById(PALETTE_ID)
+    if palette is None:
+        raise RuntimeError("Harness Builder palette disappeared during hover verification.")
+    payload = {
+        "operation": operation,
+        "harnessId": str(definition.harness_id),
+        "wireId": str(WIRE_ID),
+        **target,
+    }
+    palette.sendInfoToHTML("qa_probe", json.dumps(payload))
+    wait_for(
+        application,
+        lambda: _active_selection_tokens(application) == tuple(sorted(expected_tokens)),
+        f"palette {operation} selection",
+    )
+    palette.sendInfoToHTML("qa_probe", json.dumps({"operation": "leave_hover"}))
+    wait_for(
+        application,
+        lambda: application.userInterface.activeSelections.count == 0,
+        f"palette {operation} mouse leave",
+    )
+
+
+def _active_selection_tokens(application: adsk.core.Application) -> tuple[str, ...]:
+    """
+    Return sorted tokens for the exact entities selected in Fusion's viewport.
+
+    Args:
+        application: Active Fusion application.
+
+    Returns:
+        Sorted persistent tokens for every selected entity that exposes one.
+    """
+    selections = application.userInterface.activeSelections
+    tokens: list[str] = []
+    for index in range(selections.count):
+        selection = selections.item(index)
+        entity = selection.entity if selection is not None else None
+        token = getattr(entity, "entityToken", "")
+        if token:
+            tokens.append(str(token))
+    return tuple(sorted(tokens))
 
 
 def _reload_palette_resources(application: adsk.core.Application) -> str:

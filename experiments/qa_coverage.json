@@ -124,10 +124,10 @@
       "id": "M0-SEL-001",
       "area": "selection",
       "behavior": "Palette hover and diagram scopes select the intended root-context profiles, gates, and generated wire bodies.",
-      "status": "partial",
-      "layers": ["pytest", "palette", "fusion-api"],
-      "evidence": ["tests/test_palette.cjs", "tests/test_addin_palette_lifecycle.py"],
-      "capabilities": ["palette-event-injection", "active-selection-inspection"]
+      "status": "automated",
+      "layers": ["pytest", "palette", "fusion-api", "mcp"],
+      "evidence": ["tests/test_palette.cjs", "tests/test_addin_palette_lifecycle.py", "palette/host.js", "experiments/experiment_command_history.py", "experiments/fusion_mcp_capabilities.json"],
+      "capabilities": []
     },
     {
       "id": "M0-VIS-001",
