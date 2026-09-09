@@ -29,7 +29,7 @@ Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, an
 - Palette edits and Preview/Clear Preview execute as named Fusion commands, grouping definition and graphics changes into one undo transaction. Command completion reloads the palette and reconciles saved preview caches without creating a new edit. Live Fusion automation verifies every dialog-free palette edit and all five selection-backed edit paths, plus Preview, Generate, Rebuild, and Clear Solids, through native Undo/Redo with exact definition and serialized palette-state restoration.
 - End-member rows drag and drop within their own stack and provide add-after, replace, and remove controls. Every profile center guides the preview; both stacks are ordered from terminal toward pathway. Edits refresh the active preview as needed.
 - Synchronized end-to-end wire-route and pathway-occupancy representations
-- Master Relationship Graphic below Validation, rendered as diagram-contract-v1 rounded nodes on a zoomable, pannable flexible graph. Separate End A, pathway, End B, and junction nodes use continuous measured traces; topology layers can place pathways and junctions above, below, or side by side, and pathway nodes widen as needed. Collapsible connection lists, compact empty ends, wire colors and stripes, filtering, highlighting, and navigation remain intact. Each wire has its own detailed route graphic with interactive end and pathway nodes. An independent projection audit cross-checks routes, pathway occupancy, and connection usage in both the application layer and palette.
+- Master Relationship Graphic below Validation, rendered as diagram-contract-v1 rounded nodes on a zoomable, pannable measured pathway stack. Separate End A, pathway, and End B nodes retain their connecting traces. Collapsible connection lists, compact empty ends, wire colors and stripes, filtering, highlighting, and navigation remain intact. Each wire has its own detailed route graphic with interactive end and pathway nodes. An independent projection audit cross-checks routes, pathway occupancy, and connection usage in both the application layer and palette.
 - Click-to-highlight Fusion profiles for gates, connections, and wire endpoint pairs
 - Stable wire, connection, profile, pathway, and routing-control identities
 - Deterministic hexagonal wire packing with circular-gate capacity checks
@@ -41,8 +41,8 @@ Wire Bundler is an Autodesk Fusion add-in for creating editable wire, ribbon, an
 - Save-time graphics-cache protection prevents active previews from being baked into reopened designs
 - Active previews refresh affected routing groups after member edits and redraw only changed paths, preserving unrelated graphics.
 - Persistent Fusion entity tokens with reload-time linked-geometry health reporting
-- Schema version 5 persistence with deterministic in-memory reading of versions 1 through 4
-- Isolated reporting of malformed stored definitions without hiding healthy harnesses
+- Schema version 4 persistence with automatic in-memory reading of versions 1 through 3
+- Isolated reporting of malformed stored definitions without hiding healthy harnesses, with confirmed deletion of the exact damaged Fusion component
 
 The detailed product behavior is defined in `reference/`. Persistent conductor identity, explicit control-structure ordering, editable geometry, and stored procedural metadata are core requirements.
 
@@ -198,21 +198,16 @@ and when a new Fusion release or test adapter should trigger another automation 
 
 ### M2 topology and terminators
 
-M2 is in progress. Schema version 5 now provides a host-independent directed route
-graph with persistent pathway endpoints, external ends, movable junction slice nodes,
-physical wire legs, route edges, member dispositions, and ideal-splice relationships.
-Versions 1 through 4 remain readable and receive a deterministic linear graph
-projection without guessed branch semantics. The kernel orders each physical leg,
-derives per-span membership and `OPEN`, `TERMINATED`, and `EXTENDED` pathway-exit
-states, and validates identity, reference, disposition, network, cycle, recombination,
-and incomplete-route failures.
-Topology edits now own the explicit graph transactionally. Existing pathway, wire,
-diameter, and removal workflows synchronize graph identities and membership rather
-than discarding branched state.
+M2 is ready to begin. Schema version 4 has stable harness, pathway, control, connection,
+member, profile, and wire identities, but each wire still stores a linear ordered
+pathway/control route. There are no persistent junction, extension, branch-leg,
+exit-state, electrical-relationship, terminator, or connection-name-provenance records.
+The existing routing, generation, relationship, history, and QA layers are the verified
+baseline that M2 must extend without weakening identity or migration behavior.
 
 Work proceeds in this dependency order:
 
-1. **Settle the topology contract and fixtures.** Complete. Define the schema-version-5 graph
+1. **Settle the topology contract and fixtures.** Define the schema-version-5 graph
    entities and stable IDs; preserve the exact `EXCLUDE_BRANCH`, `BRANCH`, and
    `REDIRECT_BRANCH` dispositions; give every true branch leg its own physical-wire
    UUID and explicit electrical relationship; derive `OPEN`, `TERMINATED`, and
@@ -221,36 +216,25 @@ Work proceeds in this dependency order:
    the authoritative UI/data-model specification and add the M2 acceptance targets to the
    dedicated [`experiments/qa_coverage_m2.json`](experiments/qa_coverage_m2.json)
    ledger before production code.
-2. **Build the host-independent topology kernel.** Complete. Extend the immutable domain model,
+2. **Build the host-independent topology kernel.** Extend the immutable domain model,
    deterministic codec and versions 1–4 migration, validation, and reusable fixtures.
    Compute ordered pathway legs and per-span wire membership from the graph, rejecting
    cycles, dangling references, identity reuse, and invalid dispositions before Fusion
    geometry is involved.
-3. **Add transactional topology workflows.** Complete locally. Implement create, edit, move, redirect,
+3. **Add transactional topology workflows.** Implement create, edit, move, redirect,
    branch, extend, terminate, and removal operations as deterministic application
    services. Preserve IDs through edits and make each palette mutation one native
    Undo/Redo transaction with explicit invalidation scope.
-4. **Extend projections and editing UI.** Complete locally. Validation, Wire Routes, Pathways &
-   Occupancy, relationship audits, search, hover, and navigation understand graph
-   membership, branch legs, extensions, and exit states. Junctions are standalone
-   rounded nodes traced from the bottom center of their parent pathway to the top center
-   of each attached pathway end. Pathway ends and the pathway are independently drawn
-   nodes held by a transparent positioning group. Empty ends shrink to their title,
-   remain vertically centered beside the pathway, and use a thin neutral placeholder trace;
-   wire colors, endpoint naming, collapsible connection lists, and click navigation
-   remain intact. Both relationship views run inside floating block-diagram canvases with
-   cursor-centered wheel zoom, background drag panning, Fit, and 100% controls. The
-   master view uses a measured layered graph layout rather than a fixed vertical stack:
-   independent pathways share horizontal layers, sibling junctions may sit side by side
-   above or below their parent, and pathway nodes widen to cover the junction span.
-   This is relationship-diagram contract version 1. The diagram is the planned primary
-   editing surface; stacked controls remain available for QA while operations migrate
-   individually with explicit instruction and focused coverage.
-5. **Add Fusion topology realization.** In progress. The bounded host-independent local
-   junction router, graph readiness gate, document-unit bridge, native end-profile
-   selection, mouse-selected gate-backed junction placement, and bright selectable
-   Fusion slice outlines are implemented. Next create arbitrary movable virtual-slice
-   references, derived exit interfaces, extension entry frames, and deterministic branch/redirect
+4. **Extend projections and editing UI.** The relationship views now run inside floating
+   block-diagram canvases with cursor-centered wheel zoom, background drag panning, Fit,
+   and 100% controls. Pathway ends and pathways remain independently drawn nodes, empty
+   ends use compact neutral placeholder traces, and wire colors, endpoint naming,
+   collapsible connection lists, filtering, highlighting, and click navigation remain
+   intact. This is relationship-diagram contract version 1. The diagram is the planned
+   primary editing surface; stacked controls remain available for QA while operations
+   migrate individually with explicit instruction and focused coverage.
+5. **Add Fusion topology realization.** Create movable slice references, derived exit
+   interfaces, extension entry frames, and deterministic branch/redirect
    transitions. Junction routing uses bounded, order-preserving local curves and reports
    conflicts instead of weaving members through a global optimizer. Preview and
    generation must use the same per-span membership and retain stable physical-wire
@@ -269,10 +253,9 @@ Work proceeds in this dependency order:
    terminator geometry, and opted-in visual evidence. Use focused runs during each slice
    and the complete suite at the milestone gate.
 
-The current implementation slice is locally and live-regression verified. The next
-check is one add-in reload to inspect the restored original diagrams, gate-backed
-slice picker and outline, numbered/collapsible junctions, extension naming, and
-multi-junction membership before graph-derived routes connect to preview and solids.
+The first implementation slice ends after objectives 1 and 2: schema-v5 topology
+objects, migrations, graph validation, deterministic per-span membership, and local
+tests. Fusion adapters and palette controls begin only after that contract is stable.
 
 Detailed future contracts live in [UI and data model](reference/UI_AND_DATA_MODEL.md),
 including [recursive composites](reference/UI_AND_DATA_MODEL.md#planned-recursive-composite-wire-and-shielding-milestone),
@@ -319,7 +302,7 @@ For each milestone:
 | `reference/RIBBON_SPECS.md` | Future profile-gate and ribbon geometry reference for M3. |
 | `reference/TERMINATION_TRANSLATION.md` | Future terminator and guide-transition geometry reference for M2 and M3. |
 | `reference/UI_WORKFLOW.md` | Broad UX vision and illustrative flows. When an older illustration conflicts with current behavior or the authoritative contracts above, follow `README.md` and `UI_AND_DATA_MODEL.md`. |
-| `experiments/qa_coverage.json` and `experiments/qa_coverage_m2.json` | Machine-readable acceptance and automation status for the completed M0 baseline and active M2 topology work. |
+| `experiments/qa_coverage.json` and `experiments/qa_coverage_m2.json` | Machine-readable acceptance and automation status for the completed M0 baseline and planned M2 topology work. |
 
 New requirements enter the roadmap once and receive detailed contracts in the relevant
 reference section. When implemented, update **Current milestone**, tests, and live
@@ -343,7 +326,7 @@ This repository directory is already located under Fusion's `API/AddIns` directo
 10. Confirm Wire Routes shows each conductor from End A through its complete pathway chain to End B. Click the wire header to collapse/expand it, hover the header to emphasize its existing preview centerline, and use the pen to rename it inline (Enter or blur saves; Escape cancels). Click the clearly labeled **Wire options** button, change its diameter and material settings in the same dialog, and confirm Apply and Save update both while other wires retain their sizes. Check dragging by Fusion's title bar and resizing at its native outer edge; the content has an 4-pixel border matching the window background.
 11. Select either end node in Wire Routes and confirm its child editor shows only that wire's endpoint profile. Enter independent end names and confirm the nodes show them. Edit Wire Name and Pathway Name; name the start and end above/below the gate traversal list. Confirm the route reads `End A: Data input → lower fuse box path from O2-sensor to CAN_BUS-ctrl → End B: Data output`, persists after refresh, and restores generated fallbacks when optional labels are cleared.
 12. Expand Pathways & Occupancy, then expand one pathway and its independent Gates · Traversal Order and Wire Occupancy children. Confirm the occupancy child identifies every wire plus whether it enters at End A, arrives from a previous pathway, continues onward, or exits at End B. Click gate, end, occupancy, and wire rows and confirm Fusion highlights the referenced profile or end pair.
-13. Expand a wire and confirm its colored route graphic is the only route representation. Activate End A and End B to open their respective ordering editors, activate a pathway bubble to expand and navigate to that pathway's configuration, and confirm mouse and keyboard activation both work. Hover the colored line, connections, and pathways to confirm the corresponding Fusion geometry highlights. One **Wire options** button remains beneath the graphic. Confirm every one-, two-, or three-stripe cue is centered within the base trace. Expand the Master Relationship Graphic below Validation and confirm its darker viewport clearly separates the independent pathway, end, and junction nodes from the backdrop. Confirm the graph can pan, zoom, and fit; connected traces reach their node boundaries; junctions may appear above, below, or side by side; and populated pathways can share a layer. With three connections per end, both lists should be open in full and each wire trace should use its resolved base color and centered stripe pattern. Hover a pathway hub and confirm only its gates highlight; click it to expand and navigate to its Pathways & Occupancy configuration. Set **Collapse end lists above** to `2` and confirm both lists and their curves collapse into one neutral aggregate relationship per side; restore `7`, search by a wire, connection, pathway, material, or color, and confirm the matching end opens temporarily with a filtered count. Click a master connection entry to return to the expanded Wire Routes entry. Confirm Validation reports a clear relationship cross-check.
+13. Expand a wire and confirm its colored route graphic is the only route representation. Activate End A and End B to open their respective ordering editors, activate a pathway bubble to expand and navigate to that pathway's configuration, and confirm mouse and keyboard activation both work. Hover the colored line, connections, and pathways to confirm the corresponding Fusion geometry highlights. One **Wire options** button remains beneath the graphic. Confirm every one-, two-, or three-stripe cue is centered within the base trace. Expand the Master Relationship Graphic below Validation and confirm its darker viewport clearly separates the independent pathway and end nodes from the backdrop. Confirm the graph can pan, zoom, and fit. With three connections per end, both lists should be open in full and each wire trace should use its resolved base color and centered stripe pattern. Hover a pathway hub and confirm only its gates highlight; click it to expand and navigate to its Pathways & Occupancy configuration. Set **Collapse end lists above** to `2` and confirm both lists and their curves collapse into one neutral aggregate relationship per side; restore `7`, search by a wire, connection, pathway, material, or color, and confirm the matching end opens temporarily with a filtered count. Click a master connection entry to return to the expanded Wire Routes entry. Confirm Validation reports a clear relationship cross-check.
 14. Use **+ Add Gates** and **+ Add Wire Pairs** inside the appropriate pathway child and confirm the native dialog targets that pathway. Remove a gate and wire pair, confirming each destructive action first; a pathway's last gate must not be removable.
 15. Select **Preview Routes** and confirm one colored, selectable centerline appears per wire through every gate without stripe meshes. These are transient smooth centerlines sampled for display; solid bodies and their component-owned stripe patterns are generated together using **Generate/Rebuild Solids**. Check perpendicular entry/exit at gates and end profiles, with straight middle spans. Drag the event console's lower edge to resize it. Confirm routing failures show a concise message until **Verbose diagnostics** is enabled.
 16. With a preview active, replace an end member or change a wire diameter; confirm changed centerlines refresh while unaffected paths remain visible. Removing the last end member hides the incomplete wire's path; restoring the end brings it back. Select **Clear Preview**, edit again, and confirm the preview stays off. Preview again, stop the add-in, and confirm teardown removes it.
@@ -438,10 +421,9 @@ provides a lifecycle boundary that is safe from an active API script. Repeated m
 stop/start testing through that dialog passed on the current macOS host on 2026-09-08.
 
 On an explicitly configured development machine, add `--desktop-ui` to probe the
-forward-facing Harness Builder window, its relationship-diagram edge continuity, and
+forward-facing Harness Builder window, its relationship-diagram structure, and
 the native Add Pathway dialog. The diagram probe opens the Master Relationship Graphic,
-measures the rendered pathway, junction, and end-node boundaries, and rejects any edge
-endpoint gap above half a CSS pixel before exact-window capture. This opt-in
+checks its contract, workspace, pathway groups, and connector paths before exact-window capture. This opt-in
 macOS adapter requires Screen Recording permission. It reads the fixed palette's bounds
 from Fusion's API and selects the main Fusion frame only as the unique largest usable
 window. Both paths verify Fusion's exact bundle, executable, process, Core Graphics

@@ -38,13 +38,13 @@ function openMaterialOptions(harness, wire = null) {
   if (isWire) {
     const diameterLabel = document.createElement("label");
     diameter = document.createElement("input");
-    diameterLabel.textContent = lengthFieldLabel("Wire diameter");
+    diameterLabel.textContent = "Wire diameter (mm)";
     diameter.type = "number";
     diameter.className = "filter";
     diameter.step = "any";
     diameter.required = true;
     diameter.disabled = !profile;
-    diameter.value = profile ? `${displayLength(profile.diameterMm)}` : "";
+    diameter.value = profile ? `${profile.diameterMm}` : "";
     if (!profile) diameter.placeholder = "Wire profile is missing";
     diameterLabel.append(diameter);
     form.append(diameterLabel);
@@ -328,7 +328,7 @@ function openMaterialOptions(harness, wire = null) {
     remove.title = "Remove stripe";
     remove.addEventListener("click", () => row.remove());
     values.append(
-      numericField(lengthFieldLabel("Width"), width, displayLength(value.widthMm)),
+      numericField("Width (mm)", width, value.widthMm),
       numericField("Angle (deg)", angle, value.angleDeg),
       (() => {
         const label = document.createElement("label");
@@ -336,7 +336,7 @@ function openMaterialOptions(harness, wire = null) {
         label.append(pattern);
         return label;
       })(),
-      numericField(lengthFieldLabel("Repeat"), repeat, displayLength(value.repeatMm)),
+      numericField("Repeat (mm)", repeat, value.repeatMm),
     );
     row.append(picker, values, remove);
     stripeList.append(row);
@@ -371,9 +371,9 @@ function openMaterialOptions(harness, wire = null) {
   const readStripes = () => [...stripeList.children].map((row, index) => {
     const inputs = row.querySelectorAll("input");
     const pattern = row.querySelector("select").value;
-    const width = canonicalLength(inputs[1].value);
+    const width = Number(inputs[1].value);
     const angle = Number(inputs[2].value);
-    const repeat = inputs[3].value.trim() === "" ? null : canonicalLength(inputs[3].value);
+    const repeat = inputs[3].value.trim() === "" ? null : Number(inputs[3].value);
     if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(angle)
         || (pattern !== "longitudinal" && (!Number.isFinite(repeat) || repeat <= 0))) {
       throw new Error(`Stripe ${index + 1} needs a positive width, finite angle, and pattern repeat.`);
@@ -392,9 +392,9 @@ function openMaterialOptions(harness, wire = null) {
   apply.textContent = "Apply";
   const applyMaterials = async (closeAfter) => {
     try {
-      const diameterMm = isWire && profile ? canonicalLength(diameter.value) : null;
+      const diameterMm = isWire && profile ? Number(diameter.value) : null;
       if (isWire && profile && (!Number.isFinite(diameterMm) || diameterMm <= 0)) {
-        error.textContent = `Enter a positive diameter in ${activeLengthUnit()}.`;
+        error.textContent = "Enter a positive diameter in millimeters.";
         return;
       }
       const fieldValue = (key) => {
@@ -593,7 +593,7 @@ function renderWireRoutes(harness) {
       const optionsNode = document.createElement("button");
       optionsNode.type = "button";
       optionsNode.className = `route-node wire-options-button${profile ? "" : " missing"}`;
-      optionsNode.textContent = `Wire options · ${profile ? `${displayLength(profile.diameterMm)} ${activeLengthUnit()}` : "missing diameter"}`
+      optionsNode.textContent = `Wire options · ${profile ? `${profile.diameterMm} mm` : "missing diameter"}`
         + ` · ${wire.materials.mainColor.name} ${wire.materials.insulationMaterial}`
         + `${wire.materials.stripes.length ? ` · ${wire.materials.stripes.length} stripes` : ""}`;
       optionsNode.style.borderLeft = `8px solid ${wire.materials.mainColor.hex}`;

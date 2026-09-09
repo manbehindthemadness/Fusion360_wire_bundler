@@ -6,7 +6,9 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from wire_bundler.application import StoredHarness, load_harnesses
+import pytest
+
+from wire_bundler.application import StoredHarness, delete_damaged_harness, load_harnesses
 from wire_bundler.domain import HarnessDefinition, dumps
 
 
@@ -20,12 +22,19 @@ class _LibraryGateway:
         Retain the stored harnesses in host enumeration order.
         """
         self._stored_harnesses = stored_harnesses
+        self.deleted_components: list[object] = []
 
     def list_stored_harnesses(self) -> tuple[StoredHarness, ...]:
         """
         Return configured stored harnesses.
         """
         return self._stored_harnesses
+
+    def delete_stored_harness_component(self, component_handle: object) -> None:
+        """
+        Record the exact component selected for deletion.
+        """
+        self.deleted_components.append(component_handle)
 
 
 def test_loads_and_sorts_discovered_harnesses(valid_harness: HarnessDefinition) -> None:
@@ -70,6 +79,35 @@ def test_isolates_damaged_definition_from_valid_harness(
     assert results[0].definition is None
     assert results[0].error is not None
     assert results[1].definition == valid_harness
+
+
+def test_deletes_damaged_harness_by_opaque_component_identity() -> None:
+    """
+    Delete an unreadable harness without relying on its missing definition UUID.
+    """
+    component = object()
+    gateway = _LibraryGateway((StoredHarness("Broken", "{not-json", component),))
+    result = load_harnesses(gateway)[0]
+
+    delete_damaged_harness(result, gateway)
+
+    assert result.component_handle is component
+    assert gateway.deleted_components == [component]
+
+
+def test_rejects_damaged_deletion_for_readable_harness(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Keep the recovery-only action from deleting a readable harness result.
+    """
+    component = object()
+    gateway = _LibraryGateway((StoredHarness("Healthy", dumps(valid_harness), component),))
+
+    with pytest.raises(ValueError, match="Only a damaged harness"):
+        delete_damaged_harness(load_harnesses(gateway)[0], gateway)
+
+    assert gateway.deleted_components == []
 
 
 def test_reports_draft_validation_findings(valid_harness: HarnessDefinition) -> None:

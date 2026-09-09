@@ -16,14 +16,7 @@ from wire_bundler.application import (
     add_pathway,
     suggest_pathway_name,
 )
-from wire_bundler.domain import (
-    HarnessDefinition,
-    PathwayEnd,
-    RoutingMode,
-    TopologyNodeKind,
-    dumps,
-    loads,
-)
+from wire_bundler.domain import HarnessDefinition, RoutingMode, dumps, loads
 
 PATHWAY_ID = UUID("60000000-0000-0000-0000-000000000001")
 GATE_1_ID = UUID("61000000-0000-0000-0000-000000000001")
@@ -108,35 +101,6 @@ def test_suggests_next_pathway_name(valid_harness: HarnessDefinition) -> None:
     suggested = suggest_pathway_name(valid_harness.harness_id, "Main Pathway", gateway)
 
     assert suggested == "Main Pathway_2"
-
-
-def test_adds_endpoint_nodes_when_explicit_topology_exists(
-    valid_harness: HarnessDefinition,
-) -> None:
-    """
-    Keep a newly created empty pathway available for junction attachment.
-    """
-    explicit = replace(valid_harness, topology=valid_harness.resolved_topology)
-    gateway = _RecordingPathwayGateway(explicit)
-    identifiers = iter((GATE_1_ID, PATHWAY_ID))
-
-    pathway = add_pathway(
-        explicit.harness_id,
-        "Branch Pathway",
-        RoutingMode.ROUTING_GATES,
-        ("branch-gate",),
-        gateway,
-        id_factory=lambda: next(identifiers),
-    )
-
-    stored = loads(gateway.serialized_definition)
-    assert stored.topology is not None
-    endpoints = {
-        node.pathway_end
-        for node in stored.topology.nodes
-        if node.kind is TopologyNodeKind.PATHWAY_END and node.pathway_id == pathway.pathway_id
-    }
-    assert endpoints == set(PathwayEnd)
 
 
 def test_rejects_pathway_without_gate_profiles(valid_harness: HarnessDefinition) -> None:

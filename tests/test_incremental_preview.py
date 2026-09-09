@@ -16,11 +16,7 @@ import pytest
 
 from wire_bundler.domain import (
     HarnessDefinition,
-    RouteEdgeKind,
-    RouteTopology,
     StripePattern,
-    TopologyNode,
-    TopologyNodeKind,
     WireColor,
     WireMaterialSettings,
     WireStripe,
@@ -62,8 +58,6 @@ class _PreviewModule(Protocol):
     clear_route_previews: Callable[[object], int]
     has_route_previews: Callable[[object], bool]
     reconcile_preview_history: Callable[[object, tuple[HarnessDefinition, ...]], None]
-    show_route_previews: Callable[..., tuple[RoutePreview, ...]]
-    show_junction_slices: Callable[[object, HarnessDefinition], int]
 
 
 class _Group:
@@ -233,35 +227,6 @@ def test_recomputes_affected_bundle_but_redraws_only_changed_wire(scenario: _Sce
     assert not original[1].deleted and not original[2].deleted
     scenario.module.refresh_route_previews(scenario.design, updated)
     assert len(scenario.solves) == 1
-
-
-def test_explicit_partial_topology_blocks_preview_before_fusion_work(
-    scenario: _Scenario,
-    branched_harness: HarnessDefinition,
-) -> None:
-    """
-    Reject an open branch without creating or clearing Custom Graphics.
-    """
-    topology = branched_harness.resolved_topology
-    partial = replace(
-        branched_harness,
-        topology=replace(
-            topology,
-            edges=tuple(
-                edge
-                for edge in topology.edges
-                if not (
-                    edge.kind is RouteEdgeKind.END_LINK
-                    and edge.physical_wire_id == topology.physical_wires[1].physical_wire_id
-                )
-            ),
-        ),
-    )
-
-    with pytest.raises(ValueError, match="Cannot preview wires.*external ends"):
-        scenario.module.show_route_previews(scenario.design, partial)
-
-    assert scenario.solves == []
 
 
 def test_secondary_member_edits_recompute_but_labels_do_not(scenario: _Scenario) -> None:
@@ -854,62 +819,6 @@ def test_graphics_use_sampled_curves_in_fusion_units(scenario: _Scenario) -> Non
     assert len(coordinates) > 6
     assert wire_group.id == str(route.wire_id)
     assert lines.weight == 1.0
-
-
-def test_gate_backed_junction_draws_a_selectable_slice(
-    scenario: _Scenario,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """
-    Expose a bright host-space slice oracle on the selected routing gate.
-    """
-    control = scenario.definition.controls[0]
-    junction = TopologyNode(
-        UUID(int=700),
-        TopologyNodeKind.JUNCTION,
-        pathway_id=scenario.definition.pathways[0].pathway_id,
-        distance_mm=10.0,
-        slice_control_id=control.control_id,
-        name="Junction 1",
-    )
-    definition = replace(
-        scenario.definition,
-        topology=RouteTopology(nodes=(junction,)),
-    )
-    root = _Group("root")
-    lines = SimpleNamespace()
-    slice_group = _Group("", root)
-    slice_group.addLines = lambda *_args: lines  # type: ignore[attr-defined]
-    root.add = lambda: root.children.append(slice_group) or slice_group  # type: ignore[attr-defined]
-    design = SimpleNamespace(rootComponent=SimpleNamespace(customGraphicsGroups=root))
-    coordinates: list[list[float]] = []
-    core = sys.modules["adsk.core"]
-    fusion = sys.modules["adsk.fusion"]
-    vars(core)["Color"] = SimpleNamespace(create=lambda *channels: channels)
-    vars(fusion)["CustomGraphicsCoordinates"] = SimpleNamespace(
-        create=lambda values: coordinates.append(values) or object()
-    )
-    vars(fusion)["CustomGraphicsSolidColorEffect"] = SimpleNamespace(create=lambda color: color)
-    monkeypatch.setattr(
-        scenario.module,
-        "_gate_frame",
-        lambda *_args: GateFrame(
-            control.control_id,
-            control.name,
-            Vector3(10, 20, 30),
-            Vector3(1, 0, 0),
-            Vector3(0, 1, 0),
-            5,
-        ),
-    )
-
-    count = scenario.module.show_junction_slices(design, definition)
-
-    assert count == 1
-    assert len(coordinates[0]) == 49 * 3
-    assert lines.name == "Junction 1 Slice"
-    assert lines.weight == 4.0
-    assert lines.isSelectable is True
 
 
 def test_preview_graphics_exclude_solid_owned_stripes(scenario: _Scenario) -> None:

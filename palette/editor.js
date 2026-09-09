@@ -19,9 +19,30 @@ function renderEditor(harness) {
 
   if (harness.status === "damaged") {
     const error = document.createElement("div");
+    const actions = document.createElement("div");
+    const remove = document.createElement("button");
     error.className = "error-panel";
     error.textContent = harness.error || "The stored definition could not be loaded.";
-    ui.editor.append(error);
+    actions.className = "damaged-harness-actions";
+    remove.type = "button";
+    remove.className = "button danger";
+    remove.textContent = "Delete damaged harness";
+    remove.disabled = !harness.deletionToken;
+    remove.title = harness.deletionToken
+      ? "Delete this damaged harness component"
+      : "Refresh to locate this damaged harness component";
+    remove.addEventListener("click", () => {
+      if (!window.confirm(
+        `Delete damaged harness “${harness.componentName}”? This removes its Fusion component and everything inside it.`,
+      )) return;
+      void mutate(
+        "delete_damaged_harness",
+        { deletionToken: harness.deletionToken },
+        `Deleting damaged harness ${harness.componentName}…`,
+      );
+    });
+    actions.append(remove);
+    ui.editor.append(error, actions);
     return;
   }
 
@@ -83,13 +104,6 @@ function renderEditor(harness) {
   const findingCount = harness.validationMessages.length + auditIssues.length;
 
   ui.editor.append(
-    editorSection(
-      "topology",
-      "Junctions & Extensions",
-      `${harness.topology?.nodes?.filter((node) => node.kind === "junction").length || 0} junctions`,
-      renderTopologyEditor(harness),
-      false,
-    ),
     editorSection(
       "wire-routes",
       "Wire Routes",

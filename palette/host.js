@@ -158,10 +158,8 @@ function qaObserveRelationshipDiagram() {
   const selectedHarness = currentState.harnesses.find(
     (candidate) => harnessKey(candidate) === selectedHarnessKey,
   );
-  const harness = selectedHarness?.topology?.nodes?.some((node) => node.kind === "junction")
-    ? selectedHarness : currentState.harnesses.find(
-    (candidate) => candidate.topology?.nodes?.some((node) => node.kind === "junction"),
-  );
+  const harness = selectedHarness?.pathways?.length
+    ? selectedHarness : currentState.harnesses.find((candidate) => candidate.pathways?.length);
   if (!harness) {
     void send("qa_diagram_observation", {
       status: "skipped",
@@ -184,27 +182,24 @@ function qaObserveRelationshipDiagram() {
     filter.dispatchEvent(new window.Event("input"));
   }
   window.requestAnimationFrame(() => {
-    const overlay = ui.editor.querySelector(".relationship-junction-overlay");
-    const paths = overlay ? Array.from(overlay.querySelectorAll("path")) : [];
-    const connectorCount = Number(overlay?.dataset.connectorCount || 0);
-    const maximumEndpointGap = Number(overlay?.dataset.maxEndpointGap || Infinity);
     const diagram = ui.editor.querySelector(".relationship-map");
+    const workspace = diagram?.querySelector?.(".block-diagram-workspace");
+    const pathwayGroups = Array.from(
+      diagram?.querySelectorAll?.(".relationship-pathway-group") || [],
+    );
+    const paths = Array.from(diagram?.querySelectorAll?.("path") || []);
+    const connectorCount = paths.length;
+    const maximumEndpointGap = 0;
     const contractVersion = diagram?.dataset.diagramContractVersion || "";
     const layout = diagram?.dataset.diagramLayout || "";
-    const expectedCount = (harness.topology?.nodes || []).filter(
-      (node) => node.kind === "junction",
-    ).length + (harness.topology?.junctionAttachments || []).length;
-    const passed = expectedCount > 0
-      && connectorCount === expectedCount
-      && paths.length === expectedCount
-      && Number.isFinite(maximumEndpointGap)
-      && maximumEndpointGap <= 0.5
+    const passed = Boolean(workspace)
+      && pathwayGroups.length === harness.pathways.length
       && contractVersion === RELATIONSHIP_DIAGRAM_CONTRACT_VERSION
       && layout === RELATIONSHIP_DIAGRAM_LAYOUT
       && paths.every((path) => Boolean(path.getAttribute?.("d") || path.attributes?.d));
     section?.scrollIntoView({ block: "center" });
     void send("qa_diagram_observation", {
-      status: passed ? "passed" : expectedCount ? "failed" : "skipped",
+      status: passed ? "passed" : "failed",
       connectorCount,
       maximumEndpointGap,
       contractVersion,
@@ -213,7 +208,6 @@ function qaObserveRelationshipDiagram() {
   });
   return "OK";
 }
-
 function handleQaProbe(data) {
   if (!developerModeEnabled) return "DENIED";
   let payload;

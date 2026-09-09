@@ -45,7 +45,9 @@ The user may either:
 
 Harness discovery is attribute-driven across the active design. A malformed or
 unsupported stored definition remains visible as a damaged entry with its component
-name and load error; it must not prevent other harnesses from loading. Creating a
+name and load error; it must not prevent other harnesses from loading. Its editor offers
+a confirmed deletion action that removes the exact marked Fusion component even when
+the stored harness identity cannot be decoded. Creating a
 harness from the palette uses a native Fusion command for document-changing inputs,
 then refreshes the persistent palette after the transaction succeeds.
 

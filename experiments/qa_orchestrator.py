@@ -646,7 +646,7 @@ def _read_relationship_diagram_observation(
         raise RuntimeError("Palette returned an invalid diagram endpoint gap.")
     if contract_version != "1":
         raise RuntimeError("Palette returned an unsupported diagram contract version.")
-    if layout != "flexible-layered-graph":
+    if layout != "measured-pathway-stack":
         raise RuntimeError("Palette returned an unsupported diagram layout.")
     return {
         "status": status,
@@ -695,7 +695,7 @@ def run(_context: str):
         "connectorCount": 0,
         "maximumEndpointGap": 0.0,
         "contractVersion": "1",
-        "layout": "flexible-layered-graph",
+        "layout": "measured-pathway-stack",
     }}
     print("{DIAGRAM_OBSERVATION_RESULT_PREFIX}" + json.dumps(observation, sort_keys=True))
 '''

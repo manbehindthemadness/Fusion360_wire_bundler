@@ -18,7 +18,7 @@ from uuid import UUID
 import pytest
 
 from wire_bundler.application import HarnessLoadResult
-from wire_bundler.domain import HarnessDefinition, PathwayEnd, WireColor, WireStripe, dumps, loads
+from wire_bundler.domain import HarnessDefinition, WireColor, WireStripe, dumps, loads
 
 
 class _PaletteLifecycleModule(Protocol):
@@ -36,12 +36,12 @@ class _PaletteLifecycleModule(Protocol):
     _DocumentSavingHandler: type
     _DocumentSavedHandler: type
     _pending_palette_edit: object
+    _damaged_harness_results: dict[str, HarnessLoadResult]
     _graphics_cache_restore_value: Optional[bool]
     _graphics_cache_save_document: Optional[object]
     _last_diagram_qa_observation: Optional[dict[str, object]]
     _open_palette_edit: Callable[[object, str, str], None]
     _apply_palette_edit: Callable[[object, str, str], str]
-    _apply_topology_end_selection: Callable[[object, dict[str, object], tuple[str, ...]], None]
     _refresh_active_preview: Callable[..., str]
     _apply_generated_materials: Callable[[object, UUID], str]
     _send_palette_state: Callable[[object, str], None]
@@ -50,6 +50,7 @@ class _PaletteLifecycleModule(Protocol):
     _show_palette: Callable[[object], None]
     _create_harness_gateway: Callable[[object], object]
     _serialize_palette_state: Callable[[object, str], str]
+    _delete_damaged_harness: Callable[[object, str], str]
     _appearance_libraries_payload: Callable[[object], list[dict[str, str]]]
     _library_appearances_payload: Callable[[object, str], list[dict[str, str]]]
     _preview_routes: Callable[[object, str], int]
@@ -237,6 +238,60 @@ def test_existing_palette_is_redocked_and_revealed(
     assert palette.isVisible is True
 
 
+def test_palette_remains_usable_when_fusion_rejects_redocking(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Reveal and refresh an existing palette when Fusion rejects area placement.
+    """
+
+    class _Palette:
+        """
+        Reproduce Fusion's docking-state assignment failure.
+        """
+
+        def __init__(self) -> None:
+            """
+            Start hidden with no docking option assigned.
+            """
+            self.dockingOption = None
+            self.isVisible = False
+
+        # noinspection PyPep8Naming
+        @property
+        def dockingState(self) -> str:
+            """
+            Return the current floating state.
+            """
+            return "floating"
+
+        # noinspection PyPep8Naming
+        @dockingState.setter
+        def dockingState(self, _value: str) -> None:
+            """
+            Reproduce Fusion's internal area-placement rejection.
+            """
+            raise RuntimeError("InternalValidationError: setAreaPlacement")
+
+    palette = _Palette()
+    application = SimpleNamespace(
+        userInterface=SimpleNamespace(palettes=SimpleNamespace(itemById=Mock(return_value=palette)))
+    )
+    sent = Mock()
+    logged: list[str] = []
+    monkeypatch.setattr(addin_module, "_send_palette_state", sent)
+    monkeypatch.setattr(addin_module, "_log_to_fusion", logged.append)
+
+    addin_module._show_palette(application)
+
+    assert palette.isVisible
+    sent.assert_called_once_with(application)
+    assert logged == [
+        "Harness Builder could not restore right docking: InternalValidationError: setAreaPlacement"
+    ]
+
+
 def test_all_palette_resources_are_packaged(addin_module: _PaletteLifecycleModule) -> None:
     """
     Keep every stylesheet and ordered script beside the palette entry point.
@@ -312,64 +367,43 @@ def test_palette_state_contains_complete_editor_definition(
         str(valid_harness.wires[0].wire_id)
     ]
     assert relationship_map["auditIssues"] == []
-    assert harness["topology"] is None
 
 
-def test_palette_state_exposes_editable_branched_topology(
+def test_damaged_palette_entry_can_delete_its_exact_component(
     addin_module: _PaletteLifecycleModule,
     monkeypatch: pytest.MonkeyPatch,
-    branched_harness: HarnessDefinition,
 ) -> None:
     """
-    Include junction metadata, exact graph edges, and derived gate states.
+    Give an unreadable entry a short-lived token that resolves to its component.
     """
-    gateway = SimpleNamespace(is_entity_token_resolvable=lambda _token: True)
-    result = HarnessLoadResult("Harness_001", branched_harness, None, ())
+    component = object()
+    result = HarnessLoadResult(
+        component_name="Broken Harness",
+        definition=None,
+        error="Stored definition is malformed.",
+        validation_messages=(),
+        component_handle=component,
+    )
+    deleted_components: list[object] = []
+    gateway = SimpleNamespace(
+        delete_stored_harness_component=deleted_components.append,
+    )
     monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
     monkeypatch.setattr(addin_module, "load_harnesses", lambda _gateway: (result,))
 
-    payload = json.loads(addin_module._serialize_palette_state(object(), ""))
-    topology = payload["harnesses"][0]["topology"]
-
-    assert any(node["kind"] == "junction" for node in topology["nodes"])
-    assert any(edge["kind"] == "junction_transition" for edge in topology["edges"])
-    assert topology["junctionAttachments"][0]["pathwayEnd"] == "a"
-    assert topology["junctionDispositions"][0]["disposition"] == "branch"
-    assert {item["state"] for item in topology["exitStates"]} == {
-        "extended",
-        "terminated",
-    }
-
-
-def test_palette_state_reads_active_fusion_document_length_units(
-    addin_module: _PaletteLifecycleModule,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """
-    Publish the display-unit scale while retaining millimeter persistence.
-    """
-    units_manager = SimpleNamespace(
-        defaultLengthUnits="in",
-        convert=lambda value, source, target: (
-            25.4 if (value, source, target) == (1.0, "in", "mm") else None
-        ),
+    state = json.loads(addin_module._serialize_palette_state(object(), ""))
+    deletion_token = state["harnesses"][0]["deletionToken"]
+    refreshed = json.loads(addin_module._serialize_palette_state(object(), ""))
+    notice = addin_module._delete_damaged_harness(
+        object(),
+        json.dumps({"deletionToken": deletion_token}),
     )
-    design = SimpleNamespace(unitsManager=units_manager)
-    fusion_module = sys.modules["adsk.fusion"]
-    # noinspection PyUnresolvedReferences
-    monkeypatch.setattr(
-        fusion_module,
-        "Design",
-        SimpleNamespace(cast=lambda product: design if product == "active" else None),
-        raising=False,
-    )
-    application = SimpleNamespace(activeProduct="active")
-    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: object())
-    monkeypatch.setattr(addin_module, "load_harnesses", lambda _gateway: ())
 
-    payload = json.loads(addin_module._serialize_palette_state(application, ""))
-
-    assert payload["units"] == {"length": "in", "millimetersPerUnit": 25.4}
+    assert isinstance(deletion_token, str)
+    assert refreshed["harnesses"][0]["deletionToken"] == deletion_token
+    assert deleted_components == [component]
+    assert notice == "Deleted damaged harness Broken Harness."
+    assert deletion_token not in addin_module._damaged_harness_results
 
 
 def test_route_capacity_error_fails_preview_command(
@@ -397,6 +431,34 @@ def test_route_capacity_error_fails_preview_command(
     assert len(logged_messages) == 1
     assert logged_messages[0].startswith("Harness command failed: Gate 4 cannot fit 3 wires.")
     assert "Traceback (most recent call last)" in logged_messages[0]
+
+
+def test_damaged_deletion_runs_inside_palette_command(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Delete and refresh palette state within the native Fusion transaction.
+    """
+    document = object()
+    application = SimpleNamespace(activeDocument=document, activeViewport=Mock())
+    core_module = sys.modules["adsk.core"]
+    core_module.Application = SimpleNamespace(get=lambda: application)  # type: ignore[attr-defined]
+    delete = Mock(return_value="Deleted damaged harness Broken Harness.")
+    sent = Mock()
+    monkeypatch.setattr(addin_module, "_delete_damaged_harness", delete)
+    monkeypatch.setattr(addin_module, "_send_palette_state", sent)
+    payload = json.dumps({"deletionToken": "current-token"})
+    args = SimpleNamespace(executeFailed=False, executeFailedMessage="")
+
+    addin_module._PaletteEditExecuteHandler(("delete_damaged_harness", payload, document)).notify(
+        args
+    )
+
+    delete.assert_called_once_with(application, payload)
+    application.activeViewport.refresh.assert_called_once_with()
+    sent.assert_called_once_with(application, "Deleted damaged harness Broken Harness.")
+    assert not args.executeFailed
 
 
 @pytest.mark.parametrize(
@@ -766,144 +828,6 @@ def test_interpolation_bridge_persists_selected_target(
         assert saved.controls == valid_harness.controls
 
 
-def test_topology_bridge_adds_junction_with_stable_payload_fields(
-    addin_module: _PaletteLifecycleModule,
-    monkeypatch: pytest.MonkeyPatch,
-    valid_harness: HarnessDefinition,
-) -> None:
-    """
-    Translate a dialog-free palette request into one schema-v5 topology write.
-    """
-    gateway = Mock(read_harness_definition=Mock(return_value=dumps(valid_harness)))
-    monkeypatch.setattr(
-        addin_module,
-        "_create_harness_gateway",
-        lambda _application: gateway,
-    )
-    request = {
-        "harnessId": str(valid_harness.harness_id),
-        "pathwayId": str(valid_harness.pathways[0].pathway_id),
-        "sliceControlId": str(valid_harness.controls[0].control_id),
-        "distanceMm": 14.5,
-        "diameterFactor": 2.25,
-    }
-
-    notice = addin_module._apply_palette_edit(
-        object(),
-        "add_junction",
-        json.dumps(request),
-    )
-
-    assert notice.startswith("Added junction ")
-    saved = loads(gateway.replace_harness_definition.call_args.args[1])
-    assert saved.topology is not None
-    junction = saved.topology.nodes[-1]
-    assert junction.distance_mm == 14.5
-    assert junction.junction_diameter_factor_override == 2.25
-
-
-def test_topology_bridge_extends_between_selected_pathway_gates(
-    addin_module: _PaletteLifecycleModule,
-    monkeypatch: pytest.MonkeyPatch,
-    valid_harness: HarnessDefinition,
-) -> None:
-    """
-    Parse stable physical-wire and A/B gate identities for an extension edit.
-    """
-    gateway = object()
-    extend = Mock()
-    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
-    monkeypatch.setitem(vars(addin_module), "extend_pathway_member", extend)
-    request = {
-        "harnessId": str(valid_harness.harness_id),
-        "physicalWireId": str(valid_harness.wires[0].wire_id),
-        "sourcePathwayId": str(valid_harness.pathways[0].pathway_id),
-        "sourceEnd": "b",
-        "targetPathwayId": str(UUID(int=901)),
-        "targetEnd": "a",
-    }
-
-    notice = addin_module._apply_palette_edit(
-        object(), "extend_pathway_member", json.dumps(request)
-    )
-
-    assert notice == "Extended wire through pathway."
-    extend.assert_called_once_with(
-        valid_harness.harness_id,
-        valid_harness.wires[0].wire_id,
-        valid_harness.pathways[0].pathway_id,
-        PathwayEnd.B,
-        UUID(int=901),
-        PathwayEnd.A,
-        gateway,
-    )
-
-
-def test_native_profile_selection_creates_an_external_topology_end(
-    addin_module: _PaletteLifecycleModule,
-    monkeypatch: pytest.MonkeyPatch,
-    valid_harness: HarnessDefinition,
-) -> None:
-    """
-    Convert one selected Fusion profile into the topology termination service call.
-    """
-    gateway = object()
-    add_end = Mock()
-    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
-    monkeypatch.setitem(vars(addin_module), "add_external_end", add_end)
-    payload = {
-        "harnessId": str(valid_harness.harness_id),
-        "physicalWireId": str(valid_harness.wires[0].wire_id),
-        "pathwayId": str(valid_harness.pathways[0].pathway_id),
-        "pathwayEnd": "b",
-        "name": "ECU pin 4",
-    }
-
-    addin_module._apply_topology_end_selection(object(), payload, ("fusion-end-token",))
-
-    arguments = add_end.call_args.args
-    assert arguments[:4] == (
-        valid_harness.harness_id,
-        valid_harness.wires[0].wire_id,
-        valid_harness.pathways[0].pathway_id,
-        PathwayEnd.B,
-    )
-    assert arguments[4].name == "ECU pin 4"
-    assert arguments[4].entity_token == "fusion-end-token"
-    assert arguments[5] is gateway
-
-
-def test_native_profile_selection_creates_a_junction_pigtail(
-    addin_module: _PaletteLifecycleModule,
-    monkeypatch: pytest.MonkeyPatch,
-    valid_harness: HarnessDefinition,
-) -> None:
-    """
-    Route a junction-targeted selection to distinct pigtail-leg creation.
-    """
-    gateway = object()
-    add_pigtail = Mock()
-    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
-    monkeypatch.setitem(vars(addin_module), "add_junction_pigtail_end", add_pigtail)
-    payload = {
-        "harnessId": str(valid_harness.harness_id),
-        "junctionId": str(UUID(int=950)),
-        "physicalWireId": str(valid_harness.wires[0].wire_id),
-        "name": "Shield drain",
-    }
-
-    addin_module._apply_topology_end_selection(object(), payload, ("fusion-pigtail-token",))
-
-    arguments = add_pigtail.call_args.args
-    assert arguments[:3] == (
-        valid_harness.harness_id,
-        UUID(int=950),
-        valid_harness.wires[0].wire_id,
-    )
-    assert arguments[3].name == "Shield drain"
-    assert arguments[4] is gateway
-
-
 def test_solid_generation_fails_native_transaction_on_kernel_error(
     addin_module: _PaletteLifecycleModule,
     monkeypatch: pytest.MonkeyPatch,
@@ -1020,7 +944,7 @@ def test_palette_records_bounded_relationship_diagram_observation(
                 "connectorCount": 4,
                 "maximumEndpointGap": 0.0,
                 "contractVersion": "1",
-                "layout": "flexible-layered-graph",
+                "layout": "measured-pathway-stack",
             }
         ),
         returnData="",
@@ -1033,7 +957,7 @@ def test_palette_records_bounded_relationship_diagram_observation(
         "connectorCount": 4,
         "maximumEndpointGap": 0.0,
         "contractVersion": "1",
-        "layout": "flexible-layered-graph",
+        "layout": "measured-pathway-stack",
     }
     assert json.loads(args.returnData) == {"ok": True}
 

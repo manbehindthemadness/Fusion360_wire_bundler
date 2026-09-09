@@ -466,42 +466,6 @@ def test_removes_complete_wire_pair_and_only_its_unused_members(
     assert stored.profiles == definition.profiles
 
 
-def test_wire_edits_keep_explicit_physical_network_synchronized(
-    branched_harness: HarnessDefinition,
-) -> None:
-    """
-    Apply profile changes to every branch leg and remove the complete logical network.
-    """
-    gateway = _recording_gateway(branched_harness)
-    primary_wire_id = branched_harness.wires[0].wire_id
-
-    set_wire_diameter(
-        branched_harness.harness_id,
-        primary_wire_id,
-        2.4,
-        gateway,
-    )
-
-    resized = loads(gateway.serialized_definition)
-    assert resized.topology is not None
-    assert {wire.profile_id for wire in resized.topology.physical_wires} == {
-        resized.wires[0].profile_id
-    }
-
-    remove_wire(
-        branched_harness.harness_id,
-        primary_wire_id,
-        gateway,
-    )
-    removed = loads(gateway.serialized_definition)
-    assert removed.topology is not None
-    assert removed.topology.physical_wires == ()
-    assert removed.topology.edges == ()
-    assert removed.topology.junction_dispositions == ()
-    assert removed.topology.electrical_relationships == ()
-    assert not any(connection.name == "J3 / Pin 2" for connection in removed.connections)
-
-
 def test_restores_exact_definition_after_edit_failure(valid_harness: HarnessDefinition) -> None:
     """
     Roll back atomically and report a failed rollback distinctly.

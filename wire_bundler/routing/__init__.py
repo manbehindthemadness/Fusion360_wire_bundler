@@ -3,7 +3,6 @@ Host-independent routing geometry and parallel-wire solvers.
 """
 
 from .geometry import CubicBezier
-from .junction import JunctionRouteInput, route_junction_members
 from .parallel import (
     GateCapacityError,
     GateFrame,
@@ -31,7 +30,6 @@ __all__ = [
     "CIRCULAR_SWEEP_BEND_FACTOR",
     "GateCapacityError",
     "GateFrame",
-    "JunctionRouteInput",
     "RoutePreview",
     "Vector3",
     "WireRouteInput",
@@ -41,7 +39,6 @@ __all__ = [
     "TransitionLimits",
     "fair_route",
     "minimum_circular_bend_radius",
-    "route_junction_members",
     "sample_centerline",
     "tightest_bend",
     "transition_limits",

@@ -166,144 +166,6 @@ function navigateToPathway(pathwayId) {
   pathway.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
-function navigateToJunction(junctionId) {
-  const section = ui.editor.querySelector('[data-section="topology"]');
-  const card = ui.editor.querySelector(`[data-junction-id="${junctionId}"]`);
-  if (section) {
-    section.open = true;
-    expandedSections.add("topology");
-  }
-  if (card) {
-    card.open = true;
-    card.scrollIntoView({ behavior: "smooth", block: "center" });
-  }
-}
-
-function topologyNodeLabel(harness, node) {
-  if (node.kind === "junction") return node.name || "Junction";
-  if (node.kind === "external_end") {
-    return harness.connections.find((item) => item.connectionId === node.connectionId)?.name
-      || "External end";
-  }
-  const pathway = harness.pathways.find((item) => item.pathwayId === node.pathwayId);
-  return `${pathway?.name || "Pathway"} ${node.pathwayEnd?.toUpperCase() || ""}`.trim();
-}
-
-function renderTopologyNetworkGraphic(harness, primaryWireId = null) {
-  if (!harness.topology) return null;
-  const topology = harness.topology;
-  let physicalWireIds = new Set(topology.physicalWires.map((item) => item.physicalWireId));
-  if (primaryWireId) {
-    const primary = topology.physicalWires.find((item) => item.physicalWireId === primaryWireId);
-    physicalWireIds = new Set(topology.physicalWires.filter(
-      (item) => item.networkId === primary?.networkId,
-    ).map((item) => item.physicalWireId));
-  }
-  const edges = topology.edges.filter((edge) => physicalWireIds.has(edge.physicalWireId));
-  const physicalById = new Map(topology.physicalWires.map(
-    (item) => [item.physicalWireId, item],
-  ));
-  const logicalByNetwork = new Map(harness.wires.map((item) => [item.wireId, item]));
-  const nodeIds = new Set(edges.flatMap((edge) => [edge.startNodeId, edge.endNodeId]));
-  const nodes = topology.nodes.filter((node) => nodeIds.has(node.nodeId));
-  const ranks = new Map(nodes.map((node) => [node.nodeId, 0]));
-  for (let pass = 0; pass < nodes.length; pass += 1) {
-    edges.forEach((edge) => {
-      ranks.set(edge.endNodeId, Math.max(
-        ranks.get(edge.endNodeId) || 0,
-        (ranks.get(edge.startNodeId) || 0) + 1,
-      ));
-    });
-  }
-  const lanes = [...physicalWireIds].sort();
-  const laneByWire = new Map(lanes.map((wireId, index) => [wireId, index]));
-  const nodeLane = (nodeId) => {
-    const incident = edges.filter(
-      (edge) => edge.startNodeId === nodeId || edge.endNodeId === nodeId,
-    ).map((edge) => laneByWire.get(edge.physicalWireId) || 0);
-    return incident.length ? incident.reduce((total, value) => total + value, 0) / incident.length : 0;
-  };
-  const width = Math.max(560, 120 + Math.max(0, ...ranks.values()) * 150);
-  const height = Math.max(110, 80 + Math.max(0, lanes.length - 1) * 64);
-  const point = (nodeId) => ({
-    x: 60 + (ranks.get(nodeId) || 0) * 150,
-    y: 46 + nodeLane(nodeId) * 64,
-  });
-  const container = document.createElement("div");
-  const svg = svgElement("svg", {
-    class: "topology-network-svg",
-    width,
-    height,
-    viewBox: `0 0 ${width} ${height}`,
-    role: "group",
-    "aria-label": primaryWireId ? "Branched wire route" : "Harness topology",
-  });
-  edges.forEach((edge) => {
-    const start = point(edge.startNodeId);
-    const end = point(edge.endNodeId);
-    const route = `M ${start.x} ${start.y} C ${(start.x + end.x) / 2} ${start.y}, ${(start.x + end.x) / 2} ${end.y}, ${end.x} ${end.y}`;
-    const networkId = physicalById.get(edge.physicalWireId)?.networkId;
-    const logicalWire = logicalByNetwork.get(networkId);
-    const path = svgElement("path", {
-      class: `topology-edge ${edge.kind}`,
-      d: route,
-      stroke: logicalWire?.materials?.mainColor?.hex || "#1777c8",
-      "data-edge-id": edge.edgeId,
-      "data-wire-id": networkId || edge.physicalWireId,
-      "data-physical-wire-id": edge.physicalWireId,
-    });
-    svg.append(path);
-    (logicalWire?.materials?.stripes || []).slice(0, 3).forEach((stripe, stripeIndex, stripes) => {
-      svg.append(svgElement("path", {
-        class: "topology-edge-stripe",
-        d: route,
-        stroke: stripe.color?.hex || "#fff",
-        "stroke-width": 1.7,
-        "stroke-dasharray": stripe.pattern === "solid" ? "none" : "8 5",
-        transform: `translate(0 ${centeredStripeOffset(stripeIndex, stripes.length, 2.5)})`,
-      }));
-    });
-  });
-  nodes.forEach((node) => {
-    const location = point(node.nodeId);
-    const group = svgElement("g", {
-      class: `topology-node ${node.kind}`,
-      tabindex: "0",
-      role: "button",
-      "data-node-id": node.nodeId,
-    });
-    const shape = node.kind === "junction"
-      ? svgElement("polygon", {
-        points: `${location.x},${location.y - 20} ${location.x + 24},${location.y} ${location.x},${location.y + 20} ${location.x - 24},${location.y}`,
-      })
-      : svgElement("rect", {
-        x: location.x - 48, y: location.y - 16, width: 96, height: 32, rx: 8,
-      });
-    const label = svgElement("text", {
-      x: location.x, y: location.y + 4, class: "topology-node-label",
-    });
-    label.textContent = truncateGraphicLabel(topologyNodeLabel(harness, node), 16);
-    group.append(shape, label);
-    if (node.kind === "junction") {
-      group.addEventListener("click", () => navigateToJunction(node.nodeId));
-    } else if (node.kind === "pathway_end") {
-      group.addEventListener("click", () => navigateToPathway(node.pathwayId));
-    } else {
-      hoverHighlight(group, () => highlightMember(harness, "connection", node.connectionId));
-    }
-    group.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        group.dispatchEvent(new window.Event("click"));
-      }
-    });
-    svg.append(group);
-  });
-  container.className = "topology-network-graphic";
-  container.append(svg);
-  return container;
-}
-
 function renderWireRelationshipGraphic(
   harness, wire, connections, pathways, endAEditor, endBEditor,
 ) {
@@ -349,30 +211,6 @@ function renderWireRelationshipGraphic(
     },
   ];
   const width = Math.max(560, 100 + (nodeItems.length - 1) * 180);
-  const topology = harness.topology;
-  const primaryPhysical = topology?.physicalWires.find(
-    (item) => item.physicalWireId === wire.wireId,
-  );
-  const networkId = primaryPhysical?.networkId || wire.wireId;
-  const networkPhysicalIds = new Set((topology?.physicalWires || []).filter(
-    (item) => item.networkId === networkId,
-  ).map((item) => item.physicalWireId));
-  const incidentNodeIds = new Set((topology?.edges || []).filter(
-    (edge) => networkPhysicalIds.has(edge.physicalWireId),
-  ).flatMap((edge) => [edge.startNodeId, edge.endNodeId]));
-  const junctions = (topology?.nodes || []).filter(
-    (node) => node.kind === "junction" && incidentNodeIds.has(node.nodeId),
-  );
-  let nextBranchY = 116;
-  const junctionLayouts = junctions.map((junction) => {
-    const attachments = (topology?.junctionAttachments || []).filter(
-      (item) => item.junctionId === junction.nodeId,
-    );
-    const layout = { junction, attachments, y: nextBranchY };
-    nextBranchY += 58 + Math.max(1, attachments.length) * 54;
-    return layout;
-  });
-  const graphicHeight = Math.max(88, nextBranchY - 20);
   const y = 44;
   const startX = 70;
   const step = (width - 140) / Math.max(1, nodeItems.length - 1);
@@ -380,8 +218,8 @@ function renderWireRelationshipGraphic(
   const svg = svgElement("svg", {
     class: "relationship-map-svg",
     width,
-    height: graphicHeight,
-    viewBox: `0 0 ${width} ${graphicHeight}`,
+    height: 88,
+    viewBox: `0 0 ${width} 88`,
     role: "group",
     "aria-label": `${wireLabel(wire)} relationship route`,
   });
@@ -412,7 +250,7 @@ function renderWireRelationshipGraphic(
   const nodeGroups = new Map();
   const activateEnd = (item) => {
     if (!item.connection) {
-      void mutate("edit_end_members", {
+      mutate("edit_end_members", {
         harnessId: harness.harnessId,
         wireId: wire.wireId,
         endpoint: item.endpoint,
@@ -487,83 +325,6 @@ function renderWireRelationshipGraphic(
       else activateEnd(item);
     });
     svg.append(group);
-  });
-  junctionLayouts.forEach(({ junction, attachments, y: branchY }, index) => {
-    const pathwayIndex = nodeItems.findIndex(
-      (item) => item.kind === "pathway" && item.pathwayId === junction.pathwayId,
-    );
-    const x = points[Math.max(0, pathwayIndex)];
-    const color = wire.materials?.mainColor?.hex || "#1777c8";
-    svg.append(svgElement("line", {
-      class: "relationship-link",
-      x1: x, y1: y + 18, x2: x, y2: branchY - 16,
-      stroke: color, "stroke-width": 7,
-    }));
-    const group = svgElement("g", {
-      class: "wire-relationship-node junction",
-      tabindex: "0",
-      role: "button",
-      "data-junction-id": junction.nodeId,
-    });
-    const shape = svgElement("rect", {
-      class: "relationship-node connection",
-      x: x - 62, y: branchY - 16, width: 124, height: 32, rx: 7,
-    });
-    const label = svgElement("text", {
-      class: "relationship-node-label", x, y: branchY + 3,
-    });
-    label.textContent = truncateGraphicLabel(junction.name || `Junction ${index + 1}`, 20);
-    group.append(shape, label);
-    group.addEventListener("click", () => navigateToJunction(junction.nodeId));
-    group.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") navigateToJunction(junction.nodeId);
-    });
-    svg.append(group);
-    attachments.forEach((attachment, attachmentIndex) => {
-      const attachmentY = branchY + 54 + attachmentIndex * 54;
-      const pathway = harness.pathways.find(
-        (item) => item.pathwayId === attachment.pathwayId,
-      );
-      svg.append(svgElement("line", {
-        class: "relationship-link junction-attachment-link",
-        x1: x, y1: branchY + 16, x2: x, y2: attachmentY - 18,
-        stroke: color, "stroke-width": 7,
-      }));
-      const attachmentGroup = svgElement("g", {
-        class: "wire-relationship-node pathway junction-attachment",
-        tabindex: "0",
-        role: "button",
-        "data-pathway-id": attachment.pathwayId,
-      });
-      const attachmentShape = svgElement("rect", {
-        class: "relationship-node pathway",
-        x: x - 75, y: attachmentY - 18, width: 150, height: 36, rx: 18,
-      });
-      const attachmentLabel = svgElement("text", {
-        class: "relationship-node-label", x, y: attachmentY + 3,
-      });
-      const attachmentKind = svgElement("text", {
-        class: "relationship-node-kind", x, y: attachmentY - 22,
-      });
-      attachmentLabel.textContent = truncateGraphicLabel(
-        pathway?.name || "Missing pathway", 21,
-      );
-      attachmentKind.textContent = `Attached End ${attachment.pathwayEnd.toUpperCase()}`;
-      attachmentGroup.append(attachmentShape, attachmentLabel, attachmentKind);
-      hoverHighlight(attachmentGroup, () => highlightMember(
-        harness, "pathway_gates", attachment.pathwayId,
-      ));
-      attachmentGroup.addEventListener(
-        "click", () => navigateToPathway(attachment.pathwayId),
-      );
-      attachmentGroup.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          navigateToPathway(attachment.pathwayId);
-        }
-      });
-      svg.append(attachmentGroup);
-    });
   });
   container.className = "wire-relationship-graphic";
   const workspace = createBlockDiagramWorkspace(

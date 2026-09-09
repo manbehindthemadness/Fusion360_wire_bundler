@@ -29,16 +29,22 @@ def test_repository_coverage_ledger_is_valid_and_references_existing_evidence() 
             assert (PROJECT_ROOT / evidence).is_file(), f"Missing evidence for {target.target_id}"
 
 
-def test_m2_coverage_ledger_is_valid_and_tracks_implementation_progress() -> None:
+def test_m2_coverage_ledger_preserves_completed_diagram_qa() -> None:
     """
-    Keep topology behavior and its current automation evidence explicit.
+    Preserve the verified diagram slice while topology work remains planned.
     """
     ledger = load_coverage_ledger(M2_LEDGER_PATH)
 
     assert ledger.milestone == "M2"
     assert len(ledger.targets) >= 10
-    assert ledger.counts_by_status()["automated"] >= 1
-    assert ledger.counts_by_status()["partial"] >= 1
+    counts = ledger.counts_by_status()
+    assert counts["candidate"] == len(ledger.targets) - 1
+    assert counts["partial"] == 1
+    assert counts["automated"] == 0
+    assert counts["manual"] == 0
+    diagram_target = next(target for target in ledger.targets if target.target_id == "M2-REL-001")
+    assert diagram_target.status == "partial"
+    assert diagram_target.evidence
     assert {target.target_id for target in ledger.targets} >= {
         "M2-DOM-001",
         "M2-JUNC-001",

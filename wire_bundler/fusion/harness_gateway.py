@@ -55,6 +55,12 @@ class _FusionComponent(Protocol):
     attributes: _FusionAttributes
     occurrences: _FusionOccurrences
 
+    # noinspection PyPep8Naming
+    def allOccurrencesByComponent(self, component: _FusionComponent) -> _FusionOccurrences:
+        """
+        Return every design occurrence referencing one component.
+        """
+
 
 class _FusionComponents(Protocol):
     """
@@ -222,9 +228,38 @@ class FusionHarnessGateway:
                 StoredHarness(
                     component_name=component.name,
                     serialized_definition=attribute.value,
+                    component_handle=component,
                 )
             )
         return tuple(stored_harnesses)
+
+    def delete_stored_harness_component(self, component_handle: object) -> None:
+        """
+        Delete the exact marked harness component selected during discovery.
+
+        Args:
+            component_handle: Opaque component identity returned by discovery.
+
+        Raises:
+            RuntimeError: If the component is stale, unmarked, reused, or cannot be deleted.
+        """
+        component = adsk.fusion.Component.cast(component_handle)
+        if component is None:
+            raise RuntimeError("The damaged harness component is no longer available.")
+        attribute = component.attributes.itemByName(
+            ATTRIBUTE_GROUP,
+            DEFINITION_ATTRIBUTE_NAME,
+        )
+        if attribute is None:
+            raise RuntimeError("The selected component is no longer a procedural harness.")
+        occurrences = self._design.rootComponent.allOccurrencesByComponent(component)
+        if occurrences.count != 1:
+            raise RuntimeError(
+                "The damaged harness component must have exactly one design occurrence before deletion."
+            )
+        occurrence = occurrences.item(0)
+        if occurrence is None or not occurrence.deleteMe():
+            raise RuntimeError("Fusion did not delete the damaged harness component.")
 
     def read_harness_definition(self, harness_id: UUID) -> str:
         """

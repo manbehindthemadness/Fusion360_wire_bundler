@@ -8,18 +8,13 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Protocol
-from uuid import UUID, uuid4, uuid5
+from uuid import UUID, uuid4
 
 from ..domain import (
     Connection,
     HarnessDefinition,
-    RouteEdge,
-    RouteEdgeKind,
-    TopologyNode,
-    TopologyNodeKind,
     WireDefinition,
     WireProfile,
-    build_linear_topology,
     dumps,
     loads,
     next_available_name,
@@ -163,24 +158,6 @@ def add_wire_batch(
         connections=(*definition.connections, *result.connections),
         wires=(*definition.wires, *result.wires),
     )
-    if definition.topology is not None:
-        projected = build_linear_topology(result.wires, (pathway,))
-        projected_edges = _split_projected_pathway_edges(
-            projected.edges,
-            definition.topology.nodes,
-            pathway.pathway_id,
-        )
-        existing_node_ids = {node.node_id for node in definition.topology.nodes}
-        updated_definition = replace(
-            updated_definition,
-            topology=replace(
-                definition.topology,
-                nodes=definition.topology.nodes
-                + tuple(node for node in projected.nodes if node.node_id not in existing_node_ids),
-                physical_wires=definition.topology.physical_wires + projected.physical_wires,
-                edges=definition.topology.edges + projected_edges,
-            ),
-        )
     try:
         gateway.replace_harness_definition(harness_id, dumps(updated_definition))
     except Exception as persistence_error:
@@ -213,54 +190,6 @@ def _normalize_tokens(tokens: tuple[str, ...], role: str) -> tuple[str, ...]:
     if any(not token for token in normalized):
         raise ValueError(f"Every {role} profile must reference Fusion geometry.")
     return normalized
-
-
-def _split_projected_pathway_edges(
-    edges: tuple[RouteEdge, ...],
-    existing_nodes: tuple[TopologyNode, ...],
-    pathway_id: UUID,
-) -> tuple[RouteEdge, ...]:
-    """
-    Route newly added linear wires through existing ordered junction slices.
-    """
-    junctions = tuple(
-        sorted(
-            (
-                node
-                for node in existing_nodes
-                if node.kind is TopologyNodeKind.JUNCTION and node.pathway_id == pathway_id
-            ),
-            key=lambda node: (node.distance_mm or 0.0, node.node_id.hex),
-        )
-    )
-    if not junctions:
-        return edges
-
-    split_edges: list[RouteEdge] = []
-    for edge in edges:
-        if edge.kind is not RouteEdgeKind.PATHWAY or edge.pathway_id != pathway_id:
-            split_edges.append(edge)
-            continue
-        node_ids = (
-            edge.start_node_id,
-            *(junction.node_id for junction in junctions),
-            edge.end_node_id,
-        )
-        split_edges.extend(
-            RouteEdge(
-                edge_id=uuid5(
-                    edge.physical_wire_id,
-                    f"topology:pathway-segment:{pathway_id}:{index}:{start_node_id}:{end_node_id}",
-                ),
-                kind=RouteEdgeKind.PATHWAY,
-                physical_wire_id=edge.physical_wire_id,
-                start_node_id=start_node_id,
-                end_node_id=end_node_id,
-                pathway_id=pathway_id,
-            )
-            for index, (start_node_id, end_node_id) in enumerate(zip(node_ids, node_ids[1:]))
-        )
-    return tuple(split_edges)
 
 
 def _next_wire_number(definition: HarnessDefinition) -> int:

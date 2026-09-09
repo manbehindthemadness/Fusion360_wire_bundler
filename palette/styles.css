@@ -10,194 +10,6 @@
   --danger: #b44242;
   --success: #287d28;
 }
-
-.topology-editor {
-  display: grid;
-  gap: 12px;
-}
-
-.topology-create-row,
-.topology-attach-row,
-.topology-extension-row,
-.topology-junction-settings {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.topology-create-row > label {
-  display: grid;
-  gap: 4px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.unit-input {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-.unit-input input {
-  padding-right: 34px;
-}
-
-.unit-input-suffix {
-  position: absolute;
-  right: 9px;
-  color: var(--muted);
-  pointer-events: none;
-}
-
-.topology-create-row select,
-.topology-create-row input,
-.topology-attach-row select,
-.topology-extension-row select,
-.topology-junction-settings input {
-  min-width: 120px;
-  flex: 1 1 120px;
-}
-
-.topology-junction-card {
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-}
-
-.topology-junction-card > summary,
-.topology-extension-card > summary {
-  cursor: pointer;
-}
-
-.topology-junction-card > summary::marker,
-.topology-extension-card > summary::marker {
-  color: var(--accent);
-}
-
-.topology-junction-heading,
-.topology-attachment {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.topology-junction-settings,
-.topology-attachment {
-  margin-top: 10px;
-}
-
-.topology-attachment {
-  padding: 8px;
-  border-left: 3px solid var(--accent);
-  background: var(--surface-subtle);
-}
-
-.topology-attachment label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.topology-network-graphic {
-  overflow: auto;
-  padding: 8px;
-}
-
-.topology-network-svg {
-  display: block;
-  min-width: 100%;
-}
-
-.topology-edge {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 7;
-  stroke-linecap: round;
-}
-
-.topology-edge.extension,
-.topology-edge.junction_transition {
-  stroke-width: 4;
-  stroke-dasharray: 8 5;
-}
-
-.topology-node rect,
-.topology-node polygon {
-  fill: var(--surface);
-  stroke: var(--border);
-  stroke-width: 2;
-}
-
-.topology-node.junction polygon {
-  fill: var(--accent);
-}
-
-.topology-node-label {
-  fill: var(--text);
-  font-size: 11px;
-  text-anchor: middle;
-  pointer-events: none;
-}
-.block-diagram-workspace {
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  background: #dfe5ea;
-}
-.block-diagram-toolbar {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 5px;
-  padding: 5px 7px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-}
-.block-diagram-toolbar button {
-  min-width: 30px;
-  padding: 3px 7px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface);
-  color: var(--text);
-  cursor: pointer;
-}
-.block-diagram-zoom {
-  min-width: 46px;
-  color: var(--muted);
-  text-align: center;
-}
-.block-diagram-viewport {
-  position: relative;
-  min-height: 190px;
-  overflow: hidden;
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
-}
-.block-diagram-viewport.panning { cursor: grabbing; }
-.block-diagram-stage {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: max-content;
-  height: max-content;
-  transform-origin: 0 0;
-  will-change: transform;
-}
-.wire-relationship-graphic .block-diagram-workspace {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-.relationship-map-viewport .block-diagram-viewport {
-  height: 390px;
-}
 * { box-sizing: border-box; }
 body {
   margin: 0;
@@ -395,6 +207,13 @@ main { padding: 14px; }
 }
 .editor-heading { display: grid; gap: 5px; margin-bottom: 14px; }
 .editor-heading .meta { color: var(--muted); }
+.damaged-harness-actions { margin-top: 12px; }
+.button.danger {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: #fff;
+}
+.button.danger:hover { background: #963535; }
 .overview {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
@@ -596,11 +415,10 @@ button.route-node:hover { border-color: var(--accent); color: var(--accent); }
 .relationship-map-legend .pathway { border: 1px solid #b07b2e; transform: rotate(45deg); background: #fff7e8; }
 .relationship-map-legend .wire { width: 18px; height: 5px; border-radius: 3px; background: var(--accent); }
 .relationship-map-viewport {
-  height: 430px;
   max-height: 430px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  overflow: hidden;
+  overflow: auto;
   background: #dfe5ea;
 }
 .relationship-pathway-stack {
@@ -614,37 +432,6 @@ button.route-node:hover { border-color: var(--accent); color: var(--accent); }
   grid-template-columns: minmax(210px, 1fr) 54px 170px 54px minmax(210px, 1fr);
   align-items: stretch;
   gap: 4px;
-}
-.relationship-junction-chain {
-  position: absolute;
-  z-index: 1;
-  display: grid;
-  place-items: center;
-}
-.relationship-junction-node {
-  min-width: 130px;
-  border: 1px solid #6887a0;
-  border-radius: 7px;
-  padding: 7px 10px;
-  background: #eef5fa;
-  color: var(--text);
-  cursor: pointer;
-}
-.relationship-junction-overlay {
-  position: absolute;
-  z-index: 0;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-  pointer-events: none;
-}
-.relationship-junction-edge {
-  fill: none;
-  stroke: #7b9ab2;
-  stroke-width: 7px;
-  vector-effect: non-scaling-stroke;
-  stroke-linecap: round;
 }
 .relationship-end-list {
   align-self: center;

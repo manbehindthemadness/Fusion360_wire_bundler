@@ -88,30 +88,6 @@ function harnessKey(harness) {
   return harness.harnessId || `component:${harness.componentName}`;
 }
 
-function activeLengthUnit() {
-  const unit = currentState.units?.length;
-  return typeof unit === "string" && unit ? unit : "mm";
-}
-
-function millimetersPerDisplayUnit() {
-  const scale = Number(currentState.units?.millimetersPerUnit);
-  return Number.isFinite(scale) && scale > 0 ? scale : 1;
-}
-
-function displayLength(mm) {
-  if (mm == null) return null;
-  return Number(mm) / millimetersPerDisplayUnit();
-}
-
-function canonicalLength(value) {
-  if (value == null || value === "") return null;
-  return Number(value) * millimetersPerDisplayUnit();
-}
-
-function lengthFieldLabel(label) {
-  return `${label} (${activeLengthUnit()})`;
-}
-
 function relationshipCollapseStorageKey(harness) {
   return `wireBundler.relationshipCollapseLimit:${harnessKey(harness)}`;
 }

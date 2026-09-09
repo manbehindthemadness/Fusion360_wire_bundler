@@ -19,39 +19,24 @@ import adsk.core
 import adsk.fusion
 
 from .application import (
+    HarnessLoadResult,
     RelationshipMap,
-    add_external_end,
-    add_junction,
-    add_junction_pigtail_end,
     add_pathway,
     add_wire_batch,
     append_pathway_gates,
-    attach_pathway_to_junction,
-    branch_all_junction_members,
     build_relationship_map,
-    cleanup_orphaned_topology,
     create_empty_harness,
-    detach_pathway_from_junction,
-    disconnect_junction_member,
-    disconnect_pathway_extension,
-    extend_pathway_member,
+    delete_damaged_harness,
     load_harnesses,
     load_wire_material_catalog,
-    move_junction,
     move_pathway_gate,
     move_wire_endpoint,
-    remove_external_end,
-    remove_junction,
     remove_pathway_gate,
     remove_wire,
-    rename_junction,
     rename_pathway,
-    rename_pathway_extension,
     rename_route_end,
     rename_wire,
     set_harness_material_defaults,
-    set_junction_diameter_factor,
-    set_junction_member_disposition,
     set_wire_diameter,
     set_wire_material_overrides,
     suggest_harness_name,
@@ -59,10 +44,7 @@ from .application import (
 )
 from .application.edit_harness import edit_end_members, set_interpolation
 from .domain import (
-    Connection,
     HarnessDefinition,
-    JunctionDisposition,
-    PathwayEnd,
     RoutingMode,
     StripePattern,
     WireAppearanceReference,
@@ -71,15 +53,12 @@ from .domain import (
     WireMaterialSettings,
     WireStripe,
     loads,
-    pathway_exit_states,
 )
 from .domain.codec import parse_interpolation
 from .fusion import (
     FusionHarnessGateway,
-    clear_junction_slices,
     clear_route_previews,
     highlight_route_preview,
-    show_junction_slices,
     show_route_previews,
 )
 from .fusion.route_preview import (
@@ -101,7 +80,6 @@ CREATE_COMMAND_ID = "kev0_wire_bundler_create_harness"
 ADD_PATHWAY_COMMAND_ID = "kev0_wire_bundler_add_pathway"
 APPEND_GATES_COMMAND_ID = "kev0_wire_bundler_append_pathway_gates"
 EDIT_END_COMMAND_ID = "kev0_wire_bundler_edit_end_members"
-PICK_JUNCTION_PATHWAY_COMMAND_ID = "kev0_wire_bundler_pick_junction_pathway"
 ADD_WIRES_COMMAND_ID = "kev0_wire_bundler_add_wires"
 COMMAND_NAME = "Harness Builder"
 COMMAND_DESCRIPTION = "Create and edit wire, ribbon, and harness assemblies."
@@ -151,33 +129,19 @@ _handlers: list[object] = []
 _pending_pathway_harness_id: Optional[UUID] = None
 _pending_append_gate_ids: Optional[tuple[UUID, UUID]] = None
 _pending_end_edit: Optional[dict[str, object]] = None
-_pending_junction_pathway_pick: Optional[dict[str, object]] = None
 _pending_wire_harness_id: Optional[UUID] = None
 _pending_wire_pathway_id: Optional[UUID] = None
 _pending_palette_edit: Optional[tuple[str, str, object]] = None
 _last_command_error = ""
 _last_diagram_qa_observation: Optional[dict[str, object]] = None
+_damaged_harness_results: dict[str, HarnessLoadResult] = {}
 _history_handler: Optional[_HistoryChangedHandler] = None
 _document_saving_handler: Optional[_DocumentSavingHandler] = None
 _document_saved_handler: Optional[_DocumentSavedHandler] = None
 _graphics_cache_restore_value: Optional[bool] = None
 _graphics_cache_save_document: Optional[object] = None
 _PALETTE_EDIT_NAMES = {
-    "add_junction": "Add Pathway Junction",
-    "move_junction": "Move Pathway Junction",
-    "set_junction_diameter_factor": "Change Junction Diameter Factor",
-    "remove_junction": "Delete Pathway Junction",
-    "rename_junction": "Rename Pathway Junction",
-    "attach_junction_pathway": "Attach Pathway to Junction",
-    "detach_junction_pathway": "Detach Pathway from Junction",
-    "set_junction_disposition": "Change Junction Membership",
-    "branch_all_junction_members": "Branch All Junction Members",
-    "disconnect_junction_member": "Disconnect Junction Member",
-    "extend_pathway_member": "Extend Wire Through Pathway",
-    "disconnect_pathway_extension": "Disconnect Pathway Extension",
-    "rename_pathway_extension": "Rename Pathway Extension",
-    "remove_external_end": "Remove Wire End",
-    "cleanup_orphaned_topology": "Clean Orphaned Topology",
+    "delete_damaged_harness": "Delete Damaged Harness",
     "move_pathway_gate": "Reorder Pathway Gates",
     "remove_pathway_gate": "Remove Pathway Gate",
     "move_wire_endpoint": "Reorder Wire Ends",
@@ -233,22 +197,15 @@ class _PaletteEditExecuteHandler(adsk.core.CommandEventHandler):
             if action == "clear_solids":
                 _clear_solids(application, data)
                 return
+            if action == "delete_damaged_harness":
+                notice = _delete_damaged_harness(application, data)
+                application.activeViewport.refresh()
+                _send_palette_state(application, notice)
+                return
             notice = _apply_palette_edit(application, action, data)
             harness_id = _read_payload_uuid(_read_palette_payload(data), "harnessId", "harness")
             if action in {"set_harness_material_defaults", "set_wire_material_overrides"}:
                 notice = f"{notice} {_apply_generated_materials(application, harness_id)}".strip()
-            if action in {
-                "add_junction",
-                "move_junction",
-                "remove_junction",
-                "set_junction_diameter_factor",
-                "attach_junction_pathway",
-                "detach_junction_pathway",
-                "set_junction_disposition",
-                "branch_all_junction_members",
-                "disconnect_junction_member",
-            }:
-                _refresh_junction_slice_graphics(application, harness_id)
             warning = _refresh_active_preview(
                 application,
                 harness_id,
@@ -708,10 +665,7 @@ class _EditEndExecuteHandler(adsk.core.CommandEventHandler):
         try:
             application = adsk.core.Application.get()
             tokens = _read_pathway_gate_tokens(args.command.commandInputs)
-            if self._payload.get("editAction") == "topology_add_end":
-                _apply_topology_end_selection(application, self._payload, tokens)
-            else:
-                _apply_end_member_edit(application, self._payload, tokens)
+            _apply_end_member_edit(application, self._payload, tokens)
             warning = _refresh_active_preview(
                 application, _read_payload_uuid(self._payload, "harnessId", "harness")
             )
@@ -742,8 +696,7 @@ class _EditEndCreatedHandler(adsk.core.CommandCreatedEventHandler):
             "Connection Profiles",
             "Select profiles for this end sequence",
         )
-        maximum = 1 if payload.get("editAction") in {"replace", "topology_add_end"} else 0
-        if not selection.setSelectionLimits(1, maximum):
+        if not selection.setSelectionLimits(1, 1 if payload.get("editAction") == "replace" else 0):
             raise RuntimeError("Fusion could not set end-member selection limits.")
         execute_handler = _EditEndExecuteHandler(payload)
         validate_handler = _AppendGatesValidateInputsHandler()
@@ -751,94 +704,6 @@ class _EditEndCreatedHandler(adsk.core.CommandCreatedEventHandler):
             raise RuntimeError("Fusion could not register the end edit handler.")
         if not args.command.validateInputs.add(validate_handler):
             raise RuntimeError("Fusion could not register end edit validation.")
-        _handlers.extend((execute_handler, validate_handler))
-
-
-class _PickJunctionPathwayExecuteHandler(adsk.core.CommandEventHandler):
-    """
-    Create a junction on the pathway identified by a mouse-selected gate.
-    """
-
-    def __init__(self, payload: dict[str, object]) -> None:
-        """
-        Retain the pending harness and location while Fusion owns selection.
-        """
-        super().__init__()
-        self._payload = payload
-
-    def notify(self, args: adsk.core.CommandEventArgs) -> None:
-        """
-        Resolve the selected profile to exactly one pathway and add its junction.
-        """
-        try:
-            application = adsk.core.Application.get()
-            token = _read_pathway_gate_tokens(args.command.commandInputs)[0]
-            harness_id = _read_payload_uuid(self._payload, "harnessId", "harness")
-            gateway = _create_harness_gateway(application)
-            definition = loads(gateway.read_harness_definition(harness_id))
-            control_ids = {
-                control.control_id
-                for control in definition.controls
-                if control.entity_token == token
-            }
-            matches = [
-                (pathway, control_id)
-                for pathway in definition.pathways
-                for control_id in pathway.ordered_control_ids
-                if control_id in control_ids
-            ]
-            if not matches:
-                raise ValueError("The selected profile is not a gate in this harness.")
-            pathway_ids = {pathway.pathway_id for pathway, _control_id in matches}
-            if len(pathway_ids) != 1:
-                raise ValueError("The selected gate belongs to more than one pathway.")
-            pathway, control_id = matches[0]
-            junction = add_junction(
-                harness_id,
-                pathway.pathway_id,
-                _read_payload_number(self._payload, "distanceMm", "junction distance"),
-                gateway,
-                slice_control_id=control_id,
-            )
-            show_junction_slices(
-                _require_active_design(application),
-                loads(gateway.read_harness_definition(harness_id)),
-            )
-            application.activeViewport.refresh()
-            _send_palette_state(application, f"Added {junction.name} on {pathway.name}.")
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            _report_failure("pick a junction pathway")
-
-
-class _PickJunctionPathwayCreatedHandler(adsk.core.CommandCreatedEventHandler):
-    """
-    Open a single-profile mouse picker for selecting a pathway gate.
-    """
-
-    # noinspection PyMethodMayBeStatic
-    def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
-        """
-        Configure the profile picker and retain its execution handlers.
-        """
-        global _pending_junction_pathway_pick
-        payload = _pending_junction_pathway_pick
-        _pending_junction_pathway_pick = None
-        if payload is None:
-            raise RuntimeError("No junction pathway selection was requested.")
-        selection = _add_profile_selection_input(
-            args.command.commandInputs,
-            PATHWAY_GATES_INPUT_ID,
-            "Pathway Gate",
-            "Select a visible gate profile on the junction's pathway",
-        )
-        if not selection.setSelectionLimits(1, 1):
-            raise RuntimeError("Fusion could not configure junction pathway selection.")
-        execute_handler = _PickJunctionPathwayExecuteHandler(payload)
-        validate_handler = _AppendGatesValidateInputsHandler()
-        if not args.command.execute.add(execute_handler):
-            raise RuntimeError("Fusion could not register junction pathway selection.")
-        if not args.command.validateInputs.add(validate_handler):
-            raise RuntimeError("Fusion could not validate junction pathway selection.")
         _handlers.extend((execute_handler, validate_handler))
 
 
@@ -1207,10 +1072,6 @@ class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
                 _open_end_member_edit(application, html_args.data)
                 html_args.returnData = json.dumps({"ok": True})
                 return
-            if html_args.action == "pick_junction_pathway":
-                _open_junction_pathway_picker(application, html_args.data)
-                html_args.returnData = json.dumps({"ok": True})
-                return
             if html_args.action == "append_pathway_gates":
                 _open_append_gates_command(application, html_args.data)
                 html_args.returnData = json.dumps({"ok": True})
@@ -1275,7 +1136,7 @@ class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
                     raise ValueError("Diagram QA endpoint gap must be finite and nonnegative.")
                 if contract_version != "1":
                     raise ValueError("Diagram QA contract version is unsupported.")
-                if layout != "flexible-layered-graph":
+                if layout != "measured-pathway-stack":
                     raise ValueError("Diagram QA layout is unsupported.")
                 _last_diagram_qa_observation = {
                     "status": status,
@@ -1413,19 +1274,6 @@ def start(_context: object) -> None:
             raise RuntimeError("Fusion could not register the end-member command.")
         _handlers.append(end_handler)
 
-        junction_picker_definition = user_interface.commandDefinitions.addButtonDefinition(
-            PICK_JUNCTION_PATHWAY_COMMAND_ID,
-            "Pick Junction Pathway",
-            "Select a visible gate profile to identify a junction pathway.",
-            ADD_PATHWAY_RESOURCE_FOLDER,
-        )
-        if junction_picker_definition is None:
-            raise RuntimeError("Fusion could not create junction pathway selection.")
-        junction_picker_handler = _PickJunctionPathwayCreatedHandler()
-        if not junction_picker_definition.commandCreated.add(junction_picker_handler):
-            raise RuntimeError("Fusion could not register junction pathway selection.")
-        _handlers.append(junction_picker_handler)
-
         wire_command_definition = user_interface.commandDefinitions.addButtonDefinition(
             ADD_WIRES_COMMAND_ID,
             ADD_WIRES_COMMAND_NAME,
@@ -1466,14 +1314,12 @@ def stop(_context: object) -> None:
     """
     global _pending_append_gate_ids, _pending_pathway_harness_id, _pending_end_edit
     global _pending_wire_harness_id, _pending_wire_pathway_id, _pending_palette_edit
-    global _pending_junction_pathway_pick
 
     try:
         application = adsk.core.Application.get()
         design = adsk.fusion.Design.cast(application.activeProduct)
         if design is not None:
             clear_route_previews(design)
-            clear_junction_slices(design)
         _remove_document_handlers(application)
         _remove_user_interface(application.userInterface)
         _handlers.clear()
@@ -1481,10 +1327,10 @@ def stop(_context: object) -> None:
         _pending_palette_edit = None
         _pending_append_gate_ids = None
         _pending_end_edit = None
-        _pending_junction_pathway_pick = None
         _pending_pathway_harness_id = None
         _pending_wire_harness_id = None
         _pending_wire_pathway_id = None
+        _damaged_harness_results.clear()
     except Exception:
         _report_failure("stop")
         raise
@@ -1517,7 +1363,6 @@ def _remove_user_interface(user_interface: adsk.core.UserInterface) -> None:
         ADD_PATHWAY_COMMAND_ID,
         APPEND_GATES_COMMAND_ID,
         EDIT_END_COMMAND_ID,
-        PICK_JUNCTION_PATHWAY_COMMAND_ID,
         ADD_WIRES_COMMAND_ID,
     ):
         command_definition = user_interface.commandDefinitions.itemById(command_id)
@@ -1565,29 +1410,13 @@ def _show_palette(application: adsk.core.Application) -> None:
             raise RuntimeError("Fusion did not register the palette navigation handler.")
         _handlers.extend((incoming_handler, navigation_handler))
         _log_to_fusion(f"Harness Builder requested palette file: {palette.htmlFileURL}")
-    palette.dockingOption = adsk.core.PaletteDockingOptions.PaletteDockOptionsToVerticalOnly
-    palette.dockingState = adsk.core.PaletteDockingStates.PaletteDockStateRight
-    palette.isVisible = True
     try:
-        design = _require_active_design(application)
-    except (AttributeError, RuntimeError):
-        design = None
-    if design is not None:
-        for result in load_harnesses(_create_harness_gateway(application)):
-            if result.definition is not None:
-                show_junction_slices(design, result.definition)
+        palette.dockingOption = adsk.core.PaletteDockingOptions.PaletteDockOptionsToVerticalOnly
+        palette.dockingState = adsk.core.PaletteDockingStates.PaletteDockStateRight
+    except (AttributeError, RuntimeError) as error:
+        _log_to_fusion(f"Harness Builder could not restore right docking: {error}")
+    palette.isVisible = True
     _send_palette_state(application)
-
-
-def _refresh_junction_slice_graphics(
-    application: adsk.core.Application,
-    harness_id: UUID,
-) -> None:
-    """
-    Synchronize visible gate-backed junction slices after one saved edit.
-    """
-    definition = loads(_create_harness_gateway(application).read_harness_definition(harness_id))
-    show_junction_slices(_require_active_design(application), definition)
 
 
 def _refresh_active_preview(
@@ -1672,9 +1501,11 @@ def _serialize_palette_state(
     for result in results:
         definition = result.definition
         if definition is None:
+            deletion_token = _register_damaged_harness(result)
             harnesses.append(
                 {
                     "componentName": result.component_name,
+                    "deletionToken": deletion_token,
                     "error": result.error,
                     "status": "damaged",
                 }
@@ -1770,7 +1601,6 @@ def _serialize_palette_state(
                     for wire in definition.wires
                 ],
                 "relationshipMap": _relationship_map_payload(relationship_map),
-                "topology": _topology_payload(definition),
                 "status": "draft" if result.validation_messages else "valid",
                 "validationMessages": result.validation_messages,
             }
@@ -1785,41 +1615,56 @@ def _serialize_palette_state(
         "harnesses": harnesses,
         "notice": notice or _last_command_error,
         "ok": True,
-        "units": _document_units_payload(application),
     }
     return json.dumps(payload, sort_keys=True)
 
 
-def _document_units_payload(application: adsk.core.Application) -> dict[str, object]:
+def _register_damaged_harness(result: HarnessLoadResult) -> Optional[str]:
     """
-    Describe the active document length unit and its canonical millimeter scale.
+    Retain a refresh-stable token for one damaged component during this add-in session.
+
+    Args:
+        result: Current failed load result from Fusion discovery.
+
+    Returns:
+        Existing or newly registered token, or ``None`` without a component handle.
     """
-    active_product = getattr(application, "activeProduct", None)
-    design_type = getattr(adsk.fusion, "Design", None)
-    design_cast = getattr(design_type, "cast", None)
-    if not callable(design_cast):
-        return {"length": "mm", "millimetersPerUnit": 1.0}
-    # noinspection PyCallingNonCallable
-    design = design_cast(active_product)
-    units_manager = getattr(design, "unitsManager", None)
-    unit_name = getattr(units_manager, "defaultLengthUnits", None)
-    if not isinstance(unit_name, str) or not unit_name:
-        return {"length": "mm", "millimetersPerUnit": 1.0}
-    convert_units = getattr(units_manager, "convert", None)
-    if not callable(convert_units):
-        return {"length": "mm", "millimetersPerUnit": 1.0}
-    # noinspection PyCallingNonCallable
-    millimeters_per_unit = convert_units(1.0, unit_name, "mm")
-    if (
-        isinstance(millimeters_per_unit, bool)
-        or not isinstance(millimeters_per_unit, (int, float))
-        or millimeters_per_unit <= 0
-    ):
-        return {"length": "mm", "millimetersPerUnit": 1.0}
-    return {
-        "length": unit_name,
-        "millimetersPerUnit": float(millimeters_per_unit),
-    }
+    if result.component_handle is None:
+        return None
+    for deletion_token, registered in _damaged_harness_results.items():
+        if registered.component_handle is result.component_handle:
+            _damaged_harness_results[deletion_token] = result
+            return deletion_token
+    deletion_token = str(uuid4())
+    _damaged_harness_results[deletion_token] = result
+    return deletion_token
+
+
+def _delete_damaged_harness(
+    application: adsk.core.Application,
+    serialized_data: str,
+) -> str:
+    """
+    Delete one exact unreadable harness component selected from the current palette state.
+
+    Args:
+        application: Active Fusion application.
+        serialized_data: JSON payload containing the short-lived deletion token.
+
+    Returns:
+        Concise user-facing success notice.
+    """
+    payload = _read_palette_payload(serialized_data)
+    deletion_token = payload.get("deletionToken")
+    if not isinstance(deletion_token, str) or not deletion_token:
+        raise ValueError("Damaged harness deletion requires a current deletion token.")
+    result = _damaged_harness_results.get(deletion_token)
+    if result is None:
+        raise ValueError("The damaged harness selection is stale; refresh and try again.")
+    gateway = _create_harness_gateway(application)
+    delete_damaged_harness(result, gateway)
+    del _damaged_harness_results[deletion_token]
+    return f"Deleted damaged harness {result.component_name}."
 
 
 def _relationship_map_payload(relationship_map: RelationshipMap) -> dict[str, object]:
@@ -1883,128 +1728,6 @@ def _relationship_map_payload(relationship_map: RelationshipMap) -> dict[str, ob
                 "memberId": issue.member_id,
             }
             for issue in relationship_map.audit_issues
-        ],
-        "topologyNodes": [
-            {
-                "nodeId": node.node_id,
-                "kind": node.kind.value,
-                "memberId": str(node.member_id),
-                "label": node.label,
-                "missing": node.missing,
-            }
-            for node in relationship_map.topology_nodes
-        ],
-        "topologyEdges": [
-            {
-                "edgeId": edge.edge_id,
-                "physicalWireId": str(edge.wire_id),
-                "sourceNodeId": edge.source_node_id,
-                "targetNodeId": edge.target_node_id,
-                "sequence": edge.sequence,
-            }
-            for edge in relationship_map.topology_edges
-        ],
-        "topologyRoutes": [
-            {
-                "routeId": route.route_id,
-                "physicalWireId": str(route.wire_id),
-                "networkId": None if route.network_id is None else str(route.network_id),
-                "primaryWireId": (
-                    None if route.primary_wire_id is None else str(route.primary_wire_id)
-                ),
-                "wireNumber": route.wire_number,
-                "label": route.label,
-                "nodeIds": list(route.node_ids),
-                "edgeIds": list(route.edge_ids),
-            }
-            for route in relationship_map.topology_routes
-        ],
-        "spanOccupancy": [
-            {
-                "pathwayId": str(item.pathway_id),
-                "firstNodeId": str(item.first_node_id),
-                "secondNodeId": str(item.second_node_id),
-                "physicalWireIds": [str(wire_id) for wire_id in item.physical_wire_ids],
-            }
-            for item in relationship_map.span_occupancy
-        ],
-    }
-
-
-def _topology_payload(definition: HarnessDefinition) -> Optional[dict[str, object]]:
-    """
-    Expose explicit editable topology metadata to the local palette.
-    """
-    topology = definition.topology
-    if topology is None:
-        return None
-    return {
-        "nodes": [
-            {
-                "nodeId": str(node.node_id),
-                "kind": node.kind.value,
-                "pathwayId": None if node.pathway_id is None else str(node.pathway_id),
-                "pathwayEnd": None if node.pathway_end is None else node.pathway_end.value,
-                "connectionId": (None if node.connection_id is None else str(node.connection_id)),
-                "physicalWireId": (
-                    None if node.physical_wire_id is None else str(node.physical_wire_id)
-                ),
-                "distanceMm": node.distance_mm,
-                "sliceControlId": (
-                    None if node.slice_control_id is None else str(node.slice_control_id)
-                ),
-                "diameterFactor": node.junction_diameter_factor_override,
-                "name": node.name,
-            }
-            for node in topology.nodes
-        ],
-        "physicalWires": [
-            {
-                "physicalWireId": str(wire.physical_wire_id),
-                "networkId": str(wire.network_id),
-                "profileId": str(wire.profile_id),
-            }
-            for wire in topology.physical_wires
-        ],
-        "edges": [
-            {
-                "edgeId": str(edge.edge_id),
-                "kind": edge.kind.value,
-                "physicalWireId": str(edge.physical_wire_id),
-                "startNodeId": str(edge.start_node_id),
-                "endNodeId": str(edge.end_node_id),
-                "pathwayId": None if edge.pathway_id is None else str(edge.pathway_id),
-                "name": edge.name,
-            }
-            for edge in topology.edges
-        ],
-        "junctionAttachments": [
-            {
-                "junctionId": str(item.junction_id),
-                "pathwayId": str(item.pathway_id),
-                "pathwayEnd": item.pathway_end.value,
-            }
-            for item in topology.junction_attachments
-        ],
-        "junctionDispositions": [
-            {
-                "junctionId": str(item.junction_id),
-                "pathwayId": str(item.attachment_pathway_id),
-                "pathwayEnd": item.attachment_end.value,
-                "incomingWireId": str(item.incoming_wire_id),
-                "disposition": item.disposition.value,
-                "branchWireId": (None if item.branch_wire_id is None else str(item.branch_wire_id)),
-            }
-            for item in topology.junction_dispositions
-        ],
-        "exitStates": [
-            {
-                "pathwayId": str(item.pathway_id),
-                "pathwayEnd": item.pathway_end.value,
-                "physicalWireId": str(item.physical_wire_id),
-                "state": item.state.value,
-            }
-            for item in pathway_exit_states(topology)
         ],
     }
 
@@ -2196,7 +1919,7 @@ def _open_end_member_edit(application: adsk.core.Application, serialized_data: s
     """
     global _pending_end_edit
     payload = _read_palette_payload(serialized_data)
-    if payload.get("editAction") not in {"add", "replace", "topology_add_end"}:
+    if payload.get("editAction") not in {"add", "replace"}:
         raise ValueError("Unsupported profile selection action.")
     command = application.userInterface.commandDefinitions.itemById(EDIT_END_COMMAND_ID)
     if command is None:
@@ -2208,65 +1931,6 @@ def _open_end_member_edit(application: adsk.core.Application, serialized_data: s
     except (AttributeError, RuntimeError, TypeError, ValueError):
         _pending_end_edit = None
         raise
-
-
-def _open_junction_pathway_picker(
-    application: adsk.core.Application,
-    serialized_data: str,
-) -> None:
-    """
-    Open native profile selection used to identify a junction's pathway.
-    """
-    global _pending_junction_pathway_pick
-    payload = _read_palette_payload(serialized_data)
-    command = application.userInterface.commandDefinitions.itemById(
-        PICK_JUNCTION_PATHWAY_COMMAND_ID
-    )
-    if command is None:
-        raise RuntimeError("Junction pathway selection is unavailable.")
-    _pending_junction_pathway_pick = payload
-    try:
-        if not command.execute():
-            raise RuntimeError("Fusion could not open junction pathway selection.")
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        _pending_junction_pathway_pick = None
-        raise
-
-
-def _apply_topology_end_selection(
-    application: adsk.core.Application,
-    payload: dict[str, object],
-    tokens: tuple[str, ...],
-) -> None:
-    """
-    Turn one selected Fusion profile into a stable external topology end.
-    """
-    if len(tokens) != 1:
-        raise ValueError("A wire end requires exactly one selected profile.")
-    name = payload.get("name")
-    if not isinstance(name, str) or not name.strip():
-        raise ValueError("A wire end requires a name.")
-    connection = Connection(uuid4(), name.strip(), tokens[0])
-    gateway = _create_harness_gateway(application)
-    harness_id = _read_payload_uuid(payload, "harnessId", "harness")
-    physical_wire_id = _read_payload_uuid(payload, "physicalWireId", "physical wire")
-    if "junctionId" in payload:
-        add_junction_pigtail_end(
-            harness_id,
-            _read_payload_uuid(payload, "junctionId", "junction"),
-            physical_wire_id,
-            connection,
-            gateway,
-        )
-    else:
-        add_external_end(
-            harness_id,
-            physical_wire_id,
-            _read_payload_uuid(payload, "pathwayId", "pathway"),
-            _read_pathway_end(payload),
-            connection,
-            gateway,
-        )
 
 
 def _apply_end_member_edit(
@@ -2392,152 +2056,6 @@ def _apply_palette_edit(
     payload = _read_palette_payload(serialized_data)
     harness_id = _read_payload_uuid(payload, "harnessId", "harness")
     gateway = _create_harness_gateway(application)
-    if action == "add_junction":
-        junction = add_junction(
-            harness_id,
-            _read_payload_uuid(payload, "pathwayId", "parent pathway"),
-            _read_payload_number(payload, "distanceMm", "junction distance"),
-            gateway,
-            slice_control_id=_read_optional_payload_uuid(
-                payload,
-                "sliceControlId",
-                "slice control",
-            ),
-            junction_diameter_factor_override=_read_optional_payload_number(
-                payload,
-                "diameterFactor",
-                "junction diameter factor",
-            ),
-        )
-        return f"Added junction {str(junction.node_id)[:8]}."
-    if action == "move_junction":
-        move_junction(
-            harness_id,
-            _read_payload_uuid(payload, "junctionId", "junction"),
-            _read_payload_number(payload, "distanceMm", "junction distance"),
-            gateway,
-        )
-        return "Moved junction."
-    if action == "rename_junction":
-        name = payload.get("name")
-        if not isinstance(name, str):
-            raise ValueError("Junction rename request requires a text name.")
-        renamed = rename_junction(
-            harness_id,
-            _read_payload_uuid(payload, "junctionId", "junction"),
-            name,
-            gateway,
-        )
-        return f"Renamed junction to {renamed.name}."
-    if action == "set_junction_diameter_factor":
-        set_junction_diameter_factor(
-            harness_id,
-            _read_payload_uuid(payload, "junctionId", "junction"),
-            _read_optional_payload_number(payload, "diameterFactor", "junction diameter factor"),
-            gateway,
-        )
-        return "Updated junction diameter factor."
-    if action == "remove_junction":
-        remove_junction(
-            harness_id,
-            _read_payload_uuid(payload, "junctionId", "junction"),
-            gateway,
-        )
-        return "Removed junction."
-    if action == "attach_junction_pathway":
-        attach_pathway_to_junction(
-            harness_id,
-            _read_payload_uuid(payload, "junctionId", "junction"),
-            _read_payload_uuid(payload, "pathwayId", "pathway"),
-            _read_pathway_end(payload),
-            gateway,
-        )
-        return "Attached pathway to junction."
-    if action == "detach_junction_pathway":
-        detach_pathway_from_junction(
-            harness_id,
-            _read_payload_uuid(payload, "junctionId", "junction"),
-            _read_payload_uuid(payload, "pathwayId", "pathway"),
-            _read_pathway_end(payload),
-            gateway,
-        )
-        return "Detached pathway from junction."
-    if action == "set_junction_disposition":
-        disposition = payload.get("disposition")
-        if not isinstance(disposition, str):
-            raise ValueError("Junction membership requires a disposition.")
-        try:
-            parsed_disposition = JunctionDisposition(disposition)
-        except ValueError as error:
-            raise ValueError("Junction disposition is unsupported.") from error
-        set_junction_member_disposition(
-            harness_id,
-            _read_payload_uuid(payload, "junctionId", "junction"),
-            _read_payload_uuid(payload, "pathwayId", "pathway"),
-            _read_pathway_end(payload),
-            _read_payload_uuid(payload, "physicalWireId", "physical wire"),
-            parsed_disposition,
-            gateway,
-        )
-        return "Updated junction membership."
-    if action == "branch_all_junction_members":
-        created = branch_all_junction_members(
-            harness_id,
-            _read_payload_uuid(payload, "junctionId", "junction"),
-            _read_payload_uuid(payload, "pathwayId", "pathway"),
-            _read_pathway_end(payload),
-            gateway,
-        )
-        return f"Branched {len(created)} junction members."
-    if action == "disconnect_junction_member":
-        disconnect_junction_member(
-            harness_id,
-            _read_payload_uuid(payload, "junctionId", "junction"),
-            _read_payload_uuid(payload, "pathwayId", "pathway"),
-            _read_pathway_end(payload),
-            _read_payload_uuid(payload, "physicalWireId", "physical wire"),
-            gateway,
-        )
-        return "Disconnected junction member."
-    if action == "cleanup_orphaned_topology":
-        removed_ids = cleanup_orphaned_topology(harness_id, gateway)
-        return f"Removed {len(removed_ids)} orphaned physical legs."
-    if action == "extend_pathway_member":
-        extend_pathway_member(
-            harness_id,
-            _read_payload_uuid(payload, "physicalWireId", "physical wire"),
-            _read_payload_uuid(payload, "sourcePathwayId", "source pathway"),
-            _read_pathway_end(payload, "sourceEnd"),
-            _read_payload_uuid(payload, "targetPathwayId", "target pathway"),
-            _read_pathway_end(payload, "targetEnd"),
-            gateway,
-        )
-        return "Extended wire through pathway."
-    if action == "disconnect_pathway_extension":
-        disconnect_pathway_extension(
-            harness_id,
-            _read_payload_uuid(payload, "edgeId", "extension edge"),
-            gateway,
-        )
-        return "Disconnected pathway extension."
-    if action == "rename_pathway_extension":
-        name = payload.get("name")
-        if not isinstance(name, str):
-            raise ValueError("Extension rename request requires a text name.")
-        renamed = rename_pathway_extension(
-            harness_id,
-            _read_payload_uuid(payload, "edgeId", "extension"),
-            name,
-            gateway,
-        )
-        return f"Renamed extension to {renamed.name}."
-    if action == "remove_external_end":
-        remove_external_end(
-            harness_id,
-            _read_payload_uuid(payload, "nodeId", "external end"),
-            gateway,
-        )
-        return "Removed wire end."
     if action == "remove_end_member":
         _apply_end_member_edit(application, {**payload, "editAction": "remove"})
         return "Removed end member."
@@ -2835,68 +2353,6 @@ def _read_payload_uuid(payload: dict[str, object], key: str, label: str) -> UUID
     if not isinstance(value, str):
         raise ValueError(f"Harness Builder request is missing a {label} identity.")
     return UUID(value)
-
-
-def _read_optional_payload_uuid(
-    payload: dict[str, object],
-    key: str,
-    label: str,
-) -> Optional[UUID]:
-    """
-    Read one nullable stable identity from a palette payload.
-    """
-    value = payload.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError(f"Harness Builder {label} identity must be text or null.")
-    return UUID(value)
-
-
-def _read_payload_number(
-    payload: dict[str, object],
-    key: str,
-    label: str,
-) -> float:
-    """
-    Read one required finite numeric palette value.
-    """
-    value = payload.get(key)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"Harness Builder request requires a numeric {label}.")
-    return float(value)
-
-
-def _read_optional_payload_number(
-    payload: dict[str, object],
-    key: str,
-    label: str,
-) -> Optional[float]:
-    """
-    Read one nullable numeric palette value.
-    """
-    value = payload.get(key)
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"Harness Builder {label} must be numeric or null.")
-    return float(value)
-
-
-def _read_pathway_end(
-    payload: dict[str, object],
-    key: str = "pathwayEnd",
-) -> PathwayEnd:
-    """
-    Read a stable A/B pathway endpoint from a topology request.
-    """
-    value = payload.get(key)
-    if not isinstance(value, str):
-        raise ValueError("Harness Builder request requires a pathway end.")
-    try:
-        return PathwayEnd(value.lower())
-    except ValueError as error:
-        raise ValueError("Pathway end must be A or B.") from error
 
 
 def _read_payload_offset(payload: dict[str, object]) -> int:

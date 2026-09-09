@@ -159,6 +159,33 @@ class _Occurrences:
         return occurrence
 
 
+class _OccurrenceView:
+    """
+    Provide a read-only collection of existing component occurrences.
+    """
+
+    def __init__(self, occurrences: tuple[_Occurrence, ...]) -> None:
+        """
+        Store occurrences in deterministic order.
+        """
+        self._occurrences = occurrences
+
+    @property
+    def count(self) -> int:
+        """
+        Return the number of matching occurrences.
+        """
+        return len(self._occurrences)
+
+    def item(self, index: int) -> Optional[_Occurrence]:
+        """
+        Return one matching occurrence by index.
+        """
+        if 0 <= index < len(self._occurrences):
+            return self._occurrences[index]
+        return None
+
+
 class _Component:
     """
     Provide the component fields used by the gateway.
@@ -171,6 +198,14 @@ class _Component:
         self.name = ""
         self.attributes = _Attributes(reject_attribute_write)
         self.occurrences = _Occurrences()
+        self.referencing_occurrences: dict[int, tuple[_Occurrence, ...]] = {}
+
+    # noinspection PyPep8Naming
+    def allOccurrencesByComponent(self, component: _Component) -> _OccurrenceView:
+        """
+        Return configured design occurrences for one component.
+        """
+        return _OccurrenceView(self.referencing_occurrences.get(id(component), ()))
 
 
 class _Components:
@@ -324,9 +359,24 @@ def fusion_gateway_type(monkeypatch: pytest.MonkeyPatch) -> Iterator[type]:
                 return value
             return None
 
+    class _FusionComponent:
+        """
+        Provide Fusion's component cast operation.
+        """
+
+        @staticmethod
+        def cast(value: object) -> Optional[_Component]:
+            """
+            Return fake components and reject unrelated values.
+            """
+            if isinstance(value, _Component):
+                return value
+            return None
+
     core_module.Matrix3D = _Matrix3D  # type: ignore[attr-defined]
     fusion_module.DesignIntentTypes = _IntentTypes  # type: ignore[attr-defined]
     fusion_module.Occurrence = _FusionOccurrence  # type: ignore[attr-defined]
+    fusion_module.Component = _FusionComponent  # type: ignore[attr-defined]
     adsk_module.core = core_module  # type: ignore[attr-defined]
     adsk_module.fusion = fusion_module  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "adsk", adsk_module)
@@ -459,6 +509,32 @@ def test_lists_only_components_with_harness_metadata(fusion_gateway_type: type) 
     assert len(stored_harnesses) == 1
     assert stored_harnesses[0].component_name == "Harness_001"
     assert stored_harnesses[0].serialized_definition == "definition-json"
+    assert stored_harnesses[0].component_handle is harness_component
+
+
+def test_deletes_exact_marked_harness_component(fusion_gateway_type: type) -> None:
+    """
+    Resolve the discovery handle to exactly one occurrence before deleting it.
+    """
+    design = _Design(
+        _IntentTypes.HybridDesignIntentType,
+        existing_names=("Broken",),
+    )
+    harness_component = design.allComponents.item(1)
+    assert harness_component is not None
+    harness_component.attributes.add(
+        "kev0.wire_bundler",
+        "harness_definition",
+        "{not-json",
+    )
+    occurrence = _Occurrence()
+    occurrence.component = harness_component
+    design.rootComponent.referencing_occurrences[id(harness_component)] = (occurrence,)
+    gateway = fusion_gateway_type(design)
+
+    gateway.delete_stored_harness_component(harness_component)
+
+    assert occurrence.was_deleted
 
 
 def test_reads_and_replaces_definition_by_stable_harness_id(
