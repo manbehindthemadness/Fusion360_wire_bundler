@@ -155,7 +155,6 @@ function renderRelationshipEndList(
   details.addEventListener("toggle", () => {
     if (!query) relationshipEndListOverrides.set(overrideKey, details.open);
     if (details.redrawConnector) details.redrawConnector(details.open);
-    if (details.redrawDiagram) details.redrawDiagram();
   });
   details.append(summary, items);
   return details;
@@ -182,6 +181,49 @@ function layoutRelationshipGraph(stack, pathwayGroups) {
   stack.style.width = `${canvasWidth}px`;
   stack.style.height = `${Math.max(nextY - verticalGap + padding, 260)}px`;
 }
+
+function addRelationshipMapContextMenu(workspace) {
+  const menu = document.createElement("div");
+  const add = document.createElement("button");
+  menu.className = "relationship-map-context-menu";
+  menu.hidden = true;
+  menu.setAttribute("role", "menu");
+  add.type = "button";
+  add.setAttribute("role", "menuitem");
+  add.textContent = "Add pathway";
+  add.addEventListener("click", () => {
+    menu.hidden = true;
+    void addPathway();
+  });
+  add.addEventListener("blur", () => {
+    menu.hidden = true;
+  });
+  menu.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      menu.hidden = true;
+      workspace.viewport.focus();
+    }
+  });
+  workspace.viewport.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    const bounds = workspace.root.getBoundingClientRect();
+    const left = Math.min(
+      Math.max(4, event.clientX - bounds.left),
+      Math.max(4, workspace.root.clientWidth - 160),
+    );
+    const top = Math.min(
+      Math.max(4, event.clientY - bounds.top),
+      Math.max(4, workspace.root.clientHeight - 44),
+    );
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    menu.hidden = false;
+    add.focus();
+  });
+  menu.append(add);
+  workspace.root.append(menu);
+}
+
 function renderRelationshipMap(harness, auditIssues) {
   const connections = new Map(
     harness.connections.map((connection) => [connection.connectionId, connection]),
@@ -193,6 +235,7 @@ function renderRelationshipMap(harness, auditIssues) {
   const settings = document.createElement("label");
   const collapseInput = document.createElement("input");
   const workspace = createBlockDiagramWorkspace("Zoomable master relationship diagram");
+  addRelationshipMapContextMenu(workspace);
   container.className = "section-content relationship-map";
   container.dataset.diagramContractVersion = RELATIONSHIP_DIAGRAM_CONTRACT_VERSION;
   container.dataset.diagramLayout = RELATIONSHIP_DIAGRAM_LAYOUT;

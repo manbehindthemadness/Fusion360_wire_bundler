@@ -1,6 +1,5 @@
 const ui = {
   back: document.getElementById("back"),
-  addPathway: document.getElementById("add-pathway"),
   addWires: document.getElementById("add-wires"),
   previewRoutes: document.getElementById("preview-routes"),
   clearPreview: document.getElementById("clear-preview"),

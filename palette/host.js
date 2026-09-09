@@ -444,7 +444,6 @@ async function clearPreview() {
   }
 }
 
-ui.addPathway.addEventListener("click", addPathway);
 ui.addWires.addEventListener("click", () => addWires());
 ui.defaults.addEventListener("click", () => {
   const harness = currentState.harnesses.find((item) => harnessKey(item) === selectedHarnessKey);

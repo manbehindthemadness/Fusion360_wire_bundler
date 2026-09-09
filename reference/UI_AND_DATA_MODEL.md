@@ -1437,6 +1437,11 @@ traces with one neutral aggregate curve. Open end columns distribute their entri
 across the available group height so unequal End A and End B counts remain visually
 aligned with the centered hub.
 
+The master graphic retains a visible 390-pixel canvas when the harness contains no
+pathways. Right-clicking anywhere in that canvas opens its own context menu. **Add
+pathway** in that menu opens the existing native Add Pathway command; the former
+top-level Add Pathway button is removed.
+
 The palette is delivered as a small `palette.html` entry shell plus local packaged
 resources under `palette/`: `styles.css`, `foundation.js`, `route-editors.js`,
 `materials.js`, `relationship-audit.js`, `wire-graphic.js`, `master-graphic.js`,

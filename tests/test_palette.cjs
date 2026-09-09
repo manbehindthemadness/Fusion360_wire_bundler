@@ -248,6 +248,56 @@ test('damaged harness editor offers confirmed component deletion', () => {
   assert.equal(calls[0].payload.deletionToken, 'current-token');
 });
 
+asyncTest('empty master graphic remains visible and owns Add pathway', async () => {
+  const { context, calls } = palette();
+  const definition = harness();
+  definition.pathways = [];
+  definition.wires = [];
+  context.send = async (action, payload) => {
+    calls.push({ action, payload });
+    return { ok: true };
+  };
+  runInNewContext(
+    'currentState = { harnesses: [definition] }; selectedHarnessKey = "h";',
+    Object.assign(context, { definition }),
+  );
+
+  const graphic = context.renderRelationshipMap(definition, []);
+  const workspace = descendants(
+    graphic,
+    (node) => node.className === 'block-diagram-workspace',
+  )[0];
+  const viewport = descendants(
+    workspace,
+    (node) => node.className === 'block-diagram-viewport',
+  )[0];
+  const menu = descendants(
+    workspace,
+    (node) => node.className === 'relationship-map-context-menu',
+  )[0];
+  assert.ok(descendants(graphic, (node) => node.textContent === 'No pathways to display yet.').length);
+  assert.equal(menu.hidden, true);
+  let prevented = false;
+  viewport.events.contextmenu({
+    clientX: 80,
+    clientY: 90,
+    preventDefault: () => { prevented = true; },
+  });
+  assert.equal(prevented, true);
+  assert.equal(menu.hidden, false);
+  assert.equal(menu.children[0].textContent, 'Add pathway');
+  menu.children[0].events.click();
+  await Promise.resolve();
+  assert.equal(menu.hidden, true);
+  assert.equal(calls[0].action, 'add_pathway');
+  assert.equal(calls[0].payload.harnessId, 'h');
+
+  const html = readFileSync(join(__dirname, '..', 'palette.html'), 'utf8');
+  assert.doesNotMatch(html, /id="add-pathway"/);
+  const styles = readFileSync(join(__dirname, '..', 'palette', 'styles.css'), 'utf8');
+  assert.match(styles, /\.relationship-map > \.block-diagram-workspace \.block-diagram-viewport \{[^}]*height: 390px;/s);
+});
+
 test('relationship diagrams use zoomable pannable floating workspaces', () => {
   const { context } = palette();
   const definition = harness();
