@@ -1380,8 +1380,9 @@ collapsible connection controls, filtering, scoped Fusion highlighting, and clic
 keyboard navigation remain part of the diagram contract.
 
 The diagrams are the eventual primary editing interface for all harness operations.
-The existing Wire Routes, Pathways & Occupancy, topology, and other stacked controls
-remain available as the testing and QA surface while this transition is underway. Move
+The existing Wire Routes and other stacked controls remain available as the testing
+and QA surface while this transition is underway. Pathway-specific controls have moved
+from Pathways & Occupancy into a popup opened from a pathway diagram node. Move
 one operation at a time into the diagram only when explicitly scheduled; each move
 must retain the established diagram contract and gain focused interaction, persistence,
 Undo/Redo, projection, and visual QA coverage before its stacked counterpart can be
@@ -1406,8 +1407,8 @@ wire's available preview/generated geometry. Pathway names sit inside wide opaqu
 rounded nodes so the colored route cannot obscure their text. This SVG is also the
 wire's route-configuration surface; no duplicate route-node strip is shown. End A
 and End B nodes toggle their existing ordering editors, or start native profile
-selection when their connection is missing. Pathway nodes expand and navigate to
-the matching Pathways & Occupancy configuration. The colored wire line and each
+selection when their connection is missing. Pathway nodes open the matching pathway
+configuration popup. The colored wire line and each
 typed node retain their scoped Fusion highlighting. Mouse clicks plus Enter and
 Space activate the nodes, while one labeled Wire options control remains beneath
 the graphic. Stripe cues are centered as a group within the base trace: a single
@@ -1424,8 +1425,8 @@ when its count is above that threshold. The numeric setting is clamped from 1 to
 large connector lists dominate the palette. A manual disclosure choice lasts for
 the current palette session until the threshold changes. Hovering a pathway hub
 highlights only its gates, while an end-list heading highlights the occupying wires
-and a connection entry highlights that connection. Activating a pathway hub expands
-and scrolls to its matching Pathways & Occupancy configuration. The viewport uses a
+and a connection entry highlights that connection. Activating a pathway hub opens its
+pathway configuration popup. The viewport uses a
 darker neutral backdrop to distinguish its light nodes and end-list buckets. Zoom,
 pan, and Fit keep large relationship sets legible. The pathway hub
 is vertically centered against the full height of both end columns. Smooth SVG
@@ -1441,6 +1442,12 @@ The master graphic retains a visible 390-pixel canvas when the harness contains 
 pathways. Right-clicking anywhere in that canvas opens its own context menu. **Add
 pathway** in that menu opens the existing native Add Pathway command; the former
 top-level Add Pathway button is removed.
+
+Left-clicking a pathway node opens a modal popup containing the pathway-specific entry
+formerly located under Pathways & Occupancy. Pathway Name, Start Name, End Name, Gates ·
+Traversal Order, Wire Occupancy, Add Gates, and Add Wire Pairs retain their existing
+behavior inside that popup. The Pathways & Occupancy section is removed from the main
+editor stack. Closing the popup returns to the master graphic.
 
 The palette is delivered as a small `palette.html` entry shell plus local packaged
 resources under `palette/`: `styles.css`, `foundation.js`, `route-editors.js`,

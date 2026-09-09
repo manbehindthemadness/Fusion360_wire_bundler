@@ -18,6 +18,7 @@ function renderEditor(harness) {
   ui.editor.append(heading);
 
   if (harness.status === "damaged") {
+    closePathwayPopup();
     const error = document.createElement("div");
     const actions = document.createElement("div");
     const remove = document.createElement("button");
@@ -112,13 +113,6 @@ function renderEditor(harness) {
       false,
     ),
     editorSection(
-      "pathways",
-      "Pathways & Occupancy",
-      `${harness.pathways.length}`,
-      renderPathways(harness),
-      false,
-    ),
-    editorSection(
       "validation",
       "Validation",
       findingCount ? `${findingCount} findings` : "Clear",
@@ -133,4 +127,5 @@ function renderEditor(harness) {
       true,
     ),
   );
+  if (openPathwayPopupId) openPathwayPopup(harness, openPathwayPopupId);
 }

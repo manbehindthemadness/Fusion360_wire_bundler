@@ -345,12 +345,12 @@ test('master relationship graphic is last and independently cross-checked', () =
   const sections = Array.from(context.ui.editor.children).filter((node) => node.tag === 'details');
   assert.deepEqual(
     sections.map((section) => section.dataset.section),
-    ['wire-routes', 'pathways', 'validation', 'master-relationship-graphic'],
+    ['wire-routes', 'validation', 'master-relationship-graphic'],
   );
-  const audit = descendants(sections[2], (node) => node.className === 'relationship-audit')[0];
+  const audit = descendants(sections[1], (node) => node.className === 'relationship-audit')[0];
   assert.match(audit.textContent, /agrees with wire routes/);
   const pathwayCards = descendants(
-    sections[3], (node) => node.className === 'relationship-pathway-group',
+    sections[2], (node) => node.className === 'relationship-pathway-group',
   );
   assert.equal(pathwayCards.length, 1);
   const endLists = descendants(pathwayCards[0], (node) => node.className === 'relationship-end-list');
@@ -368,7 +368,7 @@ test('master relationship graphic is last and independently cross-checked', () =
   assert.ok(graphicLabels.includes('Data input'));
   assert.ok(graphicLabels.includes('lower fuse box path'));
   assert.ok(graphicLabels.includes('Data output'));
-  const connectors = descendants(sections[3], (node) => node.className === 'relationship-connector');
+  const connectors = descendants(sections[2], (node) => node.className === 'relationship-connector');
   assert.equal(connectors.length, 2);
   assert.ok(connectors.every((connector) => (
     descendants(connector, (node) => node.tag === 'path').length === 3
@@ -376,7 +376,7 @@ test('master relationship graphic is last and independently cross-checked', () =
   endLists[0].open = false;
   endLists[0].events.toggle();
   assert.equal(descendants(connectors[0], (node) => node.tag === 'path').length, 1);
-  assert.equal(sections[3].open, true);
+  assert.equal(sections[2].open, true);
 });
 
 test('palette entry point loads organized local style and script resources', () => {
@@ -424,9 +424,8 @@ test('master relationship filtering, hover, navigation, and mismatch reporting w
   assert.ok(descendants(validation, (node) => node.textContent?.includes('does not match')).length);
 });
 
-test('expanded master traces use wire colors and stripes while pathway hubs navigate', () => {
-  const storage = new Map();
-  const { context } = palette(storage);
+test('expanded master traces use wire colors and pathway hubs open their popup', () => {
+  const { context } = palette();
   const definition = harness();
   definition.wires[0].materials = {
     ...definition.materialDefaults,
@@ -463,12 +462,24 @@ test('expanded master traces use wire colors and stripes while pathway hubs navi
   assert.equal(collapsedTraces.length, 1);
   assert.equal(collapsedTraces[0].className, 'aggregate-trace');
 
-  const pathwaySection = context.ui.editor.querySelector('[data-section="pathway:p"]');
   descendants(master, (node) => node.className === 'relationship-pathway-hub')[0].events.click();
-  assert.equal(context.ui.editor.querySelector('[data-section="pathways"]').open, true);
+  const popup = context.document.body.querySelector('.pathway-popup');
+  const pathwaySection = popup.querySelector('[data-section="pathway:p"]');
+  assert.equal(context.ui.editor.querySelector('[data-section="pathways"]'), undefined);
+  assert.equal(popup.open, true);
   assert.equal(pathwaySection.open, true);
-  assert.equal(pathwaySection.scrolledIntoView, true);
-  assert.match(storage.get('wireBundler.expandedSections'), /pathway:p/);
+  assert.deepEqual(
+    descendants(pathwaySection, (node) => node.tag === 'label').map((node) => node.textContent),
+    ['Pathway Name', 'Start Name', 'End Name'],
+  );
+  definition.pathways[0].name = 'Updated pathway';
+  context.renderEditor(definition);
+  const refreshedPopup = context.document.body.querySelector('.pathway-popup');
+  assert.equal(context.document.body.querySelectorAll('.pathway-popup').length, 1);
+  assert.equal(refreshedPopup.querySelector('[data-section="pathway:p"]').children[0]
+    .children[0].textContent, 'Updated pathway');
+  descendants(refreshedPopup, (node) => node.textContent === 'Close')[0].events.click();
+  assert.equal(context.document.body.querySelector('.pathway-popup'), undefined);
 });
 
 test('master collapse limit defaults to seven, clamps, persists, and search reveals matches', () => {
@@ -575,9 +586,8 @@ test('interactive wire diagram replaces the old node strip and uses precise name
   assert.equal(descendants(rendered, (node) => node.className?.split(' ').includes('route-node')).length, 3);
 });
 
-test('wire diagram nodes configure ends and navigate to pathways by mouse or keyboard', () => {
-  const storage = new Map();
-  const { context } = palette(storage);
+test('wire diagram nodes configure ends and open pathway popup by mouse or keyboard', () => {
+  const { context } = palette();
   const definition = harness();
   context.renderEditor(definition);
   const startNode = descendants(context.ui.editor, (node) => (
@@ -600,12 +610,10 @@ test('wire diagram nodes configure ends and navigate to pathways by mouse or key
     node.className === 'wire-relationship-node pathway' && node.dataset.pathwayId === 'p'
   ))[0];
   pathwayNode.events.keydown({ key: ' ', preventDefault() {} });
-  const pathwaysSection = context.ui.editor.querySelector('[data-section="pathways"]');
-  const pathwaySection = context.ui.editor.querySelector('[data-section="pathway:p"]');
-  assert.equal(pathwaysSection.open, true);
+  const popup = context.document.body.querySelector('.pathway-popup');
+  const pathwaySection = popup.querySelector('[data-section="pathway:p"]');
+  assert.equal(popup.open, true);
   assert.equal(pathwaySection.open, true);
-  assert.equal(pathwaySection.scrolledIntoView, true);
-  assert.match(storage.get('wireBundler.expandedSections'), /pathway:p/);
 });
 
 test('each end editor contains only its own profile and sends its wire identity', () => {

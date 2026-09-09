@@ -152,18 +152,8 @@ function navigateToWire(wireId) {
   card.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
-function navigateToPathway(pathwayId) {
-  const section = ui.editor.querySelector('[data-section="pathways"]');
-  const pathway = ui.editor.querySelector(`[data-section="pathway:${pathwayId}"]`);
-  if (section) {
-    section.open = true;
-    expandedSections.add("pathways");
-  }
-  if (!pathway) return;
-  pathway.open = true;
-  expandedSections.add(`pathway:${pathwayId}`);
-  writeSession("wireBundler.expandedSections", JSON.stringify([...expandedSections]));
-  pathway.scrollIntoView({ behavior: "smooth", block: "center" });
+function navigateToPathway(harness, pathwayId) {
+  openPathwayPopup(harness, pathwayId);
 }
 
 function renderWireRelationshipGraphic(
@@ -250,7 +240,7 @@ function renderWireRelationshipGraphic(
   const nodeGroups = new Map();
   const activateEnd = (item) => {
     if (!item.connection) {
-      mutate("edit_end_members", {
+      void mutate("edit_end_members", {
         harnessId: harness.harnessId,
         wireId: wire.wireId,
         endpoint: item.endpoint,
@@ -304,7 +294,7 @@ function renderWireRelationshipGraphic(
       hoverHighlight(group, () => highlightMember(
         harness, "pathway_gates", item.pathwayId,
       ));
-      group.addEventListener("click", () => navigateToPathway(item.pathwayId));
+      group.addEventListener("click", () => navigateToPathway(harness, item.pathwayId));
     } else {
       group.dataset.editorId = item.editor.id;
       group.dataset.endpoint = item.endpoint;
@@ -321,7 +311,7 @@ function renderWireRelationshipGraphic(
     group.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
-      if (item.kind === "pathway") navigateToPathway(item.pathwayId);
+      if (item.kind === "pathway") navigateToPathway(harness, item.pathwayId);
       else activateEnd(item);
     });
     svg.append(group);

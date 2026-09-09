@@ -52,6 +52,7 @@ function writePreference(key, value) {
 
 let currentState = { harnesses: [], notice: "" };
 let selectedHarnessKey = readSession("wireBundler.selectedHarness") || "";
+let openPathwayPopupId = "";
 const routeFilters = new Map();
 const relationshipFilters = new Map();
 const relationshipEndListOverrides = new Map();
@@ -286,7 +287,7 @@ function createOptionsDialog(className) {
   return { dialog, form, heading, note, error, actions, cancel, save };
 }
 
-function renderPathways(harness) {
+function renderPathways(harness, selectedPathwayId = null) {
   const container = document.createElement("div");
   const controls = new Map(
     harness.controls.map((control) => [control.controlId, control]),
@@ -302,7 +303,10 @@ function renderPathways(harness) {
     container.append(emptyMessage("No pathways defined yet."));
     return container;
   }
-  harness.pathways.forEach((pathway) => {
+  const renderedPathways = harness.pathways.filter(
+    (pathway) => !selectedPathwayId || pathway.pathwayId === selectedPathwayId,
+  );
+  renderedPathways.forEach((pathway) => {
     const pathwayContent = document.createElement("div");
     const gateContent = document.createElement("div");
     const sequence = document.createElement("div");
@@ -419,4 +423,47 @@ function renderPathways(harness) {
     ));
   });
   return container;
+}
+
+function closePathwayPopup() {
+  const dialog = document.body.querySelector(".pathway-popup");
+  openPathwayPopupId = "";
+  if (dialog?.open) dialog.close();
+  else dialog?.remove();
+}
+
+function openPathwayPopup(harness, pathwayId) {
+  const pathway = harness.pathways.find((candidate) => candidate.pathwayId === pathwayId);
+  const existing = document.body.querySelector(".pathway-popup");
+  if (existing?.open) existing.close();
+  else existing?.remove();
+  if (!pathway) {
+    openPathwayPopupId = "";
+    return;
+  }
+  openPathwayPopupId = pathwayId;
+  const dialog = document.createElement("dialog");
+  const rendered = renderPathways(harness, pathwayId);
+  const entry = rendered.children[0];
+  const actions = document.createElement("div");
+  const close = document.createElement("button");
+  dialog.className = "pathway-popup";
+  dialog.setAttribute("aria-label", `Pathway configuration: ${pathway.name}`);
+  entry.open = true;
+  entry.classList.add("pathway-popup-entry");
+  actions.className = "pathway-popup-actions";
+  close.type = "button";
+  close.className = "button";
+  close.textContent = "Close";
+  close.addEventListener("click", closePathwayPopup);
+  dialog.addEventListener("close", () => {
+    if (document.body.querySelector(".pathway-popup") === dialog) {
+      openPathwayPopupId = "";
+    }
+    dialog.remove();
+  });
+  actions.append(close);
+  dialog.append(entry, actions);
+  document.body.append(dialog);
+  dialog.showModal();
 }

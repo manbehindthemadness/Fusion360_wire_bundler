@@ -20,6 +20,24 @@ body {
 }
 .wire-details { display: grid; gap: 8px; }
 .wire-options { border: 1px solid var(--border); border-radius: 6px; width: 320px; max-width: 90vw; }
+.pathway-popup {
+  width: 620px;
+  max-width: 92vw;
+  max-height: 88vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 14px;
+  background: var(--surface);
+  color: var(--text);
+}
+.pathway-popup::backdrop { background: #0005; }
+.pathway-popup > .pathway-popup-entry { margin: 0; }
+.pathway-popup-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
 .material-options { width: 430px; max-height: 88vh; overflow-x: hidden; overflow-y: auto; }
 .wire-options::backdrop { background: #0005; }
 .wire-options form { display: grid; gap: 12px; }

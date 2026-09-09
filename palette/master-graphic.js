@@ -307,7 +307,7 @@ function renderRelationshipMap(harness, auditIssues) {
       hubDirection.textContent = pathwayDirection(pathway);
       hub.append(hubName, hubDirection);
       hoverHighlight(hub, () => highlightMember(harness, "pathway_gates", pathway.pathwayId));
-      hub.addEventListener("click", () => navigateToPathway(pathway.pathwayId));
+      hub.addEventListener("click", () => openPathwayPopup(harness, pathway.pathwayId));
       startList.redrawConnector = startConnector.redraw;
       endList.redrawConnector = endConnector.redraw;
       pathwayGroup.append(startList, startConnector, hub, endConnector, endList);
