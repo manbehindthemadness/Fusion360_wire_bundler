@@ -38,6 +38,7 @@ class _PaletteLifecycleModule(Protocol):
     _pending_palette_edit: object
     _graphics_cache_restore_value: Optional[bool]
     _graphics_cache_save_document: Optional[object]
+    _last_diagram_qa_observation: Optional[dict[str, object]]
     _open_palette_edit: Callable[[object, str, str], None]
     _apply_palette_edit: Callable[[object, str, str], str]
     _apply_topology_end_selection: Callable[[object, dict[str, object], tuple[str, ...]], None]
@@ -355,6 +356,7 @@ def test_palette_state_reads_active_fusion_document_length_units(
     )
     design = SimpleNamespace(unitsManager=units_manager)
     fusion_module = sys.modules["adsk.fusion"]
+    # noinspection PyUnresolvedReferences
     monkeypatch.setattr(
         fusion_module,
         "Design",
@@ -998,6 +1000,42 @@ def test_clear_preview_palette_event_bypasses_model_edit_command(
         "ok": True,
         "notice": "Cleared 2 route-preview graphics groups.",
     }
+
+
+def test_palette_records_bounded_relationship_diagram_observation(
+    addin_module: _PaletteLifecycleModule,
+) -> None:
+    """
+    Retain only report-safe continuity metrics from the visual QA probe.
+    """
+    application = object()
+    core_module = sys.modules["adsk.core"]
+    vars(core_module)["Application"] = SimpleNamespace(get=lambda: application)
+    vars(core_module)["HTMLEventArgs"] = SimpleNamespace(cast=lambda value: value)
+    args = SimpleNamespace(
+        action="qa_diagram_observation",
+        data=json.dumps(
+            {
+                "status": "passed",
+                "connectorCount": 4,
+                "maximumEndpointGap": 0.0,
+                "contractVersion": "1",
+                "layout": "flexible-layered-graph",
+            }
+        ),
+        returnData="",
+    )
+
+    addin_module._PaletteIncomingHandler().notify(args)
+
+    assert addin_module._last_diagram_qa_observation == {
+        "status": "passed",
+        "connectorCount": 4,
+        "maximumEndpointGap": 0.0,
+        "contractVersion": "1",
+        "layout": "flexible-layered-graph",
+    }
+    assert json.loads(args.returnData) == {"ok": True}
 
 
 def test_lists_installed_fusion_appearance_libraries_and_contents(

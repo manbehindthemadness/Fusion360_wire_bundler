@@ -1356,6 +1356,37 @@ profiles. Mouse-out clears both sketch selection and preview emphasis. End nodes
 highlight their connection profiles. Intersection slice highlighting remains a
 future extension once intersection geometry exists.
 
+### Relationship diagram contract
+
+The relationship diagrams use **diagram contract version 1**. This visual and
+interaction format is an enduring product contract. Both views are zoomable and
+pannable floating block diagrams built from the established rounded nodes and
+continuous edge traces. They do not use flowchart symbols or visible containers around
+a pathway and its ends.
+
+In the master view, End A, the pathway, and End B are separate nodes held in a
+transparent positional group. Empty ends use the same compact appearance as collapsed
+populated ends, sit close to the pathway at its vertical center, and connect through a
+short neutral placeholder trace. Junctions are independent nodes connected from the
+measured top or bottom boundary of their parent pathway to the measured boundary of
+each attached pathway end. Edges must reach their nodes without visible gaps.
+
+The layout is a flexible measured graph. Topology determines vertical layers;
+independent pathways may share a layer side by side; junctions may occupy the available
+space above or below a pathway; and same-side siblings may sit side by side. Pathway
+nodes may widen horizontally to accommodate their junction span. The implementation
+must not impose a fixed vertical stack. Wire colors and stripe cues, endpoint names,
+collapsible connection controls, filtering, scoped Fusion highlighting, and click and
+keyboard navigation remain part of the diagram contract.
+
+The diagrams are the eventual primary editing interface for all harness operations.
+The existing Wire Routes, Pathways & Occupancy, topology, and other stacked controls
+remain available as the testing and QA surface while this transition is underway. Move
+one operation at a time into the diagram only when explicitly scheduled; each move
+must retain the established diagram contract and gain focused interaction, persistence,
+Undo/Redo, projection, and visual QA coverage before its stacked counterpart can be
+retired.
+
 ### Master relationship graphic
 
 The selected-harness editor presents a top-level Master Relationship Graphic as
@@ -1382,7 +1413,7 @@ Space activate the nodes, while one labeled Wire options control remains beneath
 the graphic. Stripe cues are centered as a group within the base trace: a single
 stripe occupies its centerline and two or three stripes use symmetric offsets.
 
-The master graphic aggregates the same data into one card per pathway. Its End A
+The master graphic aggregates the same data into one positional group per pathway. Its End A
 and End B columns group wires by connection, show assigned endpoint and connection
 names, and navigate to a participating wire when clicked. A search filters pathway,
 connection, endpoint, wire, and material labels. Matching end lists open while a
@@ -1395,15 +1426,15 @@ the current palette session until the threshold changes. Hovering a pathway hub
 highlights only its gates, while an end-list heading highlights the occupying wires
 and a connection entry highlights that connection. Activating a pathway hub expands
 and scrolls to its matching Pathways & Occupancy configuration. The viewport uses a
-darker neutral backdrop to distinguish its light pathway cards and end-list buckets,
-and scrolls so large relationship sets do not compress their labels. The pathway hub
+darker neutral backdrop to distinguish its light nodes and end-list buckets. Zoom,
+pan, and Fit keep large relationship sets legible. The pathway hub
 is vertically centered against the full height of both end columns. Smooth SVG
 curves join each visible connection to that hub. Expanding an end fans one trace
 per participating wire, using the wire's resolved base color and up to three solid
 or dashed stripe cues centered within the base trace; wires sharing one connection
 remain parallel at that entry. Collapsing the end replaces the hidden material
 traces with one neutral aggregate curve. Open end columns distribute their entries
-across the available card height so unequal End A and End B counts remain visually
+across the available group height so unequal End A and End B counts remain visually
 aligned with the centered hub.
 
 The palette is delivered as a small `palette.html` entry shell plus local packaged

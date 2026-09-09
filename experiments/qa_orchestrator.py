@@ -55,6 +55,7 @@ FUSION_RESULT_PREFIX = "WIRE_BUNDLER_QA_RESULT="
 VISUAL_RESULT_PREFIX = "WIRE_BUNDLER_VISUAL_RESULT="
 GENERATED_VISUAL_RESULT_PREFIX = "WIRE_BUNDLER_GENERATED_VISUAL_RESULT="
 PALETTE_BOUNDS_RESULT_PREFIX = "WIRE_BUNDLER_PALETTE_BOUNDS_RESULT="
+DIAGRAM_OBSERVATION_RESULT_PREFIX = "WIRE_BUNDLER_DIAGRAM_OBSERVATION_RESULT="
 NATIVE_DIALOG_RESULT_PREFIX = "WIRE_BUNDLER_NATIVE_DIALOG_RESULT="
 NATIVE_DIALOG_HANDSHAKE_ROOT = PROJECT_ROOT / "artifacts" / "native_dialog_handshake"
 MINIMUM_NATIVE_DIALOG_CHANGE = 0.00001
@@ -552,6 +553,10 @@ def _run_desktop_ui_oracle(endpoint: str, timeout_seconds: float) -> dict[str, o
         Passed metadata, a non-failing unavailable result, or a safety failure.
     """
     try:
+        diagram_observation = _read_relationship_diagram_observation(
+            endpoint,
+            timeout_seconds,
+        )
         first_bounds = _read_palette_bounds(endpoint, timeout_seconds)
         first_capture = capture_harness_builder_window(first_bounds)
         second_bounds = _read_palette_bounds(endpoint, timeout_seconds)
@@ -584,11 +589,15 @@ def _run_desktop_ui_oracle(endpoint: str, timeout_seconds: float) -> dict[str, o
     }
     result = {
         "status": "passed",
+        "diagramObservation": diagram_observation,
         "observations": observations,
         "comparison": comparison,
         "capturesPurged": True,
     }
-    if not palette_bounds_stable:
+    if diagram_observation.get("status") == "failed":
+        result["status"] = "failed"
+        result["error"] = "Relationship diagram contains disconnected rendered edges."
+    elif not palette_bounds_stable:
         result["status"] = "failed"
         result["error"] = "Stable desktop palette moved or resized between captures."
     elif changed_fraction > MAXIMUM_STABLE_DESKTOP_CHANGE:
@@ -598,6 +607,98 @@ def _run_desktop_ui_oracle(endpoint: str, timeout_seconds: float) -> dict[str, o
             f"{MAXIMUM_STABLE_DESKTOP_CHANGE:.2%}."
         )
     return result
+
+
+def _read_relationship_diagram_observation(
+    endpoint: str,
+    timeout_seconds: float,
+) -> dict[str, object]:
+    """
+    Prepare the relationship diagram and read its rendered edge-continuity result.
+
+    The palette computes the observation from its final DOM bounds, then reports only
+    connector counts and maximum endpoint gap through the add-in's private QA state.
+    """
+    client = McpClient(endpoint, timeout_seconds)
+    payload: dict[str, object] = {}
+    try:
+        client.initialize()
+        tool_result = client.call_tool(
+            "fusion_mcp_execute",
+            {"featureType": "script", "object": {"script": _diagram_observation_script()}},
+        )
+        payload = _parse_execute_result(tool_result, DIAGRAM_OBSERVATION_RESULT_PREFIX)
+    finally:
+        try:
+            client.close()
+        except (ConnectionError, OSError, RuntimeError):
+            pass
+    status = payload.get("status")
+    connector_count = payload.get("connectorCount")
+    maximum_gap = payload.get("maximumEndpointGap")
+    contract_version = payload.get("contractVersion")
+    layout = payload.get("layout")
+    if status not in {"passed", "failed", "skipped"}:
+        raise RuntimeError("Palette returned an invalid diagram-observation status.")
+    if isinstance(connector_count, bool) or not isinstance(connector_count, int):
+        raise RuntimeError("Palette returned an invalid diagram connector count.")
+    if isinstance(maximum_gap, bool) or not isinstance(maximum_gap, (int, float)):
+        raise RuntimeError("Palette returned an invalid diagram endpoint gap.")
+    if contract_version != "1":
+        raise RuntimeError("Palette returned an unsupported diagram contract version.")
+    if layout != "flexible-layered-graph":
+        raise RuntimeError("Palette returned an unsupported diagram layout.")
+    return {
+        "status": status,
+        "connectorCount": connector_count,
+        "maximumEndpointGap": float(maximum_gap),
+        "contractVersion": contract_version,
+        "layout": layout,
+    }
+
+
+def _diagram_observation_script() -> str:
+    """
+    Build the fixed in-host handshake for relationship-diagram visual QA.
+    """
+    return f'''import json
+import sys
+from time import monotonic
+
+import adsk
+import adsk.core
+
+
+def run(_context: str):
+    modules = [
+        module for name, module in sys.modules.items()
+        if name.endswith("wire_bundler.addin")
+    ]
+    if len(modules) != 1:
+        raise RuntimeError("Harness Builder add-in module is unavailable or ambiguous.")
+    module = modules[0]
+    module._last_diagram_qa_observation = None
+    palette = adsk.core.Application.get().userInterface.palettes.itemById(
+        "kev0_wire_bundler_harness_builder_palette"
+    )
+    if palette is None or not palette.isVisible:
+        raise RuntimeError("Harness Builder palette must be visible for diagram QA.")
+    palette.sendInfoToHTML(
+        "qa_probe",
+        json.dumps({{"operation": "observe_relationship_diagram"}}),
+    )
+    deadline = monotonic() + 5.0
+    while module._last_diagram_qa_observation is None and monotonic() < deadline:
+        adsk.doEvents()
+    observation = module._last_diagram_qa_observation or {{
+        "status": "skipped",
+        "connectorCount": 0,
+        "maximumEndpointGap": 0.0,
+        "contractVersion": "1",
+        "layout": "flexible-layered-graph",
+    }}
+    print("{DIAGRAM_OBSERVATION_RESULT_PREFIX}" + json.dumps(observation, sort_keys=True))
+'''
 
 
 def _run_native_dialog_ui_oracle(

@@ -363,7 +363,16 @@ function renderWireRelationshipGraphic(
   const junctions = (topology?.nodes || []).filter(
     (node) => node.kind === "junction" && incidentNodeIds.has(node.nodeId),
   );
-  const graphicHeight = 88 + junctions.length * 66;
+  let nextBranchY = 116;
+  const junctionLayouts = junctions.map((junction) => {
+    const attachments = (topology?.junctionAttachments || []).filter(
+      (item) => item.junctionId === junction.nodeId,
+    );
+    const layout = { junction, attachments, y: nextBranchY };
+    nextBranchY += 58 + Math.max(1, attachments.length) * 54;
+    return layout;
+  });
+  const graphicHeight = Math.max(88, nextBranchY - 20);
   const y = 44;
   const startX = 70;
   const step = (width - 140) / Math.max(1, nodeItems.length - 1);
@@ -479,12 +488,11 @@ function renderWireRelationshipGraphic(
     });
     svg.append(group);
   });
-  junctions.forEach((junction, index) => {
+  junctionLayouts.forEach(({ junction, attachments, y: branchY }, index) => {
     const pathwayIndex = nodeItems.findIndex(
       (item) => item.kind === "pathway" && item.pathwayId === junction.pathwayId,
     );
     const x = points[Math.max(0, pathwayIndex)];
-    const branchY = 116 + index * 66;
     const color = wire.materials?.mainColor?.hex || "#1777c8";
     svg.append(svgElement("line", {
       class: "relationship-link",
@@ -511,6 +519,51 @@ function renderWireRelationshipGraphic(
       if (event.key === "Enter" || event.key === " ") navigateToJunction(junction.nodeId);
     });
     svg.append(group);
+    attachments.forEach((attachment, attachmentIndex) => {
+      const attachmentY = branchY + 54 + attachmentIndex * 54;
+      const pathway = harness.pathways.find(
+        (item) => item.pathwayId === attachment.pathwayId,
+      );
+      svg.append(svgElement("line", {
+        class: "relationship-link junction-attachment-link",
+        x1: x, y1: branchY + 16, x2: x, y2: attachmentY - 18,
+        stroke: color, "stroke-width": 7,
+      }));
+      const attachmentGroup = svgElement("g", {
+        class: "wire-relationship-node pathway junction-attachment",
+        tabindex: "0",
+        role: "button",
+        "data-pathway-id": attachment.pathwayId,
+      });
+      const attachmentShape = svgElement("rect", {
+        class: "relationship-node pathway",
+        x: x - 75, y: attachmentY - 18, width: 150, height: 36, rx: 18,
+      });
+      const attachmentLabel = svgElement("text", {
+        class: "relationship-node-label", x, y: attachmentY + 3,
+      });
+      const attachmentKind = svgElement("text", {
+        class: "relationship-node-kind", x, y: attachmentY - 22,
+      });
+      attachmentLabel.textContent = truncateGraphicLabel(
+        pathway?.name || "Missing pathway", 21,
+      );
+      attachmentKind.textContent = `Attached End ${attachment.pathwayEnd.toUpperCase()}`;
+      attachmentGroup.append(attachmentShape, attachmentLabel, attachmentKind);
+      hoverHighlight(attachmentGroup, () => highlightMember(
+        harness, "pathway_gates", attachment.pathwayId,
+      ));
+      attachmentGroup.addEventListener(
+        "click", () => navigateToPathway(attachment.pathwayId),
+      );
+      attachmentGroup.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          navigateToPathway(attachment.pathwayId);
+        }
+      });
+      svg.append(attachmentGroup);
+    });
   });
   container.className = "wire-relationship-graphic";
   const workspace = createBlockDiagramWorkspace(

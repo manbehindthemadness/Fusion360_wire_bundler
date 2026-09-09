@@ -362,6 +362,7 @@ def test_native_dialog_bootstrap_owns_open_capture_and_cleanup_in_one_request() 
     assert script.count("fusion_mcp_execute") == 0
 
 
+# noinspection DuplicatedCode
 def test_desktop_ui_oracle_compares_two_ephemeral_stable_captures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -370,6 +371,11 @@ def test_desktop_ui_oracle_compares_two_ephemeral_stable_captures(
     """
     bounds = qa_orchestrator.PaletteBounds(10, 20, 840, 760)
     captures = [SimpleNamespace(png=b"first"), SimpleNamespace(png=b"second")]
+    monkeypatch.setattr(
+        qa_orchestrator,
+        "_read_relationship_diagram_observation",
+        lambda *_args: {"status": "passed", "connectorCount": 2, "maximumEndpointGap": 0.0},
+    )
     monkeypatch.setattr(qa_orchestrator, "_read_palette_bounds", lambda *_args: bounds)
     monkeypatch.setattr(
         "experiments.qa_orchestrator.capture_harness_builder_window",
@@ -395,6 +401,7 @@ def test_desktop_ui_oracle_compares_two_ephemeral_stable_captures(
     assert result["capturesPurged"] is True
 
 
+# noinspection DuplicatedCode
 def test_desktop_ui_oracle_fails_when_stable_palette_changes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -403,6 +410,11 @@ def test_desktop_ui_oracle_fails_when_stable_palette_changes(
     """
     bounds = qa_orchestrator.PaletteBounds(10, 20, 840, 760)
     captures = [SimpleNamespace(png=b"first"), SimpleNamespace(png=b"second")]
+    monkeypatch.setattr(
+        qa_orchestrator,
+        "_read_relationship_diagram_observation",
+        lambda *_args: {"status": "passed", "connectorCount": 2, "maximumEndpointGap": 0.0},
+    )
     monkeypatch.setattr(qa_orchestrator, "_read_palette_bounds", lambda *_args: bounds)
     monkeypatch.setattr(
         "experiments.qa_orchestrator.capture_harness_builder_window",
@@ -424,6 +436,7 @@ def test_desktop_ui_oracle_fails_when_stable_palette_changes(
     assert result["capturesPurged"] is True
 
 
+# noinspection DuplicatedCode
 def test_desktop_ui_oracle_fails_when_palette_moves_between_captures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -435,6 +448,11 @@ def test_desktop_ui_oracle_fails_when_palette_moves_between_captures(
         qa_orchestrator.PaletteBounds(0, 30, 840, 760),
     ]
     captures = [SimpleNamespace(png=b"first"), SimpleNamespace(png=b"second")]
+    monkeypatch.setattr(
+        qa_orchestrator,
+        "_read_relationship_diagram_observation",
+        lambda *_args: {"status": "passed", "connectorCount": 2, "maximumEndpointGap": 0.0},
+    )
     monkeypatch.setattr(
         qa_orchestrator,
         "_read_palette_bounds",
@@ -460,6 +478,57 @@ def test_desktop_ui_oracle_fails_when_palette_moves_between_captures(
     assert comparison["palette_bounds_stable"] is False
     assert "moved or resized" in result["error"]
     assert result["capturesPurged"] is True
+
+
+# noinspection DuplicatedCode
+def test_desktop_ui_oracle_fails_disconnected_relationship_diagram(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Reject a stable screenshot when the DOM geometry reports a connector gap.
+    """
+    bounds = qa_orchestrator.PaletteBounds(10, 20, 840, 760)
+    captures = [SimpleNamespace(png=b"first"), SimpleNamespace(png=b"second")]
+    monkeypatch.setattr(
+        qa_orchestrator,
+        "_read_relationship_diagram_observation",
+        lambda *_args: {"status": "failed", "connectorCount": 2, "maximumEndpointGap": 8.0},
+    )
+    monkeypatch.setattr(qa_orchestrator, "_read_palette_bounds", lambda *_args: bounds)
+    monkeypatch.setattr(
+        "experiments.qa_orchestrator.capture_harness_builder_window",
+        lambda _bounds: captures.pop(0),
+    )
+    monkeypatch.setattr(
+        "experiments.qa_orchestrator.desktop_capture_observation",
+        lambda _capture: {"purged": True},
+    )
+    monkeypatch.setattr(
+        "experiments.qa_orchestrator.compare_pngs",
+        lambda first, second: ImageDifference(0.0, 0.0, 0),
+    )
+
+    result = qa_orchestrator._run_desktop_ui_oracle("local", 1.0)
+
+    assert result["status"] == "failed"
+    assert "disconnected rendered edges" in result["error"]
+    assert result["diagramObservation"] == {
+        "status": "failed",
+        "connectorCount": 2,
+        "maximumEndpointGap": 8.0,
+    }
+
+
+def test_diagram_observation_script_targets_only_harness_builder_palette() -> None:
+    """
+    Keep diagram visual QA fixed to the consent-gated Harness Builder target.
+    """
+    script = qa_orchestrator._diagram_observation_script()
+
+    assert "observe_relationship_diagram" in script
+    assert "kev0_wire_bundler_harness_builder_palette" in script
+    assert "_last_diagram_qa_observation" in script
+    assert "fusion_mcp_execute" not in script
 
 
 def test_fusion_bootstrap_refreshes_dependencies_before_importing_suite() -> None:

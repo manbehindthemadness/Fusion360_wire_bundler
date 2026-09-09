@@ -5,6 +5,7 @@ Fusion 360 lifecycle and command registration.
 from __future__ import annotations
 
 import json
+import math
 import traceback
 from dataclasses import asdict
 from pathlib import Path
@@ -155,6 +156,7 @@ _pending_wire_harness_id: Optional[UUID] = None
 _pending_wire_pathway_id: Optional[UUID] = None
 _pending_palette_edit: Optional[tuple[str, str, object]] = None
 _last_command_error = ""
+_last_diagram_qa_observation: Optional[dict[str, object]] = None
 _history_handler: Optional[_HistoryChangedHandler] = None
 _document_saving_handler: Optional[_DocumentSavingHandler] = None
 _document_saved_handler: Optional[_DocumentSavedHandler] = None
@@ -1159,6 +1161,8 @@ class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
         Args:
             args: HTML event arguments supplied by Fusion.
         """
+        global _last_diagram_qa_observation
+
         html_args = None
         try:
             html_args = adsk.core.HTMLEventArgs.cast(args)
@@ -1245,6 +1249,41 @@ class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
                 return
             if html_args.action == "clear_highlight":
                 _clear_highlight(application)
+                html_args.returnData = json.dumps({"ok": True})
+                return
+            if html_args.action == "qa_diagram_observation":
+                payload = _read_palette_payload(html_args.data)
+                status = payload.get("status")
+                connector_count = payload.get("connectorCount")
+                maximum_gap = payload.get("maximumEndpointGap")
+                contract_version = payload.get("contractVersion")
+                layout = payload.get("layout")
+                if status not in {"passed", "failed", "skipped"}:
+                    raise ValueError("Diagram QA observation has an invalid status.")
+                if (
+                    isinstance(connector_count, bool)
+                    or not isinstance(connector_count, int)
+                    or connector_count < 0
+                ):
+                    raise ValueError("Diagram QA connector count must be nonnegative.")
+                if (
+                    isinstance(maximum_gap, bool)
+                    or not isinstance(maximum_gap, (int, float))
+                    or not math.isfinite(float(maximum_gap))
+                    or float(maximum_gap) < 0
+                ):
+                    raise ValueError("Diagram QA endpoint gap must be finite and nonnegative.")
+                if contract_version != "1":
+                    raise ValueError("Diagram QA contract version is unsupported.")
+                if layout != "flexible-layered-graph":
+                    raise ValueError("Diagram QA layout is unsupported.")
+                _last_diagram_qa_observation = {
+                    "status": status,
+                    "connectorCount": connector_count,
+                    "maximumEndpointGap": float(maximum_gap),
+                    "contractVersion": contract_version,
+                    "layout": layout,
+                }
                 html_args.returnData = json.dumps({"ok": True})
                 return
             html_args.returnData = json.dumps(

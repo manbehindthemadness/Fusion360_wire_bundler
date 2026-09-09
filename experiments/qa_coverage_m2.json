@@ -96,11 +96,11 @@
     {
       "id": "M2-REL-001",
       "area": "relationship-diagrams",
-      "behavior": "Top-level and per-wire diagrams branch vertically through pathway, junction, and pathway nodes inside zoomable, pannable floating block-diagram canvases; each projection preserves wire styling, navigation, collapse controls, correct scope, and the same permitted segment mutations.",
+      "behavior": "Relationship-diagram contract version 1 fixes the top-level and per-wire views as zoomable, pannable rounded-node graphs with continuous measured edges, preserved wire styling, navigation, collapse controls, filtering, and highlighting. The master projection places each junction in a standalone node, traces its parent pathway through the junction to each real attached pathway-end node, and uses a flexible layered layout: independent pathways share horizontal layers, siblings may sit side by side above or below their parent, and pathway nodes widen to cover the junction span. Independently drawn end/pathway nodes remain in transparent positional groups and compact empty ends use short neutral placeholder traces. Diagram operations migrate one at a time with focused QA while the stacked controls remain the QA surface.",
       "status": "partial",
       "layers": ["pytest", "palette", "fusion-api", "mcp", "os-window"],
-      "evidence": ["tests/test_relationship_map.py", "tests/test_palette.cjs"],
-      "capabilities": []
+      "evidence": ["tests/test_relationship_map.py", "tests/test_palette.cjs", "tests/test_qa_orchestrator.py", "tests/test_addin_palette_lifecycle.py"],
+      "capabilities": ["versioned-diagram-contract", "rendered-node-boundary-measurement", "continuous-edge-overlay", "layered-graph-layout", "sibling-junction-placement", "adaptive-pathway-width", "incremental-diagram-edit-migration", "diagram-endpoint-gap-oracle", "exact-window-pixel-capture"]
     },
     {
       "id": "M2-UNIT-001",

@@ -603,24 +603,23 @@ button.route-node:hover { border-color: var(--accent); color: var(--accent); }
   overflow: hidden;
   background: #dfe5ea;
 }
-.relationship-pathway-stack { display: grid; gap: 10px; min-width: 760px; padding: 10px; }
-.relationship-pathway-card {
+.relationship-pathway-stack {
+  position: relative;
+  min-width: 760px;
+}
+.relationship-pathway-group {
+  position: absolute;
+  z-index: 1;
   display: grid;
   grid-template-columns: minmax(210px, 1fr) 54px 170px 54px minmax(210px, 1fr);
   align-items: stretch;
   gap: 4px;
-  border: 1px solid #d5dde4;
-  border-radius: 7px;
-  padding: 10px;
-  background: var(--surface);
 }
-.relationship-junction-branches {
-  grid-column: 3;
+.relationship-junction-chain {
+  position: absolute;
+  z-index: 1;
   display: grid;
-  justify-items: center;
-  gap: 6px;
-  padding-top: 18px;
-  border-top: 3px solid #7b9ab2;
+  place-items: center;
 }
 .relationship-junction-node {
   min-width: 130px;
@@ -631,12 +630,39 @@ button.route-node:hover { border-color: var(--accent); color: var(--accent); }
   color: var(--text);
   cursor: pointer;
 }
+.relationship-junction-overlay {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.relationship-junction-edge {
+  fill: none;
+  stroke: #7b9ab2;
+  stroke-width: 7px;
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+}
 .relationship-end-list {
   align-self: center;
   margin: 0;
   border: 1px solid #d9e1e7;
   border-radius: 5px;
 }
+.relationship-end-list.empty {
+  align-self: center;
+  width: max-content;
+  min-width: 0;
+}
+.relationship-end-list.empty[data-endpoint="start"] { justify-self: end; }
+.relationship-end-list.empty[data-endpoint="end"] { justify-self: start; }
+.relationship-end-list.empty > summary {
+  white-space: nowrap;
+}
+.relationship-end-list.empty > summary::after { display: none; }
 .relationship-end-list[open] {
   align-self: stretch;
   display: grid;
@@ -700,6 +726,7 @@ button.route-node:hover { border-color: var(--accent); color: var(--accent); }
   stroke-linecap: round;
 }
 .relationship-connector .aggregate-trace { stroke: #7b9ab2; stroke-width: 1.5; }
+.relationship-connector .placeholder-trace { stroke: #9aaab6; stroke-width: 1.5; }
 .relationship-connector .wire-trace { stroke-width: 7; }
 .relationship-connector .stripe-trace { stroke-width: 1.4; }
 .wire-relationship-graphic {
