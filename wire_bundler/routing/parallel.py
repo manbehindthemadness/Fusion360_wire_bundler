@@ -15,14 +15,6 @@ from .geometry import CubicBezier, Vector3
 class GateFrame:
     """
     Describe a circular routing aperture in model coordinates.
-
-    Args:
-        gate_id: Persistent routing-control identity.
-        name: User-facing gate name.
-        origin: Aperture center in millimeters.
-        u_direction: Unit direction along the local gate X axis.
-        v_direction: Unit direction along the local gate Y axis.
-        usable_radius_mm: Circular usable aperture radius.
     """
 
     gate_id: UUID
@@ -38,14 +30,7 @@ class WireRouteInput:
     """
     Describe one wire requiring a route through shared gates.
 
-    Args:
-        wire_id: Persistent conductor identity.
-        wire_number: Stable user-facing identifier.
-        start: Source-profile center in millimeters.
-        end: Destination-profile center in millimeters.
-        diameter_mm: Finished wire diameter.
-        start_guides: Additional end-A centers, ordered from terminal toward pathway.
-        end_guides: Additional end-B centers, ordered from terminal toward pathway.
+    End guides run from each terminal toward the shared pathway.
     """
 
     wire_id: UUID
@@ -62,11 +47,7 @@ class RoutePreview:
     """
     Store one lightweight centerline preview.
 
-    Args:
-        wire_id: Persistent conductor identity.
-        wire_number: Stable user-facing identifier.
-        points: Source, ordered gate crossings, and destination.
-        curves: Exact local cubic transitions, populated by the fairing stage.
+    Points retain traversal order; fairing may add exact local cubic transitions.
     """
 
     wire_id: UUID
@@ -83,10 +64,6 @@ class GateCapacityError(ValueError):
     def __init__(self, gate: GateFrame, wire_count: int) -> None:
         """
         Initialize an actionable capacity error.
-
-        Args:
-            gate: Gate whose usable circular aperture is too small.
-            wire_count: Number of wires requested at the gate.
         """
         self.gate_id = gate.gate_id
         self.gate_name = gate.name
@@ -107,14 +84,6 @@ def solve_parallel_routes(
 
     This milestone returns piecewise-linear centerlines. Curvature fairing is a
     later solver stage and does not change the persistent wire-to-slot mapping.
-
-    Args:
-        wires: Wires in stable packing order.
-        gates: Circular routing gates in traversal order.
-        clearance_mm: Additional edge-to-edge separation between wires.
-
-    Returns:
-        One ordered point sequence per wire.
 
     Raises:
         ValueError: If input dimensions or frames are invalid.
@@ -154,15 +123,7 @@ def _pack_gate(
     clearance_mm: float,
 ) -> tuple[Vector3, ...]:
     """
-    Place wire centers on a deterministic hexagonal lattice at one gate.
-
-    Args:
-        wires: Wires in stable packing order.
-        gate: Circular aperture and local coordinate frame.
-        clearance_mm: Additional edge-to-edge wire separation.
-
-    Returns:
-        Model-space crossing points corresponding to the input wires.
+    Place input-ordered wire centers on a deterministic hexagonal lattice.
     """
     _validate_gate(gate)
     largest_radius = max(wire.diameter_mm for wire in wires) / 2.0
@@ -184,13 +145,6 @@ def _pack_gate(
 def _hexagonal_offsets(count: int, spacing: float) -> tuple[tuple[float, float], ...]:
     """
     Return center-first points on concentric six-position lattice rings.
-
-    Args:
-        count: Number of offsets required.
-        spacing: Center-to-center lattice spacing.
-
-    Returns:
-        Local gate-plane offsets in deterministic order.
     """
     offsets: list[tuple[float, float]] = [(0.0, 0.0)]
     ring = 1
@@ -315,9 +269,6 @@ def _circle_contains(circle: tuple[float, float, float], point: tuple[float, flo
 def _validate_gate(gate: GateFrame) -> None:
     """
     Require a finite aperture and orthonormal in-plane directions.
-
-    Args:
-        gate: Gate frame to validate.
     """
     values = (
         gate.origin.x,
@@ -347,12 +298,6 @@ def _validate_gate(gate: GateFrame) -> None:
 def _length(vector: Vector3) -> float:
     """
     Return a vector magnitude.
-
-    Args:
-        vector: Vector to measure.
-
-    Returns:
-        Euclidean magnitude.
     """
     return math.sqrt(_dot(vector, vector))
 
@@ -360,12 +305,5 @@ def _length(vector: Vector3) -> float:
 def _dot(left: Vector3, right: Vector3) -> float:
     """
     Return the scalar product of two vectors.
-
-    Args:
-        left: First vector.
-        right: Second vector.
-
-    Returns:
-        Scalar product.
     """
     return left.x * right.x + left.y * right.y + left.z * right.z

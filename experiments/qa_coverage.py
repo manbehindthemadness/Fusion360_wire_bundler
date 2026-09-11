@@ -32,17 +32,6 @@ VALID_LAYERS = frozenset(
 class CoverageTarget:
     """
     Describe the automation state of one stable acceptance target.
-
-    Args:
-        target_id: Stable milestone-scoped target identifier.
-        area: Product or infrastructure area covered by the target.
-        behavior: Observable behavior that must be verified.
-        status: Current automation status.
-        layers: Test or experiment layers used or proposed.
-        evidence: Repository files that currently exercise the target.
-        capabilities: Host controls or observations still required.
-        manual_reason: Why the target cannot currently be fully automated.
-        review_trigger: Event that should cause a new automation attempt.
     """
 
     target_id: str
@@ -60,12 +49,6 @@ class CoverageTarget:
 class CoverageLedger:
     """
     Hold one validated milestone coverage inventory.
-
-    Args:
-        schema_version: Ledger format version.
-        milestone: Milestone whose acceptance targets are inventoried.
-        required_platforms: Operating systems required for milestone completion.
-        targets: Ordered coverage targets.
     """
 
     schema_version: int
@@ -76,9 +59,6 @@ class CoverageLedger:
     def counts_by_status(self) -> dict[str, int]:
         """
         Count targets in each automation state.
-
-        Returns:
-            Mapping from status to target count.
         """
         counts = Counter(target.status for target in self.targets)
         return {status: counts.get(status, 0) for status in sorted(VALID_STATUSES)}
@@ -87,12 +67,6 @@ class CoverageLedger:
 def load_coverage_ledger(path: Optional[Path] = None) -> CoverageLedger:
     """
     Load and validate a QA coverage ledger.
-
-    Args:
-        path: Optional ledger path. The repository M0 ledger is used by default.
-
-    Returns:
-        Validated immutable coverage ledger.
 
     Raises:
         ValueError: If JSON content or any ledger field is malformed.
@@ -132,13 +106,6 @@ def load_coverage_ledger(path: Optional[Path] = None) -> CoverageLedger:
 def _parse_target(raw_target: object, index: int) -> CoverageTarget:
     """
     Validate and convert one target payload.
-
-    Args:
-        raw_target: Untrusted decoded target value.
-        index: Target position used in validation errors.
-
-    Returns:
-        Validated immutable coverage target.
     """
     if not isinstance(raw_target, dict):
         raise ValueError(f"QA coverage target {index} must be an object.")

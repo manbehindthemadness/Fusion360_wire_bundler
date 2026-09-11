@@ -78,12 +78,6 @@ FUSION_SCENARIO_NAMES = (
 class CheckResult:
     """
     Describe one local or live QA operation.
-
-    Args:
-        name: Stable operation identifier.
-        status: Passed, failed, skipped, or deferred.
-        elapsed_ms: Wall-clock operation duration.
-        detail: Concise diagnostic or output tail.
     """
 
     name: str
@@ -96,11 +90,6 @@ class CheckResult:
 class HttpResponse:
     """
     Retain the relevant result of one MCP HTTP request.
-
-    Args:
-        status: HTTP response status.
-        headers: Case-normalized response headers.
-        body: Decoded response body.
     """
 
     status: int
@@ -124,11 +113,6 @@ class McpClient:
     ) -> None:
         """
         Configure the endpoint and injectable HTTP transport.
-
-        Args:
-            endpoint: Streamable HTTP MCP endpoint.
-            timeout_seconds: Timeout for each MCP request.
-            transport: Optional transport used by unit tests.
         """
         self.endpoint = endpoint
         self.timeout_seconds = timeout_seconds
@@ -139,9 +123,6 @@ class McpClient:
     def initialize(self) -> dict[str, object]:
         """
         Negotiate an MCP session and send the initialized notification.
-
-        Returns:
-            MCP initialize result.
         """
         response = self._request(
             "POST",
@@ -179,13 +160,6 @@ class McpClient:
     def call_tool(self, name: str, arguments: dict[str, object]) -> dict[str, object]:
         """
         Invoke one MCP tool in the initialized session.
-
-        Args:
-            name: Advertised MCP tool name.
-            arguments: Tool arguments matching its input schema.
-
-        Returns:
-            Tool call result object.
         """
         if not self.session_id:
             raise RuntimeError("Fusion MCP client is not initialized.")
@@ -270,19 +244,6 @@ def run_qa(
 ) -> tuple[int, Path]:
     """
     Run the selected QA layers and write one aggregate report.
-
-    Args:
-        run_local: Execute pytest, palette, Ruff, formatting, and diff checks.
-        run_fusion: Execute the cleanup-safe in-host Fusion suite through MCP.
-        mcp_url: Local Fusion MCP endpoint.
-        command_timeout_seconds: Timeout for each local subprocess.
-        fusion_timeout_seconds: Timeout for each MCP request.
-        capture_desktop_ui: Opt into permission-requiring Fusion-window capture.
-        local_checks: Optional ordered subset of local check names.
-        fusion_scenarios: Optional ordered subset of structural Fusion scenarios.
-
-    Returns:
-        Process exit code and aggregate JSON report path.
     """
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     started_at = datetime.now(timezone.utc)
@@ -355,12 +316,6 @@ def run_qa(
 def main(arguments: Optional[Sequence[str]] = None) -> int:
     """
     Parse command-line options, run QA, and print the final report location.
-
-    Args:
-        arguments: Optional argument sequence for tests; defaults to ``sys.argv``.
-
-    Returns:
-        Zero only when every selected automated layer passes.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
@@ -548,9 +503,6 @@ def _run_fusion_suite(
 def _run_desktop_ui_oracle(endpoint: str, timeout_seconds: float) -> dict[str, object]:
     """
     Compare two verified captures of the stable Fusion palette when explicitly requested.
-
-    Returns:
-        Passed metadata, a non-failing unavailable result, or a safety failure.
     """
     try:
         diagram_observation = _read_relationship_diagram_observation(
@@ -907,13 +859,6 @@ def _same_desktop_window(first: object, second: object) -> bool:
 def _read_palette_bounds(endpoint: str, timeout_seconds: float) -> PaletteBounds:
     """
     Read the fixed Harness Builder palette geometry through Fusion's API.
-
-    Args:
-        endpoint: Local Fusion MCP endpoint.
-        timeout_seconds: Timeout for each MCP operation.
-
-    Returns:
-        Validated visible palette bounds used only to select a Fusion-owned window.
     """
     client = McpClient(endpoint, timeout_seconds)
     payload: dict[str, object] = {}
@@ -990,12 +935,6 @@ def _finite_number(value: object, label: str) -> float:
 def _run_preview_visual_oracle(client: McpClient) -> dict[str, object]:
     """
     Advance the preview lifecycle around normalized MCP screenshots.
-
-    Args:
-        client: Initialized MCP client shared with the structural Fusion suite.
-
-    Returns:
-        JSON-safe comparison metrics, phase state, and status.
     """
     images: dict[str, bytes] = {}
     phases: list[dict[str, object]] = []
@@ -1048,12 +987,6 @@ def _run_preview_visual_oracle(client: McpClient) -> dict[str, object]:
 def _run_generated_visual_oracle(client: McpClient) -> dict[str, object]:
     """
     Compare striped-wire presentation across visibility, viewpoint, and lifecycle phases.
-
-    Args:
-        client: Initialized MCP client shared with the structural Fusion suite.
-
-    Returns:
-        JSON-safe comparison metrics, phase state, and status.
     """
     images: dict[str, bytes] = {}
     phases: list[dict[str, object]] = []
@@ -1437,13 +1370,6 @@ def _parse_execute_result(
 ) -> dict[str, object]:
     """
     Extract one prefixed JSON object from Fusion MCP's nested execute result.
-
-    Args:
-        tool_result: Raw MCP tool result.
-        result_prefix: Sentinel prefix written by the submitted in-host script.
-
-    Returns:
-        Decoded JSON object following the final matching sentinel.
     """
     content = tool_result.get("content")
     if not isinstance(content, list):

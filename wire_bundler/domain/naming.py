@@ -16,13 +16,7 @@ def next_available_name(requested_name: str, unavailable_names: Iterable[str]) -
 
     Existing trailing digits retain their width. A conflicting name without a
     numeric suffix receives ``_2`` because the unsuffixed name is the first item.
-
-    Args:
-        requested_name: Preferred user-facing name.
-        unavailable_names: Names that cannot be reused, compared case-insensitively.
-
-    Returns:
-        A non-conflicting name.
+    Conflicts are compared case-insensitively.
 
     Raises:
         ValueError: If the requested name is blank after trimming.

@@ -68,13 +68,6 @@ _SESSION: Optional[_VisualSession] = None
 def dispatch(action: str) -> dict[str, object]:
     """
     Advance or clean the visual lifecycle fixture.
-
-    Args:
-        action: One of begin, normalize, show-preview, save-reload, show-fresh,
-            clear, or cleanup.
-
-    Returns:
-        JSON-safe structural state after the requested phase.
     """
     actions = {
         "begin": _begin,

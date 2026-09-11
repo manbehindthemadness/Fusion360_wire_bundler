@@ -50,14 +50,6 @@ def suggest_pathway_name(
 ) -> str:
     """
     Return a normalized conflict-free pathway name for one harness.
-
-    Args:
-        harness_id: Harness that will own the pathway.
-        requested_name: Preferred user-facing pathway name.
-        gateway: Persistence boundary for the owning harness.
-
-    Returns:
-        First available pathway name.
     """
     normalized_name = requested_name.strip()
     if not normalized_name:
@@ -79,18 +71,7 @@ def add_pathway(
     """
     Append an ordered pathway and atomically persist the updated definition.
 
-    Args:
-        harness_id: Harness that will own the new pathway.
-        name: Preferred user-facing pathway name.
-        routing_mode: Routing strategy for the selected gates.
-        gate_entity_tokens: Pathway-control profile tokens in traversal order.
-            Connection-owned end profiles are not pathway gates; they still
-            participate in downstream centerline fairing and solid sweeps.
-        gateway: Persistence boundary for the owning harness.
-        id_factory: UUID factory, injectable for deterministic tests.
-
-    Returns:
-        The newly persisted pathway.
+    Gate tokens follow traversal order and exclude connection-owned end profiles.
 
     Raises:
         ValueError: If the pathway name or gate selections are invalid.

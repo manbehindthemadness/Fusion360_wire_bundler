@@ -17,8 +17,5 @@ from experiments.experiment_fusion_capabilities import run as run_capability_aud
 def run(context: object) -> None:
     """
     Delegate execution to the repository-owned Fusion capability audit.
-
-    Args:
-        context: Context supplied by Fusion's script host.
     """
     run_capability_audit(context)

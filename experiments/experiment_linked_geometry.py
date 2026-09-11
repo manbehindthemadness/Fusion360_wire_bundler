@@ -44,9 +44,6 @@ ARTIFACT_ROOT = ADDIN_ROOT / "artifacts" / "verification"
 def run(_context: object) -> None:
     """
     Run the disposable linked-geometry scenario and display its result.
-
-    Args:
-        _context: Context supplied by the Fusion script host.
     """
     report = ScenarioReport(SCENARIO_NAME, ARTIFACT_ROOT, _log_to_fusion)
     application: Optional[adsk.core.Application] = None
@@ -77,10 +74,6 @@ def verify_linked_geometry(
 ) -> None:
     """
     Delete one endpoint, reload, and verify the damage remains isolated.
-
-    Args:
-        application: Active Fusion application.
-        report: Durable scenario report.
     """
     previous_document = application.activeDocument
     initial_document_count = application.documents.count
@@ -222,9 +215,6 @@ def _require_application() -> adsk.core.Application:
 def _log_to_fusion(message: str) -> None:
     """
     Mirror linked-geometry progress into Fusion's application log.
-
-    Args:
-        message: Timestamped scenario log line.
     """
     adsk.core.Application.log(
         f"Wire Bundler linked geometry: {message}",

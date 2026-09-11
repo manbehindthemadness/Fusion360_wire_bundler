@@ -17,8 +17,5 @@ from experiments.experiment_command_history import run as run_command_history  #
 def run(context: object) -> None:
     """
     Delegate execution to the repository-owned command-history scenario.
-
-    Args:
-        context: Context supplied by Fusion's script host.
     """
     run_command_history(context)

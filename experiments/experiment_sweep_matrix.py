@@ -68,11 +68,6 @@ def verify_sweep_matrix(
 ) -> None:
     """
     Execute every Sweep case and optionally retain the isolated design.
-
-    Args:
-        application: Active Fusion application.
-        report: Durable scenario report.
-        retain_document: Keep the isolated design open for interactive inspection.
     """
     previous_document = application.activeDocument
     document: Optional[adsk.core.Document] = None

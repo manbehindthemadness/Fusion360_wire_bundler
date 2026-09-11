@@ -57,11 +57,6 @@ class DesktopCaptureSafetyError(RuntimeError):
 class FusionProcess:
     """
     Store a verified Autodesk Fusion process identity.
-
-    Args:
-        pid: Operating-system process identifier.
-        executable: Absolute path to the running main executable.
-        bundle_path: Absolute path to the enclosing Autodesk Fusion application.
     """
 
     pid: int
@@ -73,16 +68,6 @@ class FusionProcess:
 class FusionWindow:
     """
     Store a Core Graphics window identity and layout bounds.
-
-    Args:
-        window_id: Core Graphics window identifier used for exact-window capture.
-        owner_pid: Verified Fusion process that owns the window.
-        owner_name: Core Graphics owner label.
-        title: Core Graphics window title, which may be empty.
-        x: Global screen X coordinate.
-        y: Global screen Y coordinate.
-        width: Window width in points.
-        height: Window height in points.
     """
 
     window_id: int
@@ -99,12 +84,6 @@ class FusionWindow:
 class PaletteBounds:
     """
     Store trusted Harness Builder geometry read from Fusion's Palette API.
-
-    Args:
-        left: Palette X coordinate in Fusion's desktop coordinate system.
-        top: Palette Y coordinate in Fusion's desktop coordinate system.
-        width: Palette width in points.
-        height: Palette height in points.
     """
 
     left: float
@@ -117,10 +96,6 @@ class PaletteBounds:
 class DesktopCapture:
     """
     Return ephemeral pixels and non-sensitive window metadata to the caller.
-
-    Args:
-        png: Captured image bytes held only in memory.
-        window: Verified Fusion window metadata.
     """
 
     png: bytes
@@ -130,9 +105,6 @@ class DesktopCapture:
 def capture_harness_builder_window(palette_bounds: PaletteBounds) -> DesktopCapture:
     """
     Capture the exact visible Harness Builder window on a macOS development host.
-
-    Returns:
-        PNG bytes in memory and verified window metadata.
 
     Raises:
         DesktopCaptureUnavailable: If the host, permission, or window is unavailable.
@@ -151,9 +123,6 @@ def capture_harness_builder_window(palette_bounds: PaletteBounds) -> DesktopCapt
 def capture_fusion_main_window() -> DesktopCapture:
     """
     Capture Fusion's unique largest visible application window on macOS.
-
-    Returns:
-        PNG bytes in memory and verified window metadata.
 
     Raises:
         DesktopCaptureUnavailable: If the host, permission, or window is unavailable.
@@ -208,12 +177,6 @@ def _capture_verified_window(window: FusionWindow) -> DesktopCapture:
 def desktop_capture_observation(capture: DesktopCapture) -> dict[str, object]:
     """
     Return report-safe metadata without retaining or serializing image pixels.
-
-    Args:
-        capture: Completed ephemeral Fusion-window capture.
-
-    Returns:
-        Window bounds, decoded pixel dimensions, and purge state.
     """
     decoded = decode_png(capture.png)
     return {

@@ -124,9 +124,6 @@ class _CommandCaptureHandler(adsk.core.CommandCreatedEventHandler):
     def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
         """
         Capture the live command after its production creation handlers run.
-
-        Args:
-            args: Fusion command-created event arguments.
         """
         self.command = args.command
 
@@ -134,9 +131,6 @@ class _CommandCaptureHandler(adsk.core.CommandCreatedEventHandler):
 def run(_context: object) -> None:
     """
     Run the command-history scenario and display its result inside Fusion.
-
-    Args:
-        _context: Context supplied by the Fusion script host.
     """
     report = ScenarioReport(SCENARIO_NAME, ARTIFACT_ROOT, _log_to_fusion)
     application: Optional[adsk.core.Application] = None
@@ -169,10 +163,6 @@ def verify_command_history(
 ) -> None:
     """
     Exercise production lifecycle commands through native Undo and Redo.
-
-    Args:
-        application: Active Fusion application.
-        report: Durable scenario report.
     """
     previous_document = application.activeDocument
     test_document: Optional[adsk.core.Document] = None
@@ -371,13 +361,6 @@ def build_single_wire_fixture(
 ) -> FusionHarnessGateway:
     """
     Create a deterministic one-wire harness for history verification.
-
-    Args:
-        application: Active Fusion application.
-        design: Isolated design receiving the fixture.
-
-    Returns:
-        Gateway bound to the completed fixture.
     """
     root_component = design.rootComponent
     source = _create_circular_profile(root_component, 0.0, 0.0, 0.0, 0.12, "QA Source")
@@ -427,10 +410,6 @@ def _augment_command_fixture(
 ) -> None:
     """
     Add a second gate and endpoint guides for order and removal history cases.
-
-    Args:
-        design: Isolated command-history design.
-        gateway: Persistence gateway bound to the fixture.
     """
     root = design.rootComponent
     second_gate = _create_circular_profile(root, 7.5, 0.0, 0.0, 0.8, "QA Gate 2")
@@ -471,15 +450,6 @@ def _verify_selection_backed_history(
 ) -> list[str]:
     """
     Exercise every selection-backed production command through Undo and Redo.
-
-    Args:
-        application: Active Fusion application.
-        design: Isolated command-history design.
-        gateway: Persistence gateway bound to the fixture.
-        report: Scenario report receiving named command steps.
-
-    Returns:
-        Ordered native command operations exercised by the driver.
     """
     root = design.rootComponent
     pathway_gate = _create_circular_profile(root, 6.0, 1.5, 0.0, 0.7, "QA New Path Gate")
@@ -638,11 +608,6 @@ def _verify_native_selection_case(
 ) -> None:
     """
     Execute one real selection command and verify its complete history cycle.
-
-    Args:
-        application: Active Fusion application.
-        gateway: Persistence gateway bound to the fixture.
-        case: Native command, input population, and expected result.
     """
     _verify_definition_history(
         application,
@@ -664,10 +629,6 @@ def _execute_native_input_command(
     Autodesk permits programmatic selection population after ``commandCreated``;
     the captured command is therefore configured only after the production opener
     returns and Fusion has activated the dialog.
-
-    Args:
-        application: Active Fusion application.
-        case: Command opener and input configuration.
     """
     user_interface = application.userInterface
     wait_for(
@@ -723,10 +684,6 @@ def _assert_native_dialog_inputs(
 ) -> None:
     """
     Verify that one live native dialog exposes readable, usable production inputs.
-
-    Args:
-        inputs: Inputs owned by the captured production command.
-        case: Expected stable input identities and diagnostic name.
     """
     usable_inputs = 0
     for input_id in case.expected_input_ids:
@@ -747,10 +704,6 @@ def _restore_default_select_command(
 ) -> None:
     """
     Restore Fusion's default command after programmatic dialog acceptance.
-
-    Args:
-        application: Active Fusion application.
-        description: Completed operation used in diagnostics.
     """
     user_interface = application.userInterface
     if str(user_interface.activeCommand) == "SelectCommand":
@@ -771,10 +724,6 @@ def _set_profile_selections(
 ) -> None:
     """
     Populate real native selection inputs with deterministic sketch profiles.
-
-    Args:
-        inputs: Live production command inputs.
-        selections: Input IDs paired with ordered profile entities.
     """
     for input_id, entities in selections:
         selection_input = adsk.core.SelectionCommandInput.cast(inputs.itemById(input_id))
@@ -869,11 +818,6 @@ def _verify_multi_wire_endpoint_history(
 ) -> None:
     """
     Add a second fixture wire and verify endpoint-sequence history for the first.
-
-    Args:
-        application: Active Fusion application.
-        design: Isolated command-history design.
-        gateway: Persistence gateway bound to the fixture.
     """
     root = design.rootComponent
     source = _create_circular_profile(root, 0.0, 0.3, 0.0, 0.12, "QA Source 2")
@@ -919,14 +863,6 @@ def _verify_persistent_edit_matrix(
 ) -> list[str]:
     """
     Verify one native transaction and palette projection for every matrix edit.
-
-    Args:
-        application: Active Fusion application.
-        gateway: Persistence gateway bound to the command fixture.
-        report: Scenario report receiving named edit steps.
-
-    Returns:
-        Ordered palette action names exercised by the matrix.
     """
     actions: list[str] = []
     for case in _persistent_edit_cases(gateway):
@@ -943,11 +879,6 @@ def _verify_persistent_edit_case(
 ) -> None:
     """
     Prove one edit, Undo, Redo, and final restoration against data and palette state.
-
-    Args:
-        application: Active Fusion application.
-        gateway: Persistence gateway bound to the command fixture.
-        case: Action payload and expected-state predicate.
     """
     dom_observer: Optional[Callable[[HarnessDefinition, str], None]] = None
     if case.observe_palette_dom:
@@ -980,15 +911,6 @@ def _verify_definition_history(
 ) -> None:
     """
     Verify edit, Undo, Redo, and restoration against data and palette state.
-
-    Args:
-        application: Active Fusion application.
-        gateway: Persistence gateway bound to the command fixture.
-        description: Operation label used in timeout diagnostics.
-        execute: Real production command invocation.
-        matches_expected: Predicate identifying the intended edited state.
-        palette_must_change: Whether the public projection exposes the changed field.
-        dom_observer: Optional live palette assertion after each history phase.
     """
     before = _read_definition(gateway)
     before_palette = _palette_harness_projection(application)
@@ -1053,11 +975,6 @@ def _observe_wire_palette_dom(
     The fixed JavaScript probe clears a known viewport selection only after it
     finds the requested harness and wire in the real DOM with the exact expected
     label. No selector or executable script crosses the palette boundary.
-
-    Args:
-        application: Active Fusion application.
-        definition: Persisted state expected in the palette.
-        phase: History phase used in timeout diagnostics.
     """
     wire = next((item for item in definition.wires if item.wire_id == WIRE_ID), None)
     if wire is None:
@@ -1107,10 +1024,6 @@ def _verify_wire_dialog_layout(
     The bounded palette probe opens the production dialog through its real button,
     checks its browser geometry and labeled controls, closes it without mutation,
     and clears a known Fusion selection only after every assertion passes.
-
-    Args:
-        application: Active Fusion application.
-        gateway: Persistence gateway bound to the fixture.
     """
     definition = _read_definition(gateway)
     _observe_wire_palette_dom(application, definition, "before dialog geometry")
@@ -1153,12 +1066,6 @@ def _await_palette_probe(
 ) -> None:
     """
     Repeat one asynchronous palette probe until its selection sentinel clears.
-
-    Args:
-        application: Active Fusion application.
-        palette: Visible Harness Builder palette.
-        payload: Fixed probe request serialized for the HTML boundary.
-        failure_message: Diagnostic raised when the probe does not signal success.
     """
     selections = application.userInterface.activeSelections
     deadline = monotonic() + 5.0
@@ -1180,11 +1087,6 @@ def _verify_profile_hover_selections(
 ) -> None:
     """
     Verify real diagram hover events for endpoint profiles and pathway gates.
-
-    Args:
-        application: Active Fusion application.
-        design: Command-history fixture design.
-        gateway: Persistence gateway bound to the fixture.
     """
     definition = _read_definition(gateway)
     wire = next(item for item in definition.wires if item.wire_id == WIRE_ID)
@@ -1219,13 +1121,6 @@ def _verify_profile_hover_selections(
 def _resolved_profile_token(design: adsk.fusion.Design, entity_token: str) -> str:
     """
     Require one stored token to resolve to a root-context sketch profile.
-
-    Args:
-        design: Fixture design used for token resolution.
-        entity_token: Persisted Fusion entity token.
-
-    Returns:
-        Token exposed by the resolved root-context profile.
     """
     entities = design.findEntityByToken(entity_token)
     profile = adsk.fusion.Profile.cast(entities[0] if entities else None)
@@ -1243,13 +1138,6 @@ def _verify_palette_hover_selection(
 ) -> None:
     """
     Dispatch one fixed DOM hover and inspect Fusion's exact active selections.
-
-    Args:
-        application: Active Fusion application.
-        definition: State expected in the live palette.
-        operation: Fixed hover operation understood by the QA probe.
-        expected_tokens: Exact root-context entities Fusion must select.
-        target: Bounded target fields such as endpoint or pathway identity.
     """
     _observe_wire_palette_dom(application, definition, f"before {operation}")
     palette = application.userInterface.palettes.itemById(PALETTE_ID)
@@ -1278,12 +1166,6 @@ def _verify_palette_hover_selection(
 def _active_selection_tokens(application: adsk.core.Application) -> tuple[str, ...]:
     """
     Return sorted tokens for the exact entities selected in Fusion's viewport.
-
-    Args:
-        application: Active Fusion application.
-
-    Returns:
-        Sorted persistent tokens for every selected entity that exposes one.
     """
     selections = application.userInterface.activeSelections
     tokens: list[str] = []
@@ -1299,12 +1181,6 @@ def _active_selection_tokens(application: adsk.core.Application) -> tuple[str, .
 def _reload_palette_resources(application: adsk.core.Application) -> str:
     """
     Reload local palette files for this development-only live scenario.
-
-    Args:
-        application: Active Fusion application.
-
-    Returns:
-        Original palette URL restored during scenario cleanup.
     """
     palette = _ensure_palette_visible(application)
     original_url = str(palette.htmlFileURL)
@@ -1319,12 +1195,6 @@ def _reload_palette_resources(application: adsk.core.Application) -> str:
 def _ensure_palette_visible(application: adsk.core.Application) -> adsk.core.Palette:
     """
     Open the palette through its host-owned launcher and return it when visible.
-
-    Args:
-        application: Active Fusion application.
-
-    Returns:
-        Registered, visible Harness Builder palette.
     """
     user_interface = application.userInterface
     palette = user_interface.palettes.itemById(PALETTE_ID)
@@ -1349,10 +1219,6 @@ def _ensure_palette_visible(application: adsk.core.Application) -> adsk.core.Pal
 def _restore_palette_url(application: adsk.core.Application, original_url: str) -> None:
     """
     Restore the ordinary palette resource URL after a focused live scenario.
-
-    Args:
-        application: Active Fusion application.
-        original_url: URL captured before the development refresh.
     """
     palette = application.userInterface.palettes.itemById(PALETTE_ID)
     if palette is None:
@@ -1637,9 +1503,6 @@ def _wire_name(gateway: FusionHarnessGateway) -> str:
 def _generated_wire_count(harness: adsk.fusion.Component) -> int:
     """
     Count generated wire occurrences owned by the command-history harness.
-
-    Args:
-        harness: Harness component that owns generated wire occurrences.
     """
     return len(generated_wire_occurrences(harness))
 
@@ -1650,10 +1513,6 @@ def _generated_wire_replaced(
 ) -> bool:
     """
     Report whether rebuild replaced the one original generated occurrence.
-
-    Args:
-        harness: Harness component that owns generated wire occurrences.
-        original_occurrence: Occurrence present before rebuild.
     """
     occurrences = generated_wire_occurrences(harness)
     return len(occurrences) == 1 and occurrences[0] != original_occurrence
@@ -1666,11 +1525,6 @@ def _generated_wire_matches_token(
 ) -> bool:
     """
     Match the generated occurrence through Fusion's persistent token resolver.
-
-    Args:
-        design: Active design used to resolve the stored entity token.
-        harness: Harness component that owns generated wire occurrences.
-        entity_token: Token captured from the expected occurrence state.
     """
     occurrences = generated_wire_occurrences(harness)
     resolved = design.findEntityByToken(entity_token)
@@ -1687,13 +1541,6 @@ def _root_occurrence_token(
 ) -> str:
     """
     Capture a token from the generated occurrence's required root context.
-
-    Args:
-        design: Active design containing the nested occurrence.
-        occurrence: Harness-local generated wire occurrence.
-
-    Returns:
-        Persistent token for the corresponding root-context occurrence.
     """
     root_occurrences = design.rootComponent.allOccurrencesByComponent(occurrence.component)
     if root_occurrences.count != 1:
@@ -1714,11 +1561,6 @@ def execute_palette_action(
 ) -> None:
     """
     Enter one production palette action through its real Fusion command boundary.
-
-    Args:
-        application: Active Fusion application.
-        action: Production palette action identifier.
-        payload: Serialized action payload.
     """
     wait_for(
         application,
@@ -1733,12 +1575,6 @@ def execute_palette_action(
 def _clear_transient_preview(application: adsk.core.Application) -> int:
     """
     Exercise the production clear path that intentionally bypasses model history.
-
-    Args:
-        application: Active Fusion application.
-
-    Returns:
-        Number of removed top-level preview graphics groups.
     """
     current_addin = importlib.import_module("wire_bundler.addin")
     clear_preview = vars(current_addin)["_clear_preview"]
@@ -1751,10 +1587,6 @@ def _execute_native_history_command(
 ) -> None:
     """
     Execute one enabled native history command.
-
-    Args:
-        application: Active Fusion application.
-        command_id: Native Undo or Redo command identity.
     """
     command_definition = application.userInterface.commandDefinitions.itemById(command_id)
     if command_definition is None:
@@ -1771,9 +1603,6 @@ def _execute_native_history_command(
 def _command_is_enabled(command_definition: adsk.core.CommandDefinition) -> bool:
     """
     Report whether a native command currently has an enabled control definition.
-
-    Args:
-        command_definition: Fusion command inspected after event processing.
     """
     control_definition = command_definition.controlDefinition
     return control_definition is not None and control_definition.isEnabled
@@ -1787,12 +1616,6 @@ def wait_for(
 ) -> None:
     """
     Pump Fusion events until an asynchronous command reaches its observable result.
-
-    Args:
-        application: Active Fusion application.
-        condition: Result predicate evaluated after each event cycle.
-        description: Operation named in timeout diagnostics.
-        timeout_seconds: Maximum wait duration.
     """
     deadline = monotonic() + timeout_seconds
     while monotonic() < deadline:
@@ -1823,9 +1646,6 @@ def _require_application() -> adsk.core.Application:
 def _log_to_fusion(message: str) -> None:
     """
     Mirror command-history progress into Fusion's application log.
-
-    Args:
-        message: Timestamped scenario log line.
     """
     adsk.core.Application.log(
         f"Wire Bundler command history: {message}",

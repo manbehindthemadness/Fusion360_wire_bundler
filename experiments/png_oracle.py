@@ -18,11 +18,6 @@ PNG_SIGNATURE: bytes = b"\x89PNG\r\n\x1a\n"
 class DecodedPng:
     """
     Store one decoded 8-bit PNG as normalized RGBA bytes.
-
-    Args:
-        width: Image width in pixels.
-        height: Image height in pixels.
-        rgba: Row-major red, green, blue, and alpha bytes.
     """
 
     width: int
@@ -34,12 +29,6 @@ class DecodedPng:
 class ImageDifference:
     """
     Summarize a pixel comparison between equal-size screenshots.
-
-    Args:
-        changed_pixel_fraction: Fraction of pixels with any channel change above the
-            supplied per-channel tolerance.
-        mean_channel_delta: Mean absolute RGBA channel difference in the 0–255 range.
-        maximum_channel_delta: Largest absolute channel difference.
     """
 
     changed_pixel_fraction: float
@@ -50,12 +39,6 @@ class ImageDifference:
 def decode_png(payload: bytes) -> DecodedPng:
     """
     Decode an ordinary non-interlaced 8-bit PNG into RGBA bytes.
-
-    Args:
-        payload: Complete PNG file bytes.
-
-    Returns:
-        Decoded dimensions and normalized pixels.
 
     Raises:
         ValueError: If the image is malformed or uses an unsupported PNG mode.
@@ -147,15 +130,6 @@ def compare_pngs(
 ) -> ImageDifference:
     """
     Compare two same-size screenshots with a small channel-level tolerance.
-
-    Args:
-        first_payload: First complete PNG.
-        second_payload: Second complete PNG.
-        channel_tolerance: A pixel counts as changed when any RGBA channel differs by
-            more than this value.
-
-    Returns:
-        Aggregate rendered-image difference.
 
     Raises:
         ValueError: If tolerance is invalid or image dimensions differ.

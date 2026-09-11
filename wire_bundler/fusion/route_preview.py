@@ -155,16 +155,7 @@ def show_route_previews(
     notices: Optional[list[str]] = None,
 ) -> tuple[RoutePreview, ...]:
     """
-    Solve and display transient parallel-wire centerlines for one harness.
-
-    Args:
-        design: Active Fusion design used to resolve stored profile tokens.
-        definition: Harness whose wire routes will be previewed.
-        clearance_mm: Additional edge-to-edge separation between wires.
-        notices: Optional collector for successful dynamic transition adjustments.
-
-    Returns:
-        Solved route previews in definition wire order.
+    Solve and display transient centerlines in definition wire order.
 
     Raises:
         RuntimeError: If referenced geometry is unavailable or unsupported.
@@ -205,12 +196,6 @@ def show_route_previews(
 def clear_route_previews(design: adsk.fusion.Design) -> int:
     """
     Delete Wire Bundler route-preview graphics from the active design.
-
-    Args:
-        design: Fusion design whose transient previews should be removed.
-
-    Returns:
-        Number of deleted top-level preview graphics groups.
     """
     deleted_count = 0
     for groups in _design_graphics_collections(design):
@@ -476,14 +461,6 @@ def _solve_definition_routes(
     End-member profiles and pathway controls all contribute oriented crossings
     to diameter-aware fairing. Aperture packing applies only to the pathway
     controls represented by ``GateFrame`` objects.
-
-    Args:
-        design: Fusion design used to resolve entity tokens.
-        definition: Harness definition to translate.
-        clearance_mm: Additional edge-to-edge separation between wires.
-
-    Returns:
-        Route previews restored to definition wire order.
     """
     if not definition.wires:
         raise ValueError("Add at least one wire before previewing routes.")
@@ -631,19 +608,11 @@ def _gate_frame(
     control_id: UUID,
 ) -> GateFrame:
     """
-    Build a circular aperture frame from one stored pathway control.
+    Build a millimeter-scale circular aperture frame from one pathway control.
 
     Connection-owned end profiles are resolved separately as centroid/normal
     frames. Their position and orientation guide fairing and the resulting sweep,
     but they are not apertures against which the wire bundle is fit-tested.
-
-    Args:
-        design: Fusion design used to resolve the gate profile.
-        control: Resolved domain control.
-        control_id: Expected control identity for errors.
-
-    Returns:
-        Host-independent gate frame in millimeters.
     """
     if control is None:
         raise RuntimeError(f"Routing control is missing: {control_id}")
@@ -678,14 +647,7 @@ def _gate_frame(
 
 def _profile_frame(design: adsk.fusion.Design, entity_token: str) -> tuple[Vector3, Vector3]:
     """
-    Return a profile centroid and unit plane normal in model coordinates.
-
-    Args:
-        design: Fusion design used to resolve the profile.
-        entity_token: Stored persistent profile token.
-
-    Returns:
-        Model-space centroid in millimeters and a dimensionless unit normal.
+    Return a millimeter-scale model centroid and dimensionless unit plane normal.
     """
     profile = _resolve_profile(design, entity_token)
     area_properties = profile.areaProperties()
@@ -700,13 +662,6 @@ def _profile_frame(design: adsk.fusion.Design, entity_token: str) -> tuple[Vecto
 def _resolve_profile(design: adsk.fusion.Design, entity_token: str) -> adsk.fusion.Profile:
     """
     Resolve one stored token to a Fusion sketch profile.
-
-    Args:
-        design: Fusion design used for persistent-token resolution.
-        entity_token: Stored persistent profile token.
-
-    Returns:
-        Resolved Fusion profile.
     """
     entities = design.findEntityByToken(entity_token)
     profile = adsk.fusion.Profile.cast(entities[0] if entities else None)
@@ -723,12 +678,6 @@ def _add_route_graphics(
 ) -> None:
     """
     Add one selectable colored line strip to a preview group.
-
-    Args:
-        preview_group: Owning top-level graphics group.
-        route: Route points expressed in millimeters.
-        color_index: Stable fallback palette index for legacy callers.
-        wire_color: Resolved insulation color, when stored on the harness.
     """
     wire_group = preview_group.addGroup()
     if wire_group is None:
@@ -949,12 +898,6 @@ def _initial_stripe_normal(tangent: Vector3) -> Vector3:
 def _point_to_mm(point: adsk.core.Point3D) -> Vector3:
     """
     Convert a Fusion point from centimeters to millimeters.
-
-    Args:
-        point: Fusion point in internal database units.
-
-    Returns:
-        Host-independent point in millimeters.
     """
     return Vector3(point.x * 10.0, point.y * 10.0, point.z * 10.0)
 
@@ -962,12 +905,6 @@ def _point_to_mm(point: adsk.core.Point3D) -> Vector3:
 def _vector(vector: adsk.core.Vector3D) -> Vector3:
     """
     Copy a Fusion model-space direction into the routing model.
-
-    Args:
-        vector: Fusion direction vector.
-
-    Returns:
-        Host-independent direction vector.
     """
     return Vector3(vector.x, vector.y, vector.z)
 
@@ -978,14 +915,6 @@ def solve_route_centerlines(
     notices: Optional[list[str]] = None,
 ) -> tuple[RoutePreview, ...]:
     """
-    Resolve and fair current geometry without changing preview visibility or caches.
-
-    Args:
-        design: Active Fusion design used to resolve stored profile tokens.
-        definition: Harness whose wire routes will be solved.
-        notices: Optional collector for successful dynamic transition adjustments.
-
-    Returns:
-        Solved centerlines in definition wire order.
+    Resolve and fair centerlines in definition order without changing preview state.
     """
     return _solve_definition_routes(design, definition, 0.0, notices)

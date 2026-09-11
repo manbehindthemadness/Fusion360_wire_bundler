@@ -50,9 +50,6 @@ CLOUD_TIMEOUT_SECONDS = 120.0
 def run(_context: object) -> None:
     """
     Run the disposable cloud lifecycle scenario and display its result.
-
-    Args:
-        _context: Context supplied by the Fusion script host.
     """
     report = ScenarioReport(SCENARIO_NAME, ARTIFACT_ROOT, _log_to_fusion)
     application: Optional[adsk.core.Application] = None
@@ -83,10 +80,6 @@ def verify_preview_reload(
 ) -> None:
     """
     Save, reopen, inspect, and delete one disposable preview fixture.
-
-    Args:
-        application: Active Fusion application.
-        report: Durable scenario report.
     """
     previous_document = application.activeDocument
     initial_document_count = application.documents.count

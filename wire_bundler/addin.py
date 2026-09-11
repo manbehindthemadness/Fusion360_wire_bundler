@@ -420,9 +420,6 @@ class _HarnessBuilderExecuteHandler(adsk.core.CommandEventHandler):
     def notify(self, args: adsk.core.CommandEventArgs) -> None:
         """
         Create an empty harness component and persist its draft definition.
-
-        Args:
-            args: Command event arguments supplied by Fusion.
         """
         try:
             application = adsk.core.Application.get()
@@ -448,9 +445,6 @@ class _HarnessBuilderValidateInputsHandler(adsk.core.ValidateInputsEventHandler)
     def notify(self, args: adsk.core.ValidateInputsEventArgs) -> None:
         """
         Validate the harness name and routing-mode selection.
-
-        Args:
-            args: Validation event arguments supplied by Fusion.
         """
         try:
             _read_harness_name(args.inputs)
@@ -470,9 +464,6 @@ class _CreateHarnessCreatedHandler(adsk.core.CommandCreatedEventHandler):
     def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
         """
         Build the initial dialog and retain its handlers for Fusion's event lifetime.
-
-        Args:
-            args: Command-created event arguments supplied by Fusion.
         """
         try:
             application = adsk.core.Application.get()
@@ -520,9 +511,6 @@ class _AddPathwayExecuteHandler(adsk.core.CommandEventHandler):
     def __init__(self, harness_id: UUID) -> None:
         """
         Bind the handler to the harness selected in the palette.
-
-        Args:
-            harness_id: Stable identity of the owning harness.
         """
         super().__init__()
         self._harness_id = harness_id
@@ -531,9 +519,6 @@ class _AddPathwayExecuteHandler(adsk.core.CommandEventHandler):
     def notify(self, args: adsk.core.CommandEventArgs) -> None:
         """
         Add the selected gate profiles to the owning harness as one pathway.
-
-        Args:
-            args: Command event arguments supplied by Fusion.
         """
         try:
             application = adsk.core.Application.get()
@@ -559,9 +544,6 @@ class _AddPathwayValidateInputsHandler(adsk.core.ValidateInputsEventHandler):
     def notify(self, args: adsk.core.ValidateInputsEventArgs) -> None:
         """
         Validate the complete pathway draft before Fusion enables execution.
-
-        Args:
-            args: Validation event arguments supplied by Fusion.
         """
         try:
             _read_pathway_name(args.inputs)
@@ -582,9 +564,6 @@ class _AddPathwayCreatedHandler(adsk.core.CommandCreatedEventHandler):
     def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
         """
         Add pathway inputs and retain their event handlers.
-
-        Args:
-            args: Command-created event arguments supplied by Fusion.
         """
         global _pending_pathway_harness_id
 
@@ -715,10 +694,6 @@ class _AppendGatesExecuteHandler(adsk.core.CommandEventHandler):
     def __init__(self, harness_id: UUID, pathway_id: UUID) -> None:
         """
         Bind the handler to the selected harness and pathway.
-
-        Args:
-            harness_id: Stable identity of the owning harness.
-            pathway_id: Stable identity of the pathway being extended.
         """
         super().__init__()
         self._harness_id = harness_id
@@ -727,9 +702,6 @@ class _AppendGatesExecuteHandler(adsk.core.CommandEventHandler):
     def notify(self, args: adsk.core.CommandEventArgs) -> None:
         """
         Persist the selected profiles at the end of the pathway.
-
-        Args:
-            args: Command event arguments supplied by Fusion.
         """
         try:
             application = adsk.core.Application.get()
@@ -755,9 +727,6 @@ class _AppendGatesCreatedHandler(adsk.core.CommandCreatedEventHandler):
     def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
         """
         Add gate selection input and retain its event handlers.
-
-        Args:
-            args: Command-created event arguments supplied by Fusion.
         """
         global _pending_append_gate_ids
 
@@ -800,9 +769,6 @@ class _AppendGatesValidateInputsHandler(adsk.core.ValidateInputsEventHandler):
     def notify(self, args: adsk.core.ValidateInputsEventArgs) -> None:
         """
         Validate gate selections before Fusion enables execution.
-
-        Args:
-            args: Validation event arguments supplied by Fusion.
         """
         try:
             _read_pathway_gate_tokens(args.inputs)
@@ -820,10 +786,6 @@ class _AddWiresExecuteHandler(adsk.core.CommandEventHandler):
     def __init__(self, harness_id: UUID, pathway_ids_by_name: dict[str, UUID]) -> None:
         """
         Bind the handler to one harness and its displayed pathway choices.
-
-        Args:
-            harness_id: Stable identity of the owning harness.
-            pathway_ids_by_name: Displayed pathway names mapped to stable identities.
         """
         super().__init__()
         self._harness_id = harness_id
@@ -832,9 +794,6 @@ class _AddWiresExecuteHandler(adsk.core.CommandEventHandler):
     def notify(self, args: adsk.core.CommandEventArgs) -> None:
         """
         Pair endpoint selections in order and add their logical wire mappings.
-
-        Args:
-            args: Command event arguments supplied by Fusion.
         """
         try:
             application = adsk.core.Application.get()
@@ -868,9 +827,6 @@ class _AddWiresValidateInputsHandler(adsk.core.ValidateInputsEventHandler):
     def __init__(self, pathway_ids_by_name: dict[str, UUID]) -> None:
         """
         Retain the displayed pathway choices for identity validation.
-
-        Args:
-            pathway_ids_by_name: Displayed pathway names mapped to stable identities.
         """
         super().__init__()
         self._pathway_ids_by_name = pathway_ids_by_name
@@ -878,9 +834,6 @@ class _AddWiresValidateInputsHandler(adsk.core.ValidateInputsEventHandler):
     def notify(self, args: adsk.core.ValidateInputsEventArgs) -> None:
         """
         Validate the complete wire batch before Fusion enables execution.
-
-        Args:
-            args: Validation event arguments supplied by Fusion.
         """
         try:
             _read_wire_pathway_id(args.inputs, self._pathway_ids_by_name)
@@ -912,9 +865,6 @@ class _AddWiresCreatedHandler(adsk.core.CommandCreatedEventHandler):
     def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
         """
         Add wire inputs and retain their event handlers.
-
-        Args:
-            args: Command-created event arguments supplied by Fusion.
         """
         global _pending_wire_harness_id, _pending_wire_pathway_id
 
@@ -1001,9 +951,6 @@ class _ShowPaletteCreatedHandler(adsk.core.CommandCreatedEventHandler):
     def notify(self, _args: adsk.core.CommandCreatedEventArgs) -> None:
         """
         Create or reveal the palette immediately for this input-free command.
-
-        Args:
-            _args: Command-created event arguments supplied by Fusion.
         """
         try:
             application = adsk.core.Application.get()
@@ -1022,9 +969,6 @@ class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
     def notify(self, args: adsk.core.HTMLEventArgs) -> None:
         """
         Return current harness state or open the native creation dialog.
-
-        Args:
-            args: HTML event arguments supplied by Fusion.
         """
         global _last_diagram_qa_observation
 
@@ -1167,9 +1111,6 @@ class _PaletteNavigationHandler(adsk.core.NavigationEventHandler):
     def notify(self, args: adsk.core.NavigationEventArgs) -> None:
         """
         Log the URL Fusion's embedded browser attempts to load.
-
-        Args:
-            args: Navigation event arguments supplied by Fusion.
         """
         try:
             navigation_args = adsk.core.NavigationEventArgs.cast(args)
@@ -1183,9 +1124,6 @@ class _PaletteNavigationHandler(adsk.core.NavigationEventHandler):
 def start(_context: object) -> None:
     """
     Register the Harness Builder command with Fusion.
-
-    Args:
-        _context: Context object supplied by Fusion.
     """
     global _history_handler
     try:
@@ -1308,9 +1246,6 @@ def start(_context: object) -> None:
 def stop(_context: object) -> None:
     """
     Remove the command and release retained Fusion event handlers.
-
-    Args:
-        _context: Context object supplied by Fusion.
     """
     global _pending_append_gate_ids, _pending_pathway_harness_id, _pending_end_edit
     global _pending_wire_harness_id, _pending_wire_pathway_id, _pending_palette_edit
@@ -1339,9 +1274,6 @@ def stop(_context: object) -> None:
 def _remove_user_interface(user_interface: adsk.core.UserInterface) -> None:
     """
     Remove stale command controls and definitions if they exist.
-
-    Args:
-        user_interface: Active Fusion user interface.
     """
     global _history_handler
     if _history_handler is not None:
@@ -1376,9 +1308,6 @@ def _remove_user_interface(user_interface: adsk.core.UserInterface) -> None:
 def _show_palette(application: adsk.core.Application) -> None:
     """
     Create or reveal the persistent Harness Builder palette.
-
-    Args:
-        application: Active Fusion application.
     """
     user_interface = application.userInterface
     palette = user_interface.palettes.itemById(PALETTE_ID)
@@ -1469,10 +1398,6 @@ def _send_palette_state(
 ) -> None:
     """
     Push the current harness library to an existing palette.
-
-    Args:
-        application: Active Fusion application.
-        notice: Optional user-facing status message.
     """
     palette = application.userInterface.palettes.itemById(PALETTE_ID)
     if palette is None:
@@ -1486,13 +1411,6 @@ def _serialize_palette_state(
 ) -> str:
     """
     Serialize discovered harness summaries for the palette boundary.
-
-    Args:
-        application: Active Fusion application.
-        notice: Optional user-facing status message.
-
-    Returns:
-        JSON object consumed by the local palette.
     """
     gateway = _create_harness_gateway(application)
     results = load_harnesses(gateway)
@@ -1623,11 +1541,7 @@ def _register_damaged_harness(result: HarnessLoadResult) -> Optional[str]:
     """
     Retain a refresh-stable token for one damaged component during this add-in session.
 
-    Args:
-        result: Current failed load result from Fusion discovery.
-
-    Returns:
-        Existing or newly registered token, or ``None`` without a component handle.
+    Results without a component handle cannot be registered and return ``None``.
     """
     if result.component_handle is None:
         return None
@@ -1646,13 +1560,6 @@ def _delete_damaged_harness(
 ) -> str:
     """
     Delete one exact unreadable harness component selected from the current palette state.
-
-    Args:
-        application: Active Fusion application.
-        serialized_data: JSON payload containing the short-lived deletion token.
-
-    Returns:
-        Concise user-facing success notice.
     """
     payload = _read_palette_payload(serialized_data)
     deletion_token = payload.get("deletionToken")
@@ -1851,9 +1758,6 @@ def _material_overrides_payload(overrides: WireMaterialOverrides) -> dict[str, o
 def _report_failure(operation: str) -> None:
     """
     Report a lifecycle failure at the Fusion host boundary.
-
-    Args:
-        operation: Lifecycle operation that failed.
     """
     application = adsk.core.Application.get()
     if application and application.userInterface:
@@ -1866,9 +1770,6 @@ def _report_failure(operation: str) -> None:
 def _log_to_fusion(message: str) -> None:
     """
     Write a diagnostic message to Fusion's application log.
-
-    Args:
-        message: Diagnostic text to record.
     """
     adsk.core.Application.log(
         message,
@@ -1880,10 +1781,6 @@ def _log_to_fusion(message: str) -> None:
 def _open_add_pathway_command(application: adsk.core.Application, serialized_data: str) -> None:
     """
     Open the native pathway command for the harness selected in the palette.
-
-    Args:
-        application: Active Fusion application.
-        serialized_data: Palette JSON containing the selected harness identity.
 
     Raises:
         RuntimeError: If Fusion cannot open the command.
@@ -1973,10 +1870,6 @@ def _apply_end_member_edit(
 def _open_append_gates_command(application: adsk.core.Application, serialized_data: str) -> None:
     """
     Open native profile selection for the palette-selected pathway.
-
-    Args:
-        application: Active Fusion application.
-        serialized_data: Palette JSON containing harness and pathway identities.
     """
     global _pending_append_gate_ids
 
@@ -2000,10 +1893,6 @@ def _open_append_gates_command(application: adsk.core.Application, serialized_da
 def _open_add_wires_command(application: adsk.core.Application, serialized_data: str) -> None:
     """
     Open the native wire-assignment command for the selected harness.
-
-    Args:
-        application: Active Fusion application.
-        serialized_data: Palette JSON containing the selected harness identity.
 
     Raises:
         RuntimeError: If Fusion cannot open the command.
@@ -2044,14 +1933,6 @@ def _apply_palette_edit(
 ) -> str:
     """
     Apply one ordered palette edit and return its success notice.
-
-    Args:
-        application: Active Fusion application.
-        action: Supported edit action name.
-        serialized_data: JSON payload containing stable member identities.
-
-    Returns:
-        Concise user-facing success notice.
     """
     payload = _read_palette_payload(serialized_data)
     harness_id = _read_payload_uuid(payload, "harnessId", "harness")
@@ -2189,13 +2070,6 @@ def _apply_palette_edit(
 def _highlight_member(application: adsk.core.Application, serialized_data: str) -> int:
     """
     Emphasize linked profiles, route previews, and generated wire bodies.
-
-    Args:
-        application: Active Fusion application.
-        serialized_data: JSON payload identifying the member to reveal.
-
-    Returns:
-        Number of preview lines, profiles, and bodies emphasized.
     """
     payload = _read_palette_payload(serialized_data)
     harness_id = _read_payload_uuid(payload, "harnessId", "harness")
@@ -2282,9 +2156,6 @@ def _highlight_member(application: adsk.core.Application, serialized_data: str) 
 def _clear_highlight(application: adsk.core.Application) -> None:
     """
     Clear palette-driven viewport selection.
-
-    Args:
-        application: Active Fusion application.
     """
     highlight_route_preview(_require_active_design(application), None)
     if not application.userInterface.activeSelections.clear():
@@ -2300,13 +2171,7 @@ def _member_entity_tokens(
     """
     Resolve a stable palette member identity to persisted entity tokens.
 
-    Args:
-        definition: Parsed harness definition.
-        member_type: ``control``, ``connection``, or ``wire``.
-        member_id: Stable member identity.
-
-    Returns:
-        One gate/connection token or both endpoint tokens for a wire.
+    Controls and connections yield their members; wires yield both endpoint stacks.
     """
     if member_type == "control":
         control = next(
@@ -2517,13 +2382,6 @@ def _read_material_overrides(raw_value: object) -> WireMaterialOverrides:
 def _preview_routes(application: adsk.core.Application, serialized_data: str) -> int:
     """
     Solve and display route previews for the palette-selected harness.
-
-    Args:
-        application: Active Fusion application.
-        serialized_data: Palette JSON containing the selected harness identity.
-
-    Returns:
-        Number of displayed wire routes.
     """
     payload = json.loads(serialized_data)
     if not isinstance(payload, dict):
@@ -2556,12 +2414,6 @@ def _clear_preview(application: adsk.core.Application) -> int:
 def _require_active_design(application: adsk.core.Application) -> adsk.fusion.Design:
     """
     Return the active Fusion design or report the missing host context.
-
-    Args:
-        application: Active Fusion application.
-
-    Returns:
-        Active Fusion design.
     """
     design = adsk.fusion.Design.cast(application.activeProduct)
     if design is None:
@@ -2577,15 +2429,6 @@ def _add_profile_selection_input(
 ) -> adsk.core.SelectionCommandInput:
     """
     Add a required multi-profile selection input.
-
-    Args:
-        command_inputs: Inputs owned by the active Add Wires command.
-        input_id: Stable input identity.
-        name: User-facing field name.
-        prompt: Selection prompt displayed by Fusion.
-
-    Returns:
-        Configured profile-selection input.
     """
     selection_input = command_inputs.addSelectionInput(input_id, name, prompt)
     if selection_input is None:
@@ -2603,13 +2446,6 @@ def _read_wire_pathway_id(
 ) -> UUID:
     """
     Resolve the selected pathway label to its stable identity.
-
-    Args:
-        command_inputs: Inputs owned by the active Add Wires command.
-        pathway_ids_by_name: Displayed pathway names mapped to stable identities.
-
-    Returns:
-        Selected pathway identity.
     """
     pathway_input = adsk.core.DropDownCommandInput.cast(
         command_inputs.itemById(WIRE_PATHWAY_INPUT_ID)
@@ -2625,12 +2461,6 @@ def _read_wire_pathway_id(
 def _read_wire_diameter_mm(command_inputs: adsk.core.CommandInputs) -> float:
     """
     Read a valid positive wire diameter and convert Fusion centimeters to millimeters.
-
-    Args:
-        command_inputs: Inputs owned by the active Add Wires command.
-
-    Returns:
-        Wire diameter in millimeters.
     """
     diameter_input = adsk.core.ValueCommandInput.cast(
         command_inputs.itemById(WIRE_DIAMETER_INPUT_ID)
@@ -2650,14 +2480,6 @@ def _read_profile_tokens(
 ) -> tuple[str, ...]:
     """
     Return selected Fusion profile tokens in user selection order.
-
-    Args:
-        command_inputs: Inputs owned by the active Add Wires command.
-        input_id: Selection input identity.
-        role: Endpoint role used in validation messages.
-
-    Returns:
-        Persistent entity tokens in selection order.
     """
     selection_input = adsk.core.SelectionCommandInput.cast(command_inputs.itemById(input_id))
     if selection_input is None or selection_input.selectionCount < 1:
@@ -2676,12 +2498,6 @@ def _create_harness_gateway(application: adsk.core.Application) -> FusionHarness
     """
     Create a gateway for the active Fusion design and cloud folder.
 
-    Args:
-        application: Active Fusion application.
-
-    Returns:
-        Gateway bound to the current design context.
-
     Raises:
         RuntimeError: If no Fusion design is active.
     """
@@ -2694,12 +2510,6 @@ def _create_harness_gateway(application: adsk.core.Application) -> FusionHarness
 def _read_pathway_name(command_inputs: adsk.core.CommandInputs) -> str:
     """
     Read and normalize the required pathway name input.
-
-    Args:
-        command_inputs: Inputs owned by the active Add Pathway command.
-
-    Returns:
-        Non-empty normalized pathway name.
     """
     name_input = adsk.core.StringValueCommandInput.cast(
         command_inputs.itemById(PATHWAY_NAME_INPUT_ID)
@@ -2715,12 +2525,6 @@ def _read_pathway_name(command_inputs: adsk.core.CommandInputs) -> str:
 def _read_pathway_gate_tokens(command_inputs: adsk.core.CommandInputs) -> tuple[str, ...]:
     """
     Return selected Fusion profile tokens in traversal order.
-
-    Args:
-        command_inputs: Inputs owned by the active Add Pathway command.
-
-    Returns:
-        Persistent entity tokens in Fusion selection order.
     """
     gate_input = adsk.core.SelectionCommandInput.cast(
         command_inputs.itemById(PATHWAY_GATES_INPUT_ID)
@@ -2741,12 +2545,6 @@ def _read_pathway_gate_tokens(command_inputs: adsk.core.CommandInputs) -> tuple[
 def _read_harness_name(command_inputs: adsk.core.CommandInputs) -> str:
     """
     Read and normalize the required harness name input.
-
-    Args:
-        command_inputs: Inputs owned by the active Harness Builder command.
-
-    Returns:
-        Non-empty normalized harness name.
     """
     name_input = adsk.core.StringValueCommandInput.cast(
         command_inputs.itemById(HARNESS_NAME_INPUT_ID)
@@ -2762,12 +2560,6 @@ def _read_harness_name(command_inputs: adsk.core.CommandInputs) -> str:
 def _read_routing_mode(command_inputs: adsk.core.CommandInputs) -> RoutingMode:
     """
     Map the selected Fusion label to its routing-mode domain value.
-
-    Args:
-        command_inputs: Inputs owned by the active Harness Builder command.
-
-    Returns:
-        Selected routing mode.
     """
     mode_input = adsk.core.DropDownCommandInput.cast(command_inputs.itemById(ROUTING_MODE_INPUT_ID))
     if mode_input is None or mode_input.selectedItem is None:

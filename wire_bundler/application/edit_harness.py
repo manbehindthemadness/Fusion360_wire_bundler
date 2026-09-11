@@ -58,16 +58,6 @@ def append_pathway_gates(
 ) -> tuple[ControlStructure, ...]:
     """
     Append selected profiles to an existing pathway in selection order.
-
-    Args:
-        harness_id: Harness that owns the pathway.
-        pathway_id: Pathway receiving the new gates.
-        gate_entity_tokens: Fusion profile tokens in traversal order.
-        gateway: Persistence boundary for the owning harness.
-        id_factory: UUID factory, injectable for deterministic tests.
-
-    Returns:
-        Newly created routing controls.
     """
     normalized_tokens = tuple(token.strip() for token in gate_entity_tokens)
     if not normalized_tokens:
@@ -115,16 +105,6 @@ def move_pathway_gate(
 ) -> PathwayDefinition:
     """
     Insert one gate at a new position within its pathway.
-
-    Args:
-        harness_id: Harness that owns the pathway.
-        pathway_id: Pathway containing the gate.
-        control_id: Gate identity to move.
-        offset: Nonzero relative movement to the drop position.
-        gateway: Persistence boundary for the owning harness.
-
-    Returns:
-        Updated pathway definition.
     """
     if isinstance(offset, bool) or not isinstance(offset, int) or offset == 0:
         raise ValueError("Gate movement requires a nonzero integer offset.")
@@ -154,15 +134,6 @@ def remove_pathway_gate(
 ) -> PathwayDefinition:
     """
     Remove one gate and prune its control when no pathway still uses it.
-
-    Args:
-        harness_id: Harness that owns the pathway.
-        pathway_id: Pathway containing the gate.
-        control_id: Gate identity to remove.
-        gateway: Persistence boundary for the owning harness.
-
-    Returns:
-        Updated pathway definition.
     """
     original, definition = _read_definition(harness_id, gateway)
     pathway = _require_pathway(definition, pathway_id)
@@ -203,16 +174,6 @@ def move_wire_endpoint(
 ) -> tuple[WireDefinition, ...]:
     """
     Reorder one endpoint within wires sharing the same pathway sequence.
-
-    Args:
-        harness_id: Harness that owns the wires.
-        wire_id: Stable wire row whose endpoint will move.
-        endpoint: Endpoint sequence, ``start`` or ``end``.
-        offset: Required movement, either ``-1`` or ``1``.
-        gateway: Persistence boundary for the owning harness.
-
-    Returns:
-        Updated wires in their persisted display order.
     """
     if endpoint not in {"start", "end"}:
         raise ValueError("Endpoint must be 'start' or 'end'.")
@@ -457,11 +418,6 @@ def set_harness_material_defaults(
 ) -> None:
     """
     Replace the parent material settings inherited by wires without overrides.
-
-    Args:
-        harness_id: Harness whose defaults are changing.
-        settings: Complete replacement defaults.
-        gateway: Persistence boundary participating in the Fusion transaction.
     """
     if not isinstance(settings, WireMaterialSettings):
         raise ValueError("Harness material defaults are invalid.")
@@ -482,12 +438,6 @@ def set_wire_material_overrides(
 ) -> None:
     """
     Replace one wire's field-level overrides while retaining parent inheritance.
-
-    Args:
-        harness_id: Harness that owns the wire.
-        wire_id: Persistent wire identity.
-        overrides: Nullable overrides; null fields inherit harness defaults.
-        gateway: Persistence boundary participating in the Fusion transaction.
     """
     if not isinstance(overrides, WireMaterialOverrides):
         raise ValueError("Wire material overrides are invalid.")
@@ -541,11 +491,6 @@ def remove_wire(
 ) -> None:
     """
     Remove one complete wire pair and prune its unused connections and profile.
-
-    Args:
-        harness_id: Harness that owns the wire.
-        wire_id: Stable wire identity to remove.
-        gateway: Persistence boundary for the owning harness.
     """
     original, definition = _read_definition(harness_id, gateway)
     removed = next((wire for wire in definition.wires if wire.wire_id == wire_id), None)

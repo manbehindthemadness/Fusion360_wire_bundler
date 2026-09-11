@@ -283,11 +283,6 @@ class InterpolationSettings:
 class WireProfile:
     """
     Describe the initial circular profile assigned to a conductor.
-
-    Args:
-        profile_id: Persistent profile identity.
-        name: User-facing profile name.
-        diameter_mm: Finished conductor diameter in millimeters.
     """
 
     profile_id: UUID
@@ -300,13 +295,7 @@ class Connection:
     """
     Reference a physical connection profile in a Fusion design.
 
-    Args:
-        connection_id: Persistent connection identity.
-        name: User-facing connection name.
-        entity_token: Opaque Fusion entity token resolved by the host adapter.
-        additional_entity_tokens: Remaining connection members in explicit order.
-        member_ids: Persistent per-member identities aligned with the token order.
-        interpolation: Transition distances applied to every member in local stack order.
+    Member identities and interpolation settings align with the full token sequence.
     """
 
     connection_id: UUID
@@ -348,13 +337,6 @@ class Connection:
 class ControlStructure:
     """
     Reference a routing or profile gate in a Fusion design.
-
-    Args:
-        interpolation: Approach/departure distances in gate traversal order.
-        control_id: Persistent control identity.
-        name: User-facing control name.
-        kind: Routing or profile gate classification.
-        entity_token: Opaque Fusion entity token resolved by the host adapter.
     """
 
     control_id: UUID
@@ -369,14 +351,6 @@ class ControlStructure:
 class PathwayDefinition:
     """
     Group an ordered sequence of routing controls into a reusable pathway.
-
-    Args:
-        pathway_id: Persistent pathway identity.
-        name: User-facing pathway name.
-        routing_mode: Routing strategy used by every gate in the pathway.
-        ordered_control_ids: Gate identities in traversal order.
-        start_name: Optional label at the start of gate traversal.
-        end_name: Optional label at the end of gate traversal.
     """
 
     pathway_id: UUID
@@ -391,18 +365,6 @@ class PathwayDefinition:
 class WireDefinition:
     """
     Map one persistent conductor from a start to a destination.
-
-    Args:
-        wire_id: Immutable conductor identity.
-        wire_number: Stable user-facing numerical identifier.
-        start_connection_id: Referenced physical starting connection.
-        end_connection_id: Referenced physical destination connection.
-        profile_id: Referenced conductor profile.
-        ordered_pathway_ids: Pathway identities in traversal order.
-        ordered_control_ids: Control identities in traversal order.
-        start_end_name: Organizational name for this wire's End A.
-        end_end_name: Organizational name for this wire's End B.
-        display_name: Optional user-facing label replacing the numbered designation.
     """
 
     wire_id: UUID
@@ -423,18 +385,7 @@ class HarnessDefinition:
     """
     Store the complete logical definition independently of Fusion geometry.
 
-    Args:
-        schema_version: Serialized definition schema version.
-        harness_id: Persistent harness identity.
-        name: User-facing harness assembly name.
-        routing_mode: Primary routing-control strategy.
-        profiles: Available conductor profiles.
-        connections: Available physical connections.
-        controls: Available routing controls.
-        pathways: Reusable ordered routing pathways.
-        wires: Authoritative conductor mappings.
-        gate_defaults: Interpolation preset copied to newly created controls.
-        end_defaults: Interpolation preset copied to newly created connections.
+    Gate and end defaults are presets copied into newly created members.
     """
 
     schema_version: int

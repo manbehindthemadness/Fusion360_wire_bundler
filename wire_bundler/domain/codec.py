@@ -41,10 +41,6 @@ class DefinitionParseError(ValueError):
     def __init__(self, path: str, message: str) -> None:
         """
         Initialize a structured parse error.
-
-        Args:
-            path: Dot-and-index path to the invalid field.
-            message: Human-readable explanation.
         """
         self.path = path
         self.reason = message
@@ -54,12 +50,6 @@ class DefinitionParseError(ValueError):
 def dumps(definition: HarnessDefinition) -> str:
     """
     Serialize a harness definition to deterministic JSON.
-
-    Args:
-        definition: Harness definition to serialize.
-
-    Returns:
-        Indented JSON with stable key ordering.
     """
     payload = _definition_to_dict(definition)
     serialized = json.dumps(payload, indent=2, sort_keys=True)
@@ -69,12 +59,6 @@ def dumps(definition: HarnessDefinition) -> str:
 def loads(serialized: str) -> HarnessDefinition:
     """
     Parse and shape-check a serialized harness definition.
-
-    Args:
-        serialized: JSON representation of a harness definition.
-
-    Returns:
-        Parsed immutable harness definition.
 
     Raises:
         DefinitionParseError: If JSON or a required data shape is invalid.
@@ -143,12 +127,6 @@ def loads(serialized: str) -> HarnessDefinition:
 def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
     """
     Convert a definition to JSON-compatible primitives.
-
-    Args:
-        definition: Harness definition to convert.
-
-    Returns:
-        JSON-compatible dictionary.
     """
     payload = {
         "schema_version": definition.schema_version,
@@ -238,13 +216,6 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
 def _parse_profile(raw_value: object, path: str) -> WireProfile:
     """
     Parse one conductor profile.
-
-    Args:
-        raw_value: Untrusted profile value.
-        path: Profile path for error reporting.
-
-    Returns:
-        Parsed conductor profile.
     """
     value = _require_mapping(raw_value, path)
     profile = WireProfile(
@@ -456,13 +427,6 @@ def parse_material_overrides(raw_value: object, path: str) -> WireMaterialOverri
 def _parse_connection(raw_value: object, path: str) -> Connection:
     """
     Parse one physical connection reference.
-
-    Args:
-        raw_value: Untrusted connection value.
-        path: Connection path for error reporting.
-
-    Returns:
-        Parsed physical connection.
     """
     value = _require_mapping(raw_value, path)
     raw_members = _require_list(
@@ -518,13 +482,6 @@ def _parse_connection(raw_value: object, path: str) -> Connection:
 def _parse_control(raw_value: object, path: str) -> ControlStructure:
     """
     Parse one routing control reference.
-
-    Args:
-        raw_value: Untrusted control value.
-        path: Control path for error reporting.
-
-    Returns:
-        Parsed routing control.
     """
     value = _require_mapping(raw_value, path)
     override = value.get("interpolation_is_override", False)
@@ -544,13 +501,6 @@ def _parse_control(raw_value: object, path: str) -> ControlStructure:
 def _parse_pathway(raw_value: object, path: str) -> PathwayDefinition:
     """
     Parse one reusable ordered pathway.
-
-    Args:
-        raw_value: Untrusted pathway value.
-        path: Pathway path for error reporting.
-
-    Returns:
-        Parsed pathway definition.
     """
     value = _require_mapping(raw_value, path)
     raw_control_ids = _require_list(
@@ -586,15 +536,6 @@ def _parse_wire(
 ) -> WireDefinition:
     """
     Parse one authoritative conductor mapping.
-
-    Args:
-        raw_value: Untrusted wire value.
-        path: Wire path for error reporting.
-        schema_version: Source definition schema version.
-        pathways: Parsed pathways available for legacy inference.
-
-    Returns:
-        Parsed conductor mapping.
     """
     value = _require_mapping(raw_value, path)
     raw_control_ids = _require_list(
@@ -658,13 +599,6 @@ def _parse_wire(
 def _require_mapping(raw_value: object, path: str) -> Mapping[str, Any]:
     """
     Require a mapping with string keys.
-
-    Args:
-        raw_value: Untrusted value.
-        path: Value path for error reporting.
-
-    Returns:
-        Validated mapping.
     """
     if not isinstance(raw_value, Mapping):
         raise DefinitionParseError(path, "expected an object")
@@ -676,14 +610,6 @@ def _require_mapping(raw_value: object, path: str) -> Mapping[str, Any]:
 def _require_value(value: Mapping[str, Any], key: str, path: str) -> object:
     """
     Require a named mapping value.
-
-    Args:
-        value: Mapping to inspect.
-        key: Required key.
-        path: Field path for error reporting.
-
-    Returns:
-        Present field value.
     """
     if key not in value:
         raise DefinitionParseError(path, "missing required field")
@@ -693,14 +619,6 @@ def _require_value(value: Mapping[str, Any], key: str, path: str) -> object:
 def _require_str(value: Mapping[str, Any], key: str, path: str) -> str:
     """
     Require a string field.
-
-    Args:
-        value: Mapping to inspect.
-        key: Required key.
-        path: Field path for error reporting.
-
-    Returns:
-        String field value.
     """
     raw_value = _require_value(value, key, path)
     if not isinstance(raw_value, str):
@@ -711,14 +629,6 @@ def _require_str(value: Mapping[str, Any], key: str, path: str) -> str:
 def _require_int(value: Mapping[str, Any], key: str, path: str) -> int:
     """
     Require an integer field without accepting booleans.
-
-    Args:
-        value: Mapping to inspect.
-        key: Required key.
-        path: Field path for error reporting.
-
-    Returns:
-        Integer field value.
     """
     raw_value = _require_value(value, key, path)
     if isinstance(raw_value, bool) or not isinstance(raw_value, int):
@@ -729,14 +639,6 @@ def _require_int(value: Mapping[str, Any], key: str, path: str) -> int:
 def _require_float(value: Mapping[str, Any], key: str, path: str) -> float:
     """
     Require a numeric field without accepting booleans.
-
-    Args:
-        value: Mapping to inspect.
-        key: Required key.
-        path: Field path for error reporting.
-
-    Returns:
-        Floating-point field value.
     """
     raw_value = _require_value(value, key, path)
     if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
@@ -772,14 +674,6 @@ def _optional_str(raw_value: object, path: str) -> Optional[str]:
 def _require_list(value: Mapping[str, Any], key: str, path: str) -> Sequence[object]:
     """
     Require an array field.
-
-    Args:
-        value: Mapping to inspect.
-        key: Required key.
-        path: Field path for error reporting.
-
-    Returns:
-        Sequence field value.
     """
     raw_value = _require_value(value, key, path)
     if not isinstance(raw_value, list):
@@ -790,14 +684,6 @@ def _require_list(value: Mapping[str, Any], key: str, path: str) -> Sequence[obj
 def _require_uuid(value: Mapping[str, Any], key: str, path: str) -> UUID:
     """
     Require and parse a UUID string field.
-
-    Args:
-        value: Mapping to inspect.
-        key: Required key.
-        path: Field path for error reporting.
-
-    Returns:
-        Parsed UUID.
     """
     raw_value = _require_value(value, key, path)
     parsed_uuid = _parse_uuid(raw_value, path)
@@ -807,13 +693,6 @@ def _require_uuid(value: Mapping[str, Any], key: str, path: str) -> UUID:
 def _parse_uuid(raw_value: object, path: str) -> UUID:
     """
     Parse a UUID string.
-
-    Args:
-        raw_value: Untrusted UUID value.
-        path: Value path for error reporting.
-
-    Returns:
-        Parsed UUID.
     """
     if not isinstance(raw_value, str):
         raise DefinitionParseError(path, "expected a UUID string")
@@ -832,15 +711,6 @@ def _require_enum(
 ) -> EnumType:
     """
     Require a string matching a supported enum value.
-
-    Args:
-        enum_type: Enum class to parse.
-        value: Mapping to inspect.
-        key: Required key.
-        path: Field path for error reporting.
-
-    Returns:
-        Parsed enum member.
     """
     raw_value = _require_str(value, key, path)
     try:

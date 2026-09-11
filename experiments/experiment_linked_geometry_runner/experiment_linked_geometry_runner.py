@@ -17,8 +17,5 @@ from experiments.experiment_linked_geometry import run as run_linked_geometry  #
 def run(context: object) -> None:
     """
     Delegate execution to the repository-owned linked-geometry scenario.
-
-    Args:
-        context: Context supplied by Fusion's script host.
     """
     run_linked_geometry(context)

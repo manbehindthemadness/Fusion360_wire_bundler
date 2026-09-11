@@ -18,12 +18,6 @@ from typing import Optional
 class ScenarioStep:
     """
     Record the outcome and duration of one verification operation.
-
-    Args:
-        name: Human-readable operation name.
-        status: Stable ``passed`` or ``failed`` state.
-        elapsed_ms: Operation duration in milliseconds.
-        detail: Optional result or failure detail.
     """
 
     name: str
@@ -36,11 +30,6 @@ class ScenarioStep:
 class ScenarioReport:
     """
     Write incremental text logs and a machine-readable scenario report.
-
-    Args:
-        scenario_name: Stable scenario identifier.
-        artifact_root: Directory that will receive generated reports.
-        sink: Optional secondary logging destination, such as Fusion's log.
     """
 
     scenario_name: str
@@ -69,9 +58,6 @@ class ScenarioReport:
     def log(self, message: str) -> None:
         """
         Append one timestamped line and forward it to the optional host sink.
-
-        Args:
-            message: Diagnostic message to record.
         """
         timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
         line = f"{timestamp} {message}"
@@ -84,12 +70,6 @@ class ScenarioReport:
     def step(self, name: str) -> Iterator[None]:
         """
         Measure and persist one scenario operation.
-
-        Args:
-            name: Human-readable operation name.
-
-        Yields:
-            Control to the verification operation.
         """
         self.log(f"START {name}")
         started = perf_counter()
@@ -109,10 +89,6 @@ class ScenarioReport:
     def finish(self, success: bool, error: str = "") -> None:
         """
         Finalize and persist the overall scenario result.
-
-        Args:
-            success: Whether every required verification passed.
-            error: Optional traceback or terminal failure detail.
         """
         self.status = "passed" if success else "failed"
         self.error = error
@@ -122,10 +98,6 @@ class ScenarioReport:
     def record_observation(self, name: str, value: object) -> None:
         """
         Persist one structured capability or diagnostic observation.
-
-        Args:
-            name: Stable observation identifier.
-            value: JSON-serializable observation value.
 
         Raises:
             ValueError: If the observation name is empty or already present.

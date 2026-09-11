@@ -21,11 +21,6 @@ from .model import (
 class ValidationIssue:
     """
     Describe one actionable harness validation failure.
-
-    Args:
-        code: Stable machine-readable issue code.
-        path: Dot-and-index path to the invalid value.
-        message: Human-readable explanation.
     """
 
     code: str
@@ -35,13 +30,7 @@ class ValidationIssue:
 
 def validate_harness(definition: HarnessDefinition) -> tuple[ValidationIssue, ...]:
     """
-    Validate logical readiness without accessing Fusion geometry.
-
-    Args:
-        definition: Harness definition to validate.
-
-    Returns:
-        Validation issues in deterministic discovery order.
+    Return logical-readiness issues in deterministic order without accessing Fusion.
     """
     issues: list[ValidationIssue] = []
     if definition.schema_version != SCHEMA_VERSION:
@@ -72,10 +61,6 @@ def _validate_unique_ids(
 ) -> None:
     """
     Require identities to be unique across the complete harness definition.
-
-    Args:
-        definition: Harness definition to validate.
-        issues: Mutable issue accumulator.
     """
     seen: dict[UUID, str] = {definition.harness_id: "harness_id"}
     identities = [
@@ -117,10 +102,6 @@ def _validate_profiles(
 ) -> None:
     """
     Validate conductor profile fields.
-
-    Args:
-        definition: Harness definition to validate.
-        issues: Mutable issue accumulator.
     """
     for index, profile in enumerate(definition.profiles):
         path = f"profiles[{index}]"
@@ -144,10 +125,6 @@ def _validate_connections(
 ) -> None:
     """
     Validate physical connection references.
-
-    Args:
-        definition: Harness definition to validate.
-        issues: Mutable issue accumulator.
     """
     for index, connection in enumerate(definition.connections):
         path = f"connections[{index}]"
@@ -175,10 +152,6 @@ def _validate_controls(
 ) -> None:
     """
     Validate routing-control references.
-
-    Args:
-        definition: Harness definition to validate.
-        issues: Mutable issue accumulator.
     """
     for index, control in enumerate(definition.controls):
         path = f"controls[{index}]"
@@ -202,10 +175,6 @@ def _validate_pathways(
 ) -> None:
     """
     Validate pathway names, ordered gates, and routing-mode compatibility.
-
-    Args:
-        definition: Harness definition to validate.
-        issues: Mutable issue accumulator.
     """
     controls_by_id = {control.control_id: control for control in definition.controls}
     seen_names: dict[str, str] = {}
@@ -286,10 +255,6 @@ def _validate_wires(
 ) -> None:
     """
     Validate conductor mappings and ordered references.
-
-    Args:
-        definition: Harness definition to validate.
-        issues: Mutable issue accumulator.
     """
     profile_ids = {profile.profile_id for profile in definition.profiles}
     connection_ids = {connection.connection_id for connection in definition.connections}
@@ -426,12 +391,6 @@ def _validate_wire_number(
 ) -> None:
     """
     Validate one stable user-facing wire number.
-
-    Args:
-        wire_number: Wire number to validate.
-        path: Parent wire path.
-        seen_numbers: Previously encountered wire numbers.
-        issues: Mutable issue accumulator.
     """
     number_path = f"{path}.wire_number"
     if not wire_number.isdecimal() or int(wire_number) <= 0:
@@ -464,13 +423,6 @@ def _validate_endpoint(
 ) -> None:
     """
     Validate one endpoint reference and require unique physical use.
-
-    Args:
-        endpoint_id: Referenced connection identity.
-        connection_ids: Available connection identities.
-        path: Endpoint field path.
-        seen_endpoints: Previously assigned physical endpoints.
-        issues: Mutable issue accumulator.
     """
     _validate_reference(
         endpoint_id,
@@ -501,13 +453,6 @@ def _validate_reference(
 ) -> None:
     """
     Validate that an identity references an available domain object.
-
-    Args:
-        reference_id: Referenced identity.
-        available_ids: Valid identities for the reference type.
-        code: Stable issue code for a missing reference.
-        path: Reference field path.
-        issues: Mutable issue accumulator.
     """
     if reference_id not in available_ids:
         issues.append(ValidationIssue(code, path, "Referenced identity does not exist."))

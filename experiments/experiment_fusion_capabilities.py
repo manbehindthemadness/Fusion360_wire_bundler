@@ -52,9 +52,6 @@ EXPECTED_COMMAND_IDS = (
 def run(_context: object) -> None:
     """
     Inspect safe Fusion automation surfaces and persist their observed behavior.
-
-    Args:
-        _context: Context supplied by the Fusion script host.
     """
     report = ScenarioReport(SCENARIO_NAME, ARTIFACT_ROOT, _log_to_fusion)
     application: Optional[adsk.core.Application] = None
@@ -87,10 +84,6 @@ def audit_fusion_capabilities(
 ) -> None:
     """
     Execute the capability assertions without catching failures or showing UI.
-
-    Args:
-        application: Active Fusion application.
-        report: Durable report that receives steps and observations.
     """
     user_interface = application.userInterface
     if user_interface is None:
@@ -166,12 +159,6 @@ def audit_fusion_capabilities(
 def _probe_document_lifecycle(application: adsk.core.Application) -> dict[str, object]:
     """
     Create and close an isolated unsaved design without modifying the active design.
-
-    Args:
-        application: Active Fusion application.
-
-    Returns:
-        Structured lifecycle observations.
     """
     previous_document = application.activeDocument
     initial_count = application.documents.count
@@ -212,9 +199,6 @@ def _probe_document_lifecycle(application: adsk.core.Application) -> dict[str, o
 def _require_application() -> adsk.core.Application:
     """
     Return the active Fusion application or reject standalone execution.
-
-    Returns:
-        Active Fusion application.
     """
     application = adsk.core.Application.get()
     if application is None:
@@ -225,9 +209,6 @@ def _require_application() -> adsk.core.Application:
 def _log_to_fusion(message: str) -> None:
     """
     Mirror capability-audit progress into Fusion's application log.
-
-    Args:
-        message: Timestamped scenario log line.
     """
     adsk.core.Application.log(
         f"Wire Bundler QA capability audit: {message}",

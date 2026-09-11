@@ -54,9 +54,6 @@ TRANSLATION_CM = (2.0, -1.5, 0.75)
 def run(_context: object) -> None:
     """
     Run the isolated generated-solid scenario and display its result.
-
-    Args:
-        _context: Context supplied by the Fusion script host.
     """
     report = ScenarioReport(SCENARIO_NAME, ARTIFACT_ROOT, _log_to_fusion)
     application: Optional[adsk.core.Application] = None
@@ -86,10 +83,6 @@ def verify_generated_solids(
 ) -> None:
     """
     Generate a striped wire, move its parent occurrence, and clear it.
-
-    Args:
-        application: Active Fusion application.
-        report: Durable scenario report.
     """
     previous_document = application.activeDocument
     initial_document_count = application.documents.count
@@ -244,9 +237,6 @@ def verify_generated_solids(
 def _box_center(box: adsk.core.BoundingBox3D) -> tuple[float, float, float]:
     """
     Return the center of a Fusion bounding box in internal centimeters.
-
-    Args:
-        box: Bounding box whose midpoint is required.
     """
     return (
         (box.minPoint.x + box.maxPoint.x) / 2.0,
@@ -268,9 +258,6 @@ def _require_application() -> adsk.core.Application:
 def _log_to_fusion(message: str) -> None:
     """
     Mirror generated-solid progress into Fusion's application log.
-
-    Args:
-        message: Timestamped scenario log line.
     """
     adsk.core.Application.log(
         f"Wire Bundler generated solids: {message}",

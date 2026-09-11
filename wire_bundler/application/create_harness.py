@@ -47,13 +47,6 @@ def suggest_harness_name(name: str, gateway: HarnessGateway) -> str:
     """
     Normalize a requested name and resolve it against the active host context.
 
-    Args:
-        name: Preferred user-facing harness name.
-        gateway: Host boundary used to inspect existing names.
-
-    Returns:
-        First available normalized harness name.
-
     Raises:
         ValueError: If the requested or resolved name is empty.
     """
@@ -80,15 +73,6 @@ def create_empty_harness(
     connections, profiles, controls, and wires are added. If metadata persistence
     fails after component creation, the component is deleted before the original
     error is re-raised.
-
-    Args:
-        name: User-facing harness component name.
-        routing_mode: Initial routing-control strategy.
-        gateway: Host boundary used for component and metadata operations.
-        id_factory: UUID factory, injectable for deterministic tests.
-
-    Returns:
-        The definition persisted by the host gateway.
 
     Raises:
         ValueError: If the normalized harness name is empty.

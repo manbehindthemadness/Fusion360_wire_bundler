@@ -40,9 +40,6 @@ HARNESS_ID = UUID("7a000000-0000-0000-0000-000000000001")
 def run(_context: object) -> None:
     """
     Run the disposable Assembly placement scenario and display its result.
-
-    Args:
-        _context: Context supplied by the Fusion script host.
     """
     report = ScenarioReport(SCENARIO_NAME, ARTIFACT_ROOT, _log_to_fusion)
     application: Optional[adsk.core.Application] = None
@@ -73,10 +70,6 @@ def verify_assembly_placement(
 ) -> None:
     """
     Create, save, reopen, validate, and delete one external harness fixture.
-
-    Args:
-        application: Active Fusion application.
-        report: Durable scenario report.
     """
     previous_document = application.activeDocument
     initial_document_count = application.documents.count
@@ -228,9 +221,6 @@ def _require_application() -> adsk.core.Application:
 def _log_to_fusion(message: str) -> None:
     """
     Mirror Assembly placement progress into Fusion's application log.
-
-    Args:
-        message: Timestamped scenario log line.
     """
     adsk.core.Application.log(
         f"Wire Bundler Assembly placement: {message}",

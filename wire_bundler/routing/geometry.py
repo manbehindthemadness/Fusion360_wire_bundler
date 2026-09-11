@@ -12,11 +12,6 @@ from dataclasses import dataclass
 class Vector3:
     """
     Store one point or direction in millimeters.
-
-    Args:
-        x: X coordinate.
-        y: Y coordinate.
-        z: Z coordinate.
     """
 
     x: float
@@ -26,13 +21,6 @@ class Vector3:
     def translated(self, direction: Vector3, distance: float) -> Vector3:
         """
         Return this point translated along a direction.
-
-        Args:
-            direction: Translation direction.
-            distance: Signed translation distance.
-
-        Returns:
-            Translated point.
         """
         return Vector3(
             self.x + direction.x * distance,

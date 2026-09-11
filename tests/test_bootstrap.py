@@ -18,6 +18,11 @@ class _BootstrapModule(Protocol):
     Describe the entry-point operations exercised by these tests.
     """
 
+    def run(self, context: object) -> None:
+        """
+        Start the loaded add-in package.
+        """
+
     def stop(self, context: object) -> None:
         """
         Stop the loaded add-in package.
@@ -45,6 +50,37 @@ def bootstrap_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[_BootstrapModu
     yield cast(_BootstrapModule, cast(object, module))
 
     sys.modules.pop("Fusion360_wire_bundler", None)
+
+
+def test_successful_run_starts_loaded_addin_without_unloading_it(
+    bootstrap_module: _BootstrapModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Forward Fusion's exact context and keep lifecycle modules loaded while running.
+    """
+    package_name = "wire_bundler_running_test"
+    lifecycle_name = f"{package_name}.addin"
+    lifecycle = ModuleType(lifecycle_name)
+    context = object()
+    received_contexts: list[object] = []
+
+    def start(received_context: object) -> None:
+        """
+        Capture the context forwarded to lifecycle startup.
+        """
+        received_contexts.append(received_context)
+
+    lifecycle.start = start  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, package_name, ModuleType(package_name))
+    monkeypatch.setitem(sys.modules, lifecycle_name, lifecycle)
+    monkeypatch.setattr(bootstrap_module, "_load_addin", lambda: lifecycle)
+
+    bootstrap_module.run(context)
+
+    assert received_contexts == [context]
+    assert package_name in sys.modules
+    assert lifecycle_name in sys.modules
 
 
 def test_successful_stop_evicts_only_the_loaded_addin_package(
@@ -111,3 +147,52 @@ def test_failed_stop_keeps_package_loaded_for_diagnosis(
 
     assert package_name in sys.modules
     assert lifecycle_name in sys.modules
+
+
+@pytest.mark.parametrize(
+    ("entry_point_name", "operation"),
+    (("run", "start"), ("stop", "stop")),
+)
+def test_lifecycle_import_failure_is_reported_and_preserved(
+    bootstrap_module: _BootstrapModule,
+    monkeypatch: pytest.MonkeyPatch,
+    entry_point_name: str,
+    operation: str,
+) -> None:
+    """
+    Show arbitrary import-time failures in Fusion without replacing their type.
+    """
+    failure = LookupError("broken lifecycle import")
+    message_box_calls: list[tuple[str, str]] = []
+
+    def record_message_box(body: str, caption: str) -> None:
+        """
+        Capture a Fusion message-box request for assertion.
+        """
+        message_box_calls.append((body, caption))
+
+    application = ModuleType("application")
+    application.userInterface = ModuleType("user_interface")  # type: ignore[attr-defined]
+    application.userInterface.messageBox = record_message_box  # type: ignore[attr-defined]
+    core_module = sys.modules["adsk.core"]
+    core_module.Application = ModuleType("Application")  # type: ignore[attr-defined]
+    core_module.Application.get = lambda: application  # type: ignore[attr-defined]
+
+    def fail_to_load() -> object:
+        """
+        Reproduce an exception raised while importing lifecycle code.
+        """
+        raise failure
+
+    monkeypatch.setattr(bootstrap_module, "_load_addin", fail_to_load)
+    entry_point = getattr(bootstrap_module, entry_point_name)
+
+    with pytest.raises(LookupError, match="broken lifecycle import") as raised:
+        entry_point({})
+
+    assert raised.value is failure
+    assert len(message_box_calls) == 1
+    message, title = message_box_calls[0]
+    assert message.startswith(f"Wire Bundler failed to {operation}:\n")
+    assert "LookupError: broken lifecycle import" in message
+    assert title == "Harness Builder"

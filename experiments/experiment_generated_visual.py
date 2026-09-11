@@ -71,13 +71,6 @@ _SESSION: Optional[_GeneratedVisualSession] = None
 def dispatch(action: str) -> dict[str, object]:
     """
     Advance or clean the generated-wire visual fixture.
-
-    Args:
-        action: One of begin, normalize, generate, hide-stripes, show-stripes,
-            rebuild, move, reset-position, clear, or cleanup.
-
-    Returns:
-        JSON-safe structural state after the requested phase.
     """
     actions = {
         "begin": _begin,

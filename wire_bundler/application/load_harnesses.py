@@ -14,11 +14,6 @@ from ..domain import DefinitionParseError, HarnessDefinition, loads, validate_ha
 class StoredHarness:
     """
     Pair a host component name with its serialized harness definition.
-
-    Args:
-        component_name: Current name of the owning Fusion component.
-        serialized_definition: JSON stored in the component attribute.
-        component_handle: Opaque host identity for the owning component.
     """
 
     component_name: str
@@ -30,13 +25,6 @@ class StoredHarness:
 class HarnessLoadResult:
     """
     Report one discovered harness definition or its isolated parse failure.
-
-    Args:
-        component_name: Current name of the owning Fusion component.
-        definition: Parsed definition when decoding succeeds.
-        error: Parse failure text when decoding fails.
-        validation_messages: Logical validation findings for a parsed definition.
-        component_handle: Opaque host identity for the owning component.
     """
 
     component_name: str
@@ -70,13 +58,7 @@ class DamagedHarnessGateway(Protocol):
 
 def load_harnesses(gateway: HarnessLibraryGateway) -> tuple[HarnessLoadResult, ...]:
     """
-    Decode every stored harness without allowing one damaged entry to hide others.
-
-    Args:
-        gateway: Host boundary that enumerates persisted definitions.
-
-    Returns:
-        Results sorted case-insensitively by component name.
+    Decode each stored harness independently and sort results by component name.
     """
     results: list[HarnessLoadResult] = []
     for stored_harness in gateway.list_stored_harnesses():
@@ -116,10 +98,6 @@ def delete_damaged_harness(
 ) -> None:
     """
     Delete the exact host component belonging to one unreadable harness.
-
-    Args:
-        result: Isolated damaged load result selected by the user.
-        gateway: Host boundary that owns component deletion.
 
     Raises:
         ValueError: If the result is readable or has no host identity.

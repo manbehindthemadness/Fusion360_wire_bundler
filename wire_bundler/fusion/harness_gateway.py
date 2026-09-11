@@ -170,24 +170,13 @@ class FusionHarnessGateway:
     ) -> None:
         """
         Initialize the gateway for an active Fusion design.
-
-        Args:
-            design: Active Fusion design that will own the harness component.
-            external_component_folder: Active cloud folder for assembly-external
-                harness components.
         """
         self._design = design
         self._external_component_folder = external_component_folder
 
     def resolve_harness_name(self, requested_name: str) -> str:
         """
-        Resolve a name against design components and external cloud files.
-
-        Args:
-            requested_name: Preferred harness name.
-
-        Returns:
-            First available case-insensitive name.
+        Resolve a name case-insensitively across components and external cloud files.
         """
         unavailable_names: list[str] = []
         components = cast(_FusionComponents, self._design.allComponents)
@@ -208,9 +197,6 @@ class FusionHarnessGateway:
     def list_stored_harnesses(self) -> tuple[StoredHarness, ...]:
         """
         Return definitions stored on every marked component in the active design.
-
-        Returns:
-            Component names and their serialized definition attributes.
         """
         stored_harnesses: list[StoredHarness] = []
         components = cast(_FusionComponents, self._design.allComponents)
@@ -237,9 +223,6 @@ class FusionHarnessGateway:
         """
         Delete the exact marked harness component selected during discovery.
 
-        Args:
-            component_handle: Opaque component identity returned by discovery.
-
         Raises:
             RuntimeError: If the component is stale, unmarked, reused, or cannot be deleted.
         """
@@ -264,12 +247,6 @@ class FusionHarnessGateway:
     def read_harness_definition(self, harness_id: UUID) -> str:
         """
         Return the serialized definition owned by one harness.
-
-        Args:
-            harness_id: Persistent harness identity to find.
-
-        Returns:
-            Stored definition JSON.
         """
         _component, attribute = self._find_harness_component(harness_id)
         return attribute.value
@@ -281,10 +258,6 @@ class FusionHarnessGateway:
     ) -> None:
         """
         Replace the serialized definition owned by one harness.
-
-        Args:
-            harness_id: Persistent harness identity to update.
-            serialized_definition: Complete replacement definition JSON.
         """
         component, _attribute = self._find_harness_component(harness_id)
         updated_attribute = component.attributes.add(
@@ -298,12 +271,6 @@ class FusionHarnessGateway:
     def is_entity_token_resolvable(self, entity_token: str) -> bool:
         """
         Return whether Fusion can still resolve a persisted entity token.
-
-        Args:
-            entity_token: Persistent token previously obtained from Fusion geometry.
-
-        Returns:
-            ``True`` when the active design resolves at least one matching entity.
         """
         if not entity_token.strip():
             return False
@@ -317,12 +284,6 @@ class FusionHarnessGateway:
         Part designs are converted to hybrid intent because Fusion prohibits child
         components in a part. Assembly designs create an unsaved external component
         in the active cloud folder.
-
-        Args:
-            name: Name assigned to the new component.
-
-        Returns:
-            An opaque handle for the occurrence that owns the new component.
         """
         original_design_intent = self._prepare_design_intent()
         uses_external_component = self._is_assembly_design()
@@ -357,10 +318,6 @@ class FusionHarnessGateway:
     def write_definition(self, component: object, serialized_definition: str) -> None:
         """
         Write versioned harness JSON to the component's Fusion attributes.
-
-        Args:
-            component: Opaque handle returned by ``create_harness_component``.
-            serialized_definition: Versioned harness JSON.
         """
         handle = self._require_handle(component)
         occurrence = handle.occurrence
@@ -375,9 +332,6 @@ class FusionHarnessGateway:
     def delete_harness_component(self, component: object) -> None:
         """
         Delete an incomplete harness occurrence during rollback.
-
-        Args:
-            component: Opaque handle returned by ``create_harness_component``.
         """
         handle = self._require_handle(component)
         occurrence = handle.occurrence
@@ -401,12 +355,6 @@ class FusionHarnessGateway:
     ) -> tuple[_FusionComponent, _FusionAttribute]:
         """
         Find the marked Fusion component owning one valid harness definition.
-
-        Args:
-            harness_id: Persistent harness identity to locate.
-
-        Returns:
-            Matching component and definition attribute.
 
         Raises:
             RuntimeError: If no matching readable harness exists.
@@ -434,12 +382,6 @@ class FusionHarnessGateway:
     def _require_handle(component: object) -> _HarnessComponentHandle:
         """
         Cast an opaque application-layer value to a gateway component handle.
-
-        Args:
-            component: Opaque component handle from the application service.
-
-        Returns:
-            Valid gateway component handle.
         """
         if not isinstance(component, _HarnessComponentHandle):
             raise TypeError("Harness component handle was not created by this gateway.")
@@ -447,10 +389,7 @@ class FusionHarnessGateway:
 
     def _prepare_design_intent(self) -> object:
         """
-        Ensure Fusion permits the appropriate harness-component workflow.
-
-        Returns:
-            Original design intent, retained so failed creation can be rolled back.
+        Ensure Fusion permits component creation and return its prior intent for rollback.
         """
         intent_types = adsk.fusion.DesignIntentTypes
         original_design_intent = self._design.designIntent
@@ -495,9 +434,6 @@ class FusionHarnessGateway:
     def _restore_design_intent(self, original_design_intent: object) -> None:
         """
         Restore an automatically converted design after failed creation.
-
-        Args:
-            original_design_intent: Intent observed before component creation.
         """
         if self._design.designIntent != original_design_intent:
             self._design.designIntent = original_design_intent

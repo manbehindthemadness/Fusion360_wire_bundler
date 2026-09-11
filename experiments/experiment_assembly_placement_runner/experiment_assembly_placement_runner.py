@@ -17,8 +17,5 @@ from experiments.experiment_assembly_placement import run as run_assembly_placem
 def run(context: object) -> None:
     """
     Delegate execution to the repository-owned Assembly placement scenario.
-
-    Args:
-        context: Context supplied by Fusion's script host.
     """
     run_assembly_placement(context)

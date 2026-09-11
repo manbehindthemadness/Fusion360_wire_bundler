@@ -60,9 +60,6 @@ WIRE_IDS = tuple(UUID(f"77000000-0000-0000-0000-{index:012d}") for index in rang
 def run(_context: object) -> None:
     """
     Create an isolated Fusion document and retain it for interactive inspection.
-
-    Args:
-        _context: Context supplied by the Fusion script host.
     """
     report = ScenarioReport(SCENARIO_NAME, ARTIFACT_ROOT, _log_to_fusion)
     application: Optional[adsk.core.Application] = None
@@ -106,11 +103,6 @@ def verify_reference_harness(
 ) -> None:
     """
     Verify the complete reference harness and optionally retain its unsaved design.
-
-    Args:
-        application: Active Fusion application.
-        report: Durable scenario report.
-        retain_document: Keep the isolated design open for interactive inspection.
     """
     previous_document = application.activeDocument
     document: Optional[adsk.core.Document] = None
@@ -306,9 +298,6 @@ def _require_application() -> adsk.core.Application:
     """
     Return the active Fusion application.
 
-    Returns:
-        Active Fusion application.
-
     Raises:
         RuntimeError: If the experiment is not running inside Fusion.
     """
@@ -328,17 +317,6 @@ def _create_circular_profile(
 ) -> adsk.fusion.Profile:
     """
     Create one named circular sketch profile on an XY-offset plane.
-
-    Args:
-        component: Component that will own the sketch and construction plane.
-        offset_cm: Plane offset in Fusion's internal centimeter units.
-        center_x_cm: Circle-center X coordinate in sketch space.
-        center_y_cm: Circle-center Y coordinate in sketch space.
-        radius_cm: Circle radius in Fusion's internal centimeter units.
-        name: Sketch name used for visual diagnosis.
-
-    Returns:
-        Computed circular sketch profile.
     """
     planar_entity = component.xYConstructionPlane
     if offset_cm != 0.0:
@@ -367,9 +345,6 @@ def _create_circular_profile(
 def _log_to_fusion(message: str) -> None:
     """
     Mirror experiment diagnostics into Fusion's application log.
-
-    Args:
-        message: Timestamped scenario log line.
     """
     adsk.core.Application.log(
         f"Wire Bundler verification: {message}",

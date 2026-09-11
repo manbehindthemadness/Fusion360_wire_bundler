@@ -17,8 +17,5 @@ from experiments.experiment_reference_harness import run as run_reference_harnes
 def run(context: object) -> None:
     """
     Delegate execution to the repository-owned reference scenario.
-
-    Args:
-        context: Context supplied by Fusion's script host.
     """
     run_reference_harness(context)

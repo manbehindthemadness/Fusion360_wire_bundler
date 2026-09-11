@@ -17,8 +17,5 @@ from experiments.experiment_preview_reload import run as run_preview_reload  # n
 def run(context: object) -> None:
     """
     Delegate execution to the repository-owned preview-reload scenario.
-
-    Args:
-        context: Context supplied by Fusion's script host.
     """
     run_preview_reload(context)

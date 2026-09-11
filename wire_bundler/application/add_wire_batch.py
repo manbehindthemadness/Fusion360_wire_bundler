@@ -48,10 +48,7 @@ class WireBatchResult:
     """
     Return the profile, connections, and wires added by one operation.
 
-    Args:
-        profile: Shared circular profile assigned to the new wires.
-        connections: End A connections followed by End B connections.
-        wires: New wire mappings in user selection order.
+    Connections retain End A then End B order; wires retain user selection order.
     """
 
     profile: WireProfile
@@ -70,18 +67,6 @@ def add_wire_batch(
 ) -> WireBatchResult:
     """
     Pair ordered endpoint selections and atomically persist their wire mappings.
-
-    Args:
-        harness_id: Harness that will own the new wires.
-        pathway_id: Existing reusable pathway traversed by every new wire.
-        source_entity_tokens: End A profile tokens in pairing order.
-        destination_entity_tokens: End B profile tokens in pairing order.
-        diameter_mm: Finished circular wire diameter in millimeters.
-        gateway: Persistence boundary for the owning harness.
-        id_factory: UUID factory, injectable for deterministic tests.
-
-    Returns:
-        Objects added by the successful update.
 
     Raises:
         ValueError: If selections, diameter, or pathway identity are invalid.
@@ -176,13 +161,6 @@ def add_wire_batch(
 def _normalize_tokens(tokens: tuple[str, ...], role: str) -> tuple[str, ...]:
     """
     Normalize and validate one ordered endpoint-token collection.
-
-    Args:
-        tokens: Fusion entity tokens in user selection order.
-        role: Endpoint role used in validation messages.
-
-    Returns:
-        Stripped, non-empty tokens.
     """
     if not tokens:
         raise ValueError("Select at least one End A and End B profile.")
@@ -195,12 +173,6 @@ def _normalize_tokens(tokens: tuple[str, ...], role: str) -> tuple[str, ...]:
 def _next_wire_number(definition: HarnessDefinition) -> int:
     """
     Return the next positive number after existing numeric wire identifiers.
-
-    Args:
-        definition: Harness definition being extended.
-
-    Returns:
-        Next available numeric identifier.
     """
     numeric_values = tuple(
         int(wire.wire_number) for wire in definition.wires if wire.wire_number.isdecimal()

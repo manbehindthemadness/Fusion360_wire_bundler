@@ -48,13 +48,6 @@ def run_automated_fusion_suite(
 
     The suite catches failures at the scenario boundary so later independent scenarios
     still run and produce evidence. Each scenario core owns its fixture cleanup.
-
-    Args:
-        application: Active Fusion application.
-        scenario_names: Optional ordered subset of structural scenario names.
-
-    Returns:
-        Aggregate live-suite result including each durable scenario report path.
     """
     scenarios_by_name = dict(FUSION_SCENARIOS)
     selected_names = tuple(scenario_names) if scenario_names is not None else FUSION_SCENARIO_NAMES
@@ -124,9 +117,6 @@ def run_automated_fusion_suite(
 def _log_to_fusion(message: str) -> None:
     """
     Mirror automated-suite progress into Fusion's application log.
-
-    Args:
-        message: Timestamped scenario log line.
     """
     adsk.core.Application.log(
         f"Wire Bundler automated QA: {message}",

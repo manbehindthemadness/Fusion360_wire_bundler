@@ -32,9 +32,6 @@ class WireMaterialCatalog:
 def load_wire_material_catalog() -> WireMaterialCatalog:
     """
     Read and validate the bundled material catalog on first UI use.
-
-    Returns:
-        Immutable autocomplete suggestions shipped with this add-in.
     """
     raw = json.loads(CATALOG_FILE.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):

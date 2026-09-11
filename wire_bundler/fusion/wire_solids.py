@@ -46,16 +46,6 @@ def generate_wire_solids(
     Callers must explicitly authorize replacement because generated components may
     contain manual edits. Native transaction rollback covers any deletion failure.
     Sketches outside the marked generated components are never modified.
-
-    Args:
-        design: Active Fusion design used to resolve route geometry.
-        harness: Component that owns generated wire child components.
-        definition: Persisted harness definition to generate.
-        replace_existing: Whether marked existing wire components may be replaced.
-        notices: Optional collector for successful dynamic transition adjustments.
-
-    Returns:
-        Number of generated wire components.
     """
     issues = validate_harness(definition)
     if issues:

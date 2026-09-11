@@ -17,8 +17,5 @@ from experiments.experiment_generated_solids import run as run_generated_solids 
 def run(context: object) -> None:
     """
     Delegate execution to the repository-owned generated-solid scenario.
-
-    Args:
-        context: Context supplied by Fusion's script host.
     """
     run_generated_solids(context)

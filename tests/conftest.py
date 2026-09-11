@@ -25,9 +25,6 @@ from wire_bundler.domain import (
 def valid_harness() -> HarnessDefinition:
     """
     Create a deterministic, logically valid one-wire harness.
-
-    Returns:
-        Complete harness definition for tests.
     """
     profile_id = UUID("10000000-0000-0000-0000-000000000001")
     start_id = UUID("20000000-0000-0000-0000-000000000001")
