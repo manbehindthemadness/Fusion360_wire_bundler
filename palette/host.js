@@ -367,6 +367,36 @@ async function appendPathwayGates(harness, pathway) {
   }
 }
 
+async function addPathwayRefine(harness, pathway) {
+  appendNotice(`Select a refine location on ${pathway.name}…`);
+  try {
+    const response = await send("add_pathway_refine", {
+      harnessId: harness.harnessId,
+      pathwayId: pathway.pathwayId,
+    });
+    if (!response.ok) {
+      appendNotice(response.error || "Add Refine Point could not be opened.", true);
+    }
+  } catch (error) {
+    appendNotice(error.message, true);
+  }
+}
+
+async function editPathwayRefine(harness, control) {
+  appendNotice(`Editing ${control.name || "refine point"}…`);
+  try {
+    const response = await send("edit_pathway_refine", {
+      harnessId: harness.harnessId,
+      controlId: control.controlId,
+    });
+    if (!response.ok) {
+      appendNotice(response.error || "Edit Refine Point could not be opened.", true);
+    }
+  } catch (error) {
+    appendNotice(error.message, true);
+  }
+}
+
 function removeGate(harness, pathway, controlId, name) {
   if (!window.confirm(`Remove ${name} from ${pathway.name}?`)) return;
   void mutate(

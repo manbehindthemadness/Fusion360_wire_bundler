@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from dataclasses import dataclass, replace
-from typing import Optional
+from typing import Optional, Union
 from uuid import UUID, uuid4
 
 # noinspection PyUnresolvedReferences
@@ -27,6 +27,7 @@ from ..domain import (
 )
 from ..routing import (
     GateFrame,
+    RefineFrame,
     RoutePreview,
     TransitionAdjustment,
     TransitionLengths,
@@ -475,7 +476,8 @@ def _solve_definition_routes(
     profile_frames: dict[str, tuple[Vector3, Vector3]] = {}
     for control_ids, untyped_wires in grouped_wires.items():
         gates = tuple(
-            _gate_frame(design, controls.get(control_id), control_id) for control_id in control_ids
+            _routing_frame(design, controls.get(control_id), control_id)
+            for control_id in control_ids
         )
         route_inputs: list[WireRouteInput] = []
         route_normals: dict[UUID, tuple[Vector3, ...]] = {}
@@ -602,13 +604,37 @@ def _adjustment_notice(adjustment: TransitionAdjustment) -> str:
     )
 
 
+def _routing_frame(
+    design: adsk.fusion.Design,
+    control: Optional[ControlStructure],
+    control_id: UUID,
+) -> Union[GateFrame, RefineFrame]:
+    """
+    Build a constrained gate or unconstrained refine routing frame.
+    """
+    if control is None:
+        raise RuntimeError(f"Routing control is missing: {control_id}")
+    if control.kind is ControlKind.REFINE:
+        geometry = control.refine_geometry
+        if geometry is None:
+            raise RuntimeError(f"{control.name} has no saved refine geometry.")
+        return RefineFrame(
+            refine_id=control.control_id,
+            name=control.name,
+            origin=Vector3(*geometry.origin_mm),
+            u_direction=Vector3(*geometry.u_direction),
+            v_direction=Vector3(*geometry.v_direction),
+        )
+    return _gate_frame(design, control, control_id)
+
+
 def _gate_frame(
     design: adsk.fusion.Design,
     control: Optional[ControlStructure],
     control_id: UUID,
 ) -> GateFrame:
     """
-    Build a millimeter-scale circular aperture frame from one pathway control.
+    Build a millimeter-scale circular aperture frame from one physical control.
 
     Connection-owned end profiles are resolved separately as centroid/normal
     frames. Their position and orientation guide fairing and the resulting sweep,

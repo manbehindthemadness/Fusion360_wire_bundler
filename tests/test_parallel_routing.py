@@ -12,6 +12,7 @@ import pytest
 from wire_bundler.routing import (
     GateCapacityError,
     GateFrame,
+    RefineFrame,
     Vector3,
     WireRouteInput,
     solve_parallel_routes,
@@ -63,6 +64,31 @@ def test_preserves_wire_and_gate_order_in_preview() -> None:
         second_offset = routes[wire_index].points[2]
         assert first_offset.x == pytest.approx(second_offset.x)
         assert first_offset.y == pytest.approx(second_offset.y)
+
+
+def test_refine_preserves_bundle_spacing_without_aperture_constraint() -> None:
+    """
+    Route every conductor through an oriented refine without capacity rejection.
+    """
+    wires = tuple(_wire(index, 3.0) for index in range(1, 4))
+    refine = RefineFrame(
+        UUID("30000000-0000-0000-0000-000000000001"),
+        "Refine Point 01",
+        Vector3(20.0, 5.0, 15.0),
+        Vector3(0.0, 1.0, 0.0),
+        Vector3(0.0, 0.0, 1.0),
+    )
+
+    routes = solve_parallel_routes(wires, (refine,), clearance_mm=0.5)
+
+    crossings = [route.points[1] for route in routes]
+    assert all(point.x == pytest.approx(20.0) for point in crossings)
+    for left_index, left in enumerate(crossings):
+        for right in crossings[left_index + 1 :]:
+            distance = math.sqrt(
+                (left.x - right.x) ** 2 + (left.y - right.y) ** 2 + (left.z - right.z) ** 2
+            )
+            assert distance >= 3.5 - 1e-9
 
 
 def test_maintains_required_wire_clearance_at_gate() -> None:

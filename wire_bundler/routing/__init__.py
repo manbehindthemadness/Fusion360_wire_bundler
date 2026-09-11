@@ -6,6 +6,7 @@ from .geometry import CubicBezier
 from .parallel import (
     GateCapacityError,
     GateFrame,
+    RefineFrame,
     RoutePreview,
     Vector3,
     WireRouteInput,
@@ -30,6 +31,7 @@ __all__ = [
     "CIRCULAR_SWEEP_BEND_FACTOR",
     "GateCapacityError",
     "GateFrame",
+    "RefineFrame",
     "RoutePreview",
     "Vector3",
     "WireRouteInput",

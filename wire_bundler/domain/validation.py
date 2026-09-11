@@ -159,7 +159,15 @@ def _validate_controls(
             issues.append(
                 ValidationIssue("missing_control_name", f"{path}.name", "Control name is required.")
             )
-        if not control.entity_token.strip():
+        if control.kind is ControlKind.REFINE and control.refine_geometry is None:
+            issues.append(
+                ValidationIssue(
+                    "missing_refine_geometry",
+                    f"{path}.refine_geometry",
+                    "Refine point must retain its saved position and orientation.",
+                )
+            )
+        elif control.kind is not ControlKind.REFINE and not control.entity_token.strip():
             issues.append(
                 ValidationIssue(
                     "missing_control_geometry",
@@ -229,7 +237,7 @@ def _validate_pathways(
                         "Referenced routing control does not exist.",
                     )
                 )
-            elif control.kind is not expected_kind:
+            elif control.kind not in {expected_kind, ControlKind.REFINE}:
                 issues.append(
                     ValidationIssue(
                         "pathway_control_mode_mismatch",

@@ -8,7 +8,7 @@ import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
-from typing import Any, Optional, Type, TypeVar
+from typing import Any, Optional, Type, TypeVar, cast
 from uuid import UUID
 
 from .model import (
@@ -19,6 +19,7 @@ from .model import (
     HarnessDefinition,
     InterpolationSettings,
     PathwayDefinition,
+    RefineGeometry,
     RoutingMode,
     StripePattern,
     WireAppearanceReference,
@@ -70,10 +71,10 @@ def loads(serialized: str) -> HarnessDefinition:
 
     payload = _require_mapping(raw_payload, "$")
     schema_version = _require_int(payload, "schema_version", "$.schema_version")
-    if schema_version not in (1, 2, 3, SCHEMA_VERSION):
+    if schema_version not in range(1, SCHEMA_VERSION + 1):
         raise DefinitionParseError(
             "$.schema_version",
-            f"unsupported version {schema_version}; expected 1, 2, 3, or {SCHEMA_VERSION}",
+            f"unsupported version {schema_version}; expected 1 through {SCHEMA_VERSION}",
         )
 
     harness_id = _require_uuid(payload, "harness_id", "$.harness_id")
@@ -177,6 +178,9 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
                 "name": control.name,
                 "kind": control.kind.value,
                 "entity_token": control.entity_token,
+                "refine_geometry": (
+                    asdict(control.refine_geometry) if control.refine_geometry is not None else None
+                ),
             }
             for control in definition.controls
         ],
@@ -487,15 +491,56 @@ def _parse_control(raw_value: object, path: str) -> ControlStructure:
     override = value.get("interpolation_is_override", False)
     if not isinstance(override, bool):
         raise DefinitionParseError(f"{path}.interpolation_is_override", "expected a boolean")
+    kind = _require_enum(ControlKind, value, "kind", f"{path}.kind")
+    refine_geometry = (
+        _parse_refine_geometry(value.get("refine_geometry"), f"{path}.refine_geometry")
+        if kind is ControlKind.REFINE
+        else None
+    )
     control = ControlStructure(
         control_id=_require_uuid(value, "control_id", f"{path}.control_id"),
         name=_require_str(value, "name", f"{path}.name"),
-        kind=_require_enum(ControlKind, value, "kind", f"{path}.kind"),
+        kind=kind,
         interpolation_is_override=override,
         interpolation=parse_interpolation(value.get("interpolation", {}), f"{path}.interpolation"),
-        entity_token=_require_str(value, "entity_token", f"{path}.entity_token"),
+        entity_token=_require_str(
+            {"entity_token": "", **value}, "entity_token", f"{path}.entity_token"
+        ),
+        refine_geometry=refine_geometry,
     )
     return control
+
+
+def _parse_refine_geometry(raw_value: object, path: str) -> RefineGeometry:
+    """
+    Parse one host-independent refine frame.
+    """
+    value = _require_mapping(raw_value, path)
+
+    def vector(key: str) -> tuple[float, float, float]:
+        """
+        Parse one fixed-length numeric vector.
+        """
+        items = _require_list(value, key, f"{path}.{key}")
+        if len(items) != 3:
+            raise DefinitionParseError(f"{path}.{key}", "expected exactly three numbers")
+        parsed = tuple(
+            _require_float({"value": item}, "value", f"{path}.{key}[{index}]")
+            for index, item in enumerate(items)
+        )
+        return cast(tuple[float, float, float], parsed)
+
+    try:
+        return RefineGeometry(
+            origin_mm=vector("origin_mm"),
+            u_direction=vector("u_direction"),
+            v_direction=vector("v_direction"),
+            display_radius_mm=_require_float(
+                value, "display_radius_mm", f"{path}.display_radius_mm"
+            ),
+        )
+    except ValueError as error:
+        raise DefinitionParseError(path, str(error)) from error
 
 
 def _parse_pathway(raw_value: object, path: str) -> PathwayDefinition:

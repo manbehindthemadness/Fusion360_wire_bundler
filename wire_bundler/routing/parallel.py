@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Union
 from uuid import UUID
 
 from .geometry import CubicBezier, Vector3
@@ -23,6 +24,19 @@ class GateFrame:
     u_direction: Vector3
     v_direction: Vector3
     usable_radius_mm: float
+
+
+@dataclass(frozen=True)
+class RefineFrame:
+    """
+    Describe an oriented pathway crossing without an aperture constraint.
+    """
+
+    refine_id: UUID
+    name: str
+    origin: Vector3
+    u_direction: Vector3
+    v_direction: Vector3
 
 
 @dataclass(frozen=True)
@@ -76,7 +90,7 @@ class GateCapacityError(ValueError):
 
 def solve_parallel_routes(
     wires: tuple[WireRouteInput, ...],
-    gates: tuple[GateFrame, ...],
+    gates: tuple[Union[GateFrame, RefineFrame], ...],
     clearance_mm: float = 0.0,
 ) -> tuple[RoutePreview, ...]:
     """
@@ -99,7 +113,7 @@ def solve_parallel_routes(
         if not math.isfinite(wire.diameter_mm) or wire.diameter_mm <= 0.0:
             raise ValueError(f"Wire {wire.wire_number} has an invalid diameter.")
 
-    gate_crossings = tuple(_pack_gate(wires, gate, clearance_mm) for gate in gates)
+    gate_crossings = tuple(_place_crossings(wires, gate, clearance_mm) for gate in gates)
     previews = tuple(
         RoutePreview(
             wire_id=wire.wire_id,
@@ -115,6 +129,26 @@ def solve_parallel_routes(
         for index, wire in enumerate(wires)
     )
     return previews
+
+
+def _place_crossings(
+    wires: tuple[WireRouteInput, ...],
+    frame: Union[GateFrame, RefineFrame],
+    clearance_mm: float,
+) -> tuple[Vector3, ...]:
+    """
+    Place a stable bundle at one constrained gate or unconstrained refine.
+    """
+    if isinstance(frame, GateFrame):
+        return _pack_gate(wires, frame, clearance_mm)
+    _validate_frame(frame)
+    largest_radius = max(wire.diameter_mm for wire in wires) / 2.0
+    spacing = largest_radius * 2.0 + clearance_mm
+    offsets = _center_offsets(_hexagonal_offsets(len(wires), spacing))
+    return tuple(
+        frame.origin.translated(frame.u_direction, u_offset).translated(frame.v_direction, v_offset)
+        for u_offset, v_offset in offsets
+    )
 
 
 def _pack_gate(
@@ -270,29 +304,37 @@ def _validate_gate(gate: GateFrame) -> None:
     """
     Require a finite aperture and orthonormal in-plane directions.
     """
-    values = (
-        gate.origin.x,
-        gate.origin.y,
-        gate.origin.z,
-        gate.u_direction.x,
-        gate.u_direction.y,
-        gate.u_direction.z,
-        gate.v_direction.x,
-        gate.v_direction.y,
-        gate.v_direction.z,
-        gate.usable_radius_mm,
-    )
-    if not all(math.isfinite(value) for value in values) or gate.usable_radius_mm <= 0.0:
+    _validate_frame(gate)
+    if not math.isfinite(gate.usable_radius_mm) or gate.usable_radius_mm <= 0.0:
         raise ValueError(f"{gate.name} has an invalid circular aperture.")
-    u_length = _length(gate.u_direction)
-    v_length = _length(gate.v_direction)
-    dot_product = _dot(gate.u_direction, gate.v_direction)
+
+
+def _validate_frame(frame: Union[GateFrame, RefineFrame]) -> None:
+    """
+    Require finite orthonormal in-plane directions.
+    """
+    values = (
+        frame.origin.x,
+        frame.origin.y,
+        frame.origin.z,
+        frame.u_direction.x,
+        frame.u_direction.y,
+        frame.u_direction.z,
+        frame.v_direction.x,
+        frame.v_direction.y,
+        frame.v_direction.z,
+    )
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError(f"{frame.name} has an invalid routing frame.")
+    u_length = _length(frame.u_direction)
+    v_length = _length(frame.v_direction)
+    dot_product = _dot(frame.u_direction, frame.v_direction)
     if not math.isclose(u_length, 1.0, abs_tol=1e-6):
-        raise ValueError(f"{gate.name} has a non-unit U direction.")
+        raise ValueError(f"{frame.name} has a non-unit U direction.")
     if not math.isclose(v_length, 1.0, abs_tol=1e-6):
-        raise ValueError(f"{gate.name} has a non-unit V direction.")
+        raise ValueError(f"{frame.name} has a non-unit V direction.")
     if not math.isclose(dot_product, 0.0, abs_tol=1e-6):
-        raise ValueError(f"{gate.name} has non-orthogonal in-plane directions.")
+        raise ValueError(f"{frame.name} has non-orthogonal in-plane directions.")
 
 
 def _length(vector: Vector3) -> float:

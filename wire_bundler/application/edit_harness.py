@@ -16,6 +16,7 @@ from ..domain import (
     ControlStructure,
     HarnessDefinition,
     PathwayDefinition,
+    RefineGeometry,
     RoutingMode,
     WireDefinition,
     WireMaterialOverrides,
@@ -47,6 +48,76 @@ class HarnessEditError(RuntimeError):
     """
     Report an edit that failed and could not be rolled back cleanly.
     """
+
+
+def add_pathway_refine(
+    harness_id: UUID,
+    pathway_id: UUID,
+    insertion_index: int,
+    geometry: RefineGeometry,
+    gateway: HarnessEditGateway,
+    id_factory: Callable[[], UUID] = uuid4,
+) -> ControlStructure:
+    """
+    Insert one persistent unconstrained refine into a pathway traversal.
+    """
+    if isinstance(insertion_index, bool) or not isinstance(insertion_index, int):
+        raise ValueError("Refine insertion position must be an integer.")
+    if not isinstance(geometry, RefineGeometry):
+        raise ValueError("Refine geometry is invalid.")
+    original, definition = _read_definition(harness_id, gateway)
+    pathway = _require_pathway(definition, pathway_id)
+    if not 0 <= insertion_index <= len(pathway.ordered_control_ids):
+        raise ValueError("Refine insertion position is outside the pathway.")
+    control = ControlStructure(
+        control_id=id_factory(),
+        name=next_available_name("Refine Point 01", (item.name for item in definition.controls)),
+        kind=ControlKind.REFINE,
+        entity_token="",
+        interpolation=definition.gate_defaults,
+        refine_geometry=geometry,
+    )
+    ordered_ids = list(pathway.ordered_control_ids)
+    ordered_ids.insert(insertion_index, control.control_id)
+    updated_pathway = replace(pathway, ordered_control_ids=tuple(ordered_ids))
+    updated = replace(
+        definition,
+        controls=(*definition.controls, control),
+        pathways=_replace_pathway(definition, updated_pathway),
+    )
+    updated = _synchronize_wire_controls(updated)
+    _persist(harness_id, original, updated, gateway)
+    return control
+
+
+def update_pathway_refine(
+    harness_id: UUID,
+    control_id: UUID,
+    geometry: RefineGeometry,
+    gateway: HarnessEditGateway,
+) -> ControlStructure:
+    """
+    Persist a new position, orientation, and display radius for one refine.
+    """
+    if not isinstance(geometry, RefineGeometry):
+        raise ValueError("Refine geometry is invalid.")
+    original, definition = _read_definition(harness_id, gateway)
+    control = next(
+        (item for item in definition.controls if item.control_id == control_id),
+        None,
+    )
+    if control is None or control.kind is not ControlKind.REFINE:
+        raise ValueError("Selected refine point no longer exists.")
+    updated_control = replace(control, refine_geometry=geometry)
+    updated = replace(
+        definition,
+        controls=tuple(
+            updated_control if item.control_id == control_id else item
+            for item in definition.controls
+        ),
+    )
+    _persist(harness_id, original, updated, gateway)
+    return updated_control
 
 
 def append_pathway_gates(

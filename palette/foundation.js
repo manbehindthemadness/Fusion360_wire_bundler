@@ -313,6 +313,7 @@ function renderPathways(harness, selectedPathwayId = null) {
     const occupancyContent = document.createElement("div");
     const occupancy = document.createElement("div");
     const addGates = document.createElement("button");
+    const addRefine = document.createElement("button");
     const addWiresButton = document.createElement("button");
     const members = harness.wires.filter(
       (wire) => wire.orderedPathwayIds.includes(pathway.pathwayId),
@@ -323,29 +324,37 @@ function renderPathways(harness, selectedPathwayId = null) {
     const gateRows = [];
     pathway.orderedControlIds.forEach((controlId, index) => {
       const control = controls.get(controlId);
+      const isRefine = control?.kind === "refine";
       const openOptions = () => openInterpolationOptions(
         harness, "gate", controlId, control?.name || "Gate", control?.interpolation, null, control?.usesDefaults ?? true,
       );
+      const editControl = isRefine
+        ? () => editPathwayRefine(harness, control)
+        : openOptions;
       const movePayload = { harnessId: harness.harnessId, pathwayId: pathway.pathwayId, controlId };
       const row = memberRow(
         `${control?.name || "Missing gate"} #${controlId.slice(0, 8)}`,
         () => highlightMember(harness, "control", controlId),
         [
-          optionsButton("Gate interpolation options", openOptions, !control),
+          optionsButton(
+            isRefine ? "Move, rotate, or resize refine point" : "Gate interpolation options",
+            editControl,
+            !control,
+          ),
           actionButton("×", "Remove gate", () => removeGate(
             harness, pathway, controlId, control?.name || "this gate",
           ), pathway.orderedControlIds.length === 1, true),
         ],
         !control || !control.hasLinkedGeometry,
       );
-      row.children[0].title = "Click for gate options; drag to reorder";
+      row.children[0].title = `Click for ${control?.kind === "refine" ? "refine" : "gate"} options; drag to reorder`;
       row.children[0].addEventListener("click", (event) => {
-        if (event.detail === 0 && control) openOptions();
+        if (event.detail === 0 && control) void editControl();
       });
       row.title = `Drag to reorder ${control?.name || "gate"} (${controlId})`;
       enableSequenceDrag(sequence, gateRows, row, index, (target) => mutate(
         "move_pathway_gate", { ...movePayload, offset: target - index }, "Reordering gate…",
-      ), control ? openOptions : null);
+      ), control ? editControl : null);
       sequence.append(row);
     });
     occupancyContent.className = "section-content";
@@ -379,6 +388,10 @@ function renderPathways(harness, selectedPathwayId = null) {
     addGates.className = "button compact";
     addGates.textContent = "+ Add Gates";
     addGates.addEventListener("click", () => appendPathwayGates(harness, pathway));
+    addRefine.type = "button";
+    addRefine.className = "button compact";
+    addRefine.textContent = "+ Add Refine Point";
+    addRefine.addEventListener("click", () => addPathwayRefine(harness, pathway));
     addWiresButton.type = "button";
     addWiresButton.className = "button compact";
     addWiresButton.textContent = "+ Add Wire Pairs";
@@ -393,6 +406,7 @@ function renderPathways(harness, selectedPathwayId = null) {
         ...namePayload, field: "end_name",
       }),
       addGates,
+      addRefine,
     );
     occupancyContent.append(occupancy, addWiresButton);
     pathwayContent.append(
@@ -401,7 +415,7 @@ function renderPathways(harness, selectedPathwayId = null) {
       }),
       nestedSection(
         `pathway:${pathway.pathwayId}:gates`,
-        "Gates · Traversal Order",
+        "Routing Controls · Traversal Order",
         `${pathway.orderedControlIds.length}`,
         gateContent,
         () => highlightMember(harness, "pathway_gates", pathway.pathwayId),
@@ -435,8 +449,10 @@ function closePathwayPopup() {
 function openPathwayPopup(harness, pathwayId) {
   const pathway = harness.pathways.find((candidate) => candidate.pathwayId === pathwayId);
   const existing = document.body.querySelector(".pathway-popup");
-  if (existing?.open) existing.close();
-  else existing?.remove();
+  if (existing) {
+    existing.remove();
+    if (existing.open) existing.close();
+  }
   if (!pathway) {
     openPathwayPopupId = "";
     return;

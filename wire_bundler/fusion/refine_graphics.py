@@ -33,6 +33,7 @@ REFINE_SPINE_GROUP_ID = "kev0.wire_bundler.refine_spine"
 REFINE_SPINE_ENTITY_ID = "kev0.wire_bundler.refine_spine.curve"
 DEFAULT_REFINE_RADIUS_MM = 10.0
 _REFINE_COLOR = (232, 78, 180)
+_REFINE_HIGHLIGHT_COLOR = (255, 196, 62)
 _SPINE_COLOR = (42, 214, 226)
 
 
@@ -179,24 +180,113 @@ def draw_candidate_refine(
     group: adsk.fusion.CustomGraphicsGroup, geometry: RefineGeometry
 ) -> adsk.fusion.CustomGraphicsLines:
     """
-    Replace the temporary candidate circle within the command group.
+    Replace the temporary candidate with one transformable local-space circle.
+    """
+    clear_candidate_refine(group)
+    local_geometry = _local_refine_geometry()
+    circle = _add_polyline(group, _circle_points(local_geometry), _REFINE_COLOR, 4.0)
+    circle.id = "candidate_refine"
+    circle.name = "Refine preview"
+    circle.isSelectable = False
+    update_candidate_refine(circle, geometry)
+    return circle
+
+
+def update_candidate_refine(
+    circle: adsk.fusion.CustomGraphicsLines,
+    geometry: RefineGeometry,
+) -> None:
+    """
+    Move, orient, and resize an existing placement candidate in place.
+    """
+    if not circle.isValid:
+        raise RuntimeError("Fusion invalidated the refine placement marker.")
+    circle.transform = _refine_display_transform(geometry)
+
+
+def draw_refine_editor(
+    design: adsk.fusion.Design, geometry: RefineGeometry
+) -> adsk.fusion.CustomGraphicsGroup:
+    """
+    Replace persistent markers with one transformable local-space marker.
+    """
+    clear_refine_spine(design)
+    clear_refine_graphics(design)
+    group = design.rootComponent.customGraphicsGroups.add()
+    if group is None:
+        raise RuntimeError("Fusion did not create the refine editor graphics group.")
+    group.id = REFINE_SPINE_GROUP_ID
+    group.name = "Edit Refine Point"
+    draw_candidate_refine(group, _local_refine_geometry())
+    update_refine_editor(group, geometry)
+    return group
+
+
+def update_refine_editor(
+    group: adsk.fusion.CustomGraphicsGroup,
+    geometry: RefineGeometry,
+) -> None:
+    """
+    Move, orient, and resize the editor marker without replacing its graphics.
+    """
+    if not group.isValid:
+        raise RuntimeError("Fusion invalidated the refine editor marker.")
+    group.transform = _refine_display_transform(geometry)
+
+
+def _refine_display_transform(geometry: RefineGeometry) -> adsk.core.Matrix3D:
+    """
+    Encode one refine frame and display radius as a Custom Graphics matrix.
+    """
+    u_direction = Vector3(*geometry.u_direction)
+    v_direction = Vector3(*geometry.v_direction)
+    tangent = unit(cross(u_direction, v_direction))
+    radius_scale = geometry.display_radius_mm / DEFAULT_REFINE_RADIUS_MM
+    transform = adsk.core.Matrix3D.create()
+    if transform is None:
+        raise RuntimeError("Fusion could not transform the refine editor marker.")
+    columns = (
+        (u_direction.x * radius_scale, u_direction.y * radius_scale, u_direction.z * radius_scale),
+        (v_direction.x * radius_scale, v_direction.y * radius_scale, v_direction.z * radius_scale),
+        (tangent.x, tangent.y, tangent.z),
+        tuple(value / 10.0 for value in geometry.origin_mm),
+    )
+    if not all(
+        transform.setCell(row, column, value)
+        for column, values in enumerate(columns)
+        for row, value in enumerate(values)
+    ):
+        raise RuntimeError("Fusion could not transform the refine editor marker.")
+    return transform
+
+
+def _local_refine_geometry() -> RefineGeometry:
+    """
+    Return the canonical circle frame transformed by live placement matrices.
+    """
+    return RefineGeometry(
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        DEFAULT_REFINE_RADIUS_MM,
+    )
+
+
+def clear_candidate_refine(group: adsk.fusion.CustomGraphicsGroup) -> None:
+    """
+    Delete the command-only candidate while retaining the selectable spine.
     """
     for index in range(group.count - 1, -1, -1):
         entity = group.item(index)
         if entity is not None and entity.id == "candidate_refine":
             entity.deleteMe()
-    circle = _add_polyline(group, _circle_points(geometry), _REFINE_COLOR, 4.0)
-    circle.id = "candidate_refine"
-    circle.name = "Refine preview"
-    circle.isSelectable = False
-    return circle
 
 
 def reconcile_refine_graphics(
     design: adsk.fusion.Design, definitions: tuple[HarnessDefinition, ...]
 ) -> None:
     """
-    Recreate persistent refine markers when their saved identity set changes.
+    Recreate persistent refine markers from their complete saved geometry.
     """
     expected = tuple(
         str(control.control_id)
@@ -204,14 +294,6 @@ def reconcile_refine_graphics(
         for control in definition.controls
         if control.kind is ControlKind.REFINE and control.refine_geometry is not None
     )
-    group = _find_group(design, REFINE_GRAPHICS_GROUP_ID)
-    current = ()
-    if group is not None:
-        current = tuple(
-            group.item(index).id for index in range(group.count) if group.item(index) is not None
-        )
-    if current == expected:
-        return
     clear_refine_graphics(design)
     if not expected:
         return
@@ -230,6 +312,29 @@ def reconcile_refine_graphics(
             marker.id = str(control.control_id)
             marker.name = control.name
             marker.isSelectable = True
+
+
+def highlight_refine_graphics(design: adsk.fusion.Design, control_ids: tuple[UUID, ...]) -> int:
+    """
+    Emphasize selected persistent refine markers and reset all others.
+    """
+    selected = {str(control_id) for control_id in control_ids}
+    group = _find_group(design, REFINE_GRAPHICS_GROUP_ID)
+    if group is None:
+        return 0
+    count = 0
+    for index in range(group.count):
+        marker = group.item(index)
+        if marker is None:
+            continue
+        is_highlighted = marker.id in selected
+        _set_line_style(
+            marker,
+            _REFINE_HIGHLIGHT_COLOR if is_highlighted else _REFINE_COLOR,
+            7.0 if is_highlighted else 4.0,
+        )
+        count += int(is_highlighted)
+    return count
 
 
 def clear_refine_spine(design: adsk.fusion.Design) -> None:
@@ -321,13 +426,24 @@ def _add_polyline(
     lines = group.addLines(coordinates, [], True)
     if lines is None:
         raise RuntimeError("Fusion did not draw refine graphics.")
+    _set_line_style(lines, rgb, weight)
+    return lines
+
+
+def _set_line_style(
+    lines: adsk.fusion.CustomGraphicsLines,
+    rgb: tuple[int, int, int],
+    weight: float,
+) -> None:
+    """
+    Apply a solid color and line weight to one refine polyline.
+    """
     color = adsk.core.Color.create(*rgb, 255)
     effect = adsk.fusion.CustomGraphicsSolidColorEffect.create(color)
     if effect is None:
         raise RuntimeError("Fusion did not create the refine graphics color.")
     lines.color = effect
     lines.weight = weight
-    return lines
 
 
 def _find_group(

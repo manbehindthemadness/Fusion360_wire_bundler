@@ -23,6 +23,7 @@ from .create_harness import (
 from .edit_harness import (
     HarnessEditError,
     HarnessEditGateway,
+    add_pathway_refine,
     append_pathway_gates,
     move_pathway_gate,
     move_wire_endpoint,
@@ -34,6 +35,7 @@ from .edit_harness import (
     set_harness_material_defaults,
     set_wire_diameter,
     set_wire_material_overrides,
+    update_pathway_refine,
 )
 from .load_harnesses import (
     DamagedHarnessGateway,
@@ -81,6 +83,7 @@ __all__ = [
     "RelationshipOccupancy",
     "RelationshipRoute",
     "add_pathway",
+    "add_pathway_refine",
     "add_wire_batch",
     "append_pathway_gates",
     "audit_relationship_map",
@@ -98,6 +101,7 @@ __all__ = [
     "set_harness_material_defaults",
     "set_wire_diameter",
     "set_wire_material_overrides",
+    "update_pathway_refine",
     "load_wire_material_catalog",
     "suggest_harness_name",
     "suggest_pathway_name",

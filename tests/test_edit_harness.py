@@ -15,6 +15,7 @@ from wire_bundler.application import (
     HarnessEditError,
     HarnessEditGateway,
     add_pathway,
+    add_pathway_refine,
     add_wire_batch,
     append_pathway_gates,
     move_pathway_gate,
@@ -27,6 +28,7 @@ from wire_bundler.application import (
     set_harness_material_defaults,
     set_wire_diameter,
     set_wire_material_overrides,
+    update_pathway_refine,
 )
 from wire_bundler.application.edit_harness import edit_end_members, set_interpolation
 from wire_bundler.domain import (
@@ -34,6 +36,7 @@ from wire_bundler.domain import (
     ControlKind,
     ControlStructure,
     HarnessDefinition,
+    RefineGeometry,
     WireColor,
     WireDefinition,
     WireMaterialOverrides,
@@ -48,6 +51,74 @@ GATE_3_ID = UUID("30000000-0000-0000-0000-000000000003")
 WIRE_2_ID = UUID("50000000-0000-0000-0000-000000000002")
 SOURCE_2_ID = UUID("20000000-0000-0000-0000-000000000003")
 END_2_ID = UUID("20000000-0000-0000-0000-000000000004")
+
+
+def test_refine_insertion_updates_pathway_and_occupied_wire(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Persist a refine at its traversal position without creating linked geometry.
+    """
+    gateway = _recording_gateway(valid_harness)
+    refine_id = UUID("30000000-0000-0000-0000-000000000099")
+    geometry = RefineGeometry(
+        (4.0, 5.0, 6.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        10.0,
+    )
+
+    control = add_pathway_refine(
+        valid_harness.harness_id,
+        valid_harness.pathways[0].pathway_id,
+        0,
+        geometry,
+        gateway,
+        id_factory=lambda: refine_id,
+    )
+
+    stored = loads(gateway.serialized_definition)
+    assert control.kind is ControlKind.REFINE
+    assert control.entity_token == ""
+    assert control.refine_geometry == geometry
+    assert stored.pathways[0].ordered_control_ids == (
+        refine_id,
+        valid_harness.controls[0].control_id,
+    )
+    assert stored.wires[0].ordered_control_ids == stored.pathways[0].ordered_control_ids
+    assert stored.controls[-1] == control
+
+
+def test_refine_geometry_update_preserves_identity_and_traversal(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Replace only a refine's geometry after interactive translation and rotation.
+    """
+    gateway = _recording_gateway(valid_harness)
+    refine_id = UUID("30000000-0000-0000-0000-000000000099")
+    original_geometry = RefineGeometry((4.0, 5.0, 6.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), 10.0)
+    add_pathway_refine(
+        valid_harness.harness_id,
+        valid_harness.pathways[0].pathway_id,
+        0,
+        original_geometry,
+        gateway,
+        id_factory=lambda: refine_id,
+    )
+    before = loads(gateway.serialized_definition)
+    updated_geometry = RefineGeometry((14.0, 15.0, 16.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), 18.0)
+
+    updated_control = update_pathway_refine(
+        valid_harness.harness_id, refine_id, updated_geometry, gateway
+    )
+
+    stored = loads(gateway.serialized_definition)
+    assert updated_control == replace(before.controls[-1], refine_geometry=updated_geometry)
+    assert stored.controls[:-1] == before.controls[:-1]
+    assert stored.controls[-1] == updated_control
+    assert stored.pathways == before.pathways
+    assert stored.wires == before.wires
 
 
 def test_end_names_persist_independently_and_survive_edits(

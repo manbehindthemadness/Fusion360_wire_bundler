@@ -8,8 +8,10 @@ from dataclasses import replace
 import pytest
 
 from wire_bundler.domain import (
+    ControlKind,
     DefinitionParseError,
     HarnessDefinition,
+    RefineGeometry,
     StripePattern,
     WireAppearanceReference,
     WireColor,
@@ -32,6 +34,29 @@ def test_round_trip_preserves_definition(valid_harness: HarnessDefinition) -> No
     assert parsed == valid_harness
     assert parsed.wires[0].ordered_pathway_ids == valid_harness.wires[0].ordered_pathway_ids
     assert parsed.wires[0].ordered_control_ids == valid_harness.wires[0].ordered_control_ids
+
+
+def test_round_trip_preserves_refine_geometry(valid_harness: HarnessDefinition) -> None:
+    """
+    Persist an unconstrained control frame without a Fusion entity token.
+    """
+    geometry = RefineGeometry(
+        (1.0, 2.0, 3.0),
+        (1.0, 0.0, 0.0),
+        (0.0, 1.0, 0.0),
+        8.0,
+    )
+    refine = replace(
+        valid_harness.controls[0],
+        kind=ControlKind.REFINE,
+        entity_token="",
+        refine_geometry=geometry,
+    )
+    definition = replace(valid_harness, controls=(refine,))
+
+    parsed = loads(dumps(definition))
+
+    assert parsed == definition
 
 
 def test_serialization_is_deterministic(valid_harness: HarnessDefinition) -> None:

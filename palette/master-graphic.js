@@ -185,15 +185,15 @@ function layoutRelationshipGraph(stack, pathwayGroups) {
 function addRelationshipMapContextMenu(workspace) {
   const menu = document.createElement("div");
   const add = document.createElement("button");
+  let activate = () => {};
   menu.className = "relationship-map-context-menu";
   menu.hidden = true;
   menu.setAttribute("role", "menu");
   add.type = "button";
   add.setAttribute("role", "menuitem");
-  add.textContent = "Add pathway";
   add.addEventListener("click", () => {
     menu.hidden = true;
-    void addPathway();
+    void activate();
   });
   add.addEventListener("blur", () => {
     menu.hidden = true;
@@ -204,7 +204,7 @@ function addRelationshipMapContextMenu(workspace) {
       workspace.viewport.focus();
     }
   });
-  workspace.viewport.addEventListener("contextmenu", (event) => {
+  const show = (event, label, action) => {
     event.preventDefault();
     const bounds = workspace.root.getBoundingClientRect();
     const left = Math.min(
@@ -217,11 +217,17 @@ function addRelationshipMapContextMenu(workspace) {
     );
     menu.style.left = `${left}px`;
     menu.style.top = `${top}px`;
+    add.textContent = label;
+    activate = action;
     menu.hidden = false;
     add.focus();
+  };
+  workspace.viewport.addEventListener("contextmenu", (event) => {
+    show(event, "Add pathway", addPathway);
   });
   menu.append(add);
   workspace.root.append(menu);
+  return show;
 }
 
 function renderRelationshipMap(harness, auditIssues) {
@@ -235,7 +241,7 @@ function renderRelationshipMap(harness, auditIssues) {
   const settings = document.createElement("label");
   const collapseInput = document.createElement("input");
   const workspace = createBlockDiagramWorkspace("Zoomable master relationship diagram");
-  addRelationshipMapContextMenu(workspace);
+  const showContextMenu = addRelationshipMapContextMenu(workspace);
   container.className = "section-content relationship-map";
   container.dataset.diagramContractVersion = RELATIONSHIP_DIAGRAM_CONTRACT_VERSION;
   container.dataset.diagramLayout = RELATIONSHIP_DIAGRAM_LAYOUT;
@@ -308,6 +314,14 @@ function renderRelationshipMap(harness, auditIssues) {
       hub.append(hubName, hubDirection);
       hoverHighlight(hub, () => highlightMember(harness, "pathway_gates", pathway.pathwayId));
       hub.addEventListener("click", () => openPathwayPopup(harness, pathway.pathwayId));
+      hub.addEventListener("contextmenu", (event) => {
+        event.stopPropagation();
+        showContextMenu(
+          event,
+          "Add refine point",
+          () => addPathwayRefine(harness, pathway),
+        );
+      });
       startList.redrawConnector = startConnector.redraw;
       endList.redrawConnector = endConnector.redraw;
       pathwayGroup.append(startList, startConnector, hub, endConnector, endList);

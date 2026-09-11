@@ -4,15 +4,23 @@ const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { runInNewContext } = require('node:vm');
+const testNameFilter = (process.argv[2] || '').toLocaleLowerCase();
+
+/** Return whether a regression was selected by the optional command-line filter. */
+function selectedTest(name) {
+  return !testNameFilter || name.toLocaleLowerCase().includes(testNameFilter);
+}
 
 /** Run a synchronous regression and propagate assertion failures to the process. */
 function test(name, check) {
+  if (!selectedTest(name)) return;
   check();
   console.log(`PASS ${name}`);
 }
 
 /** Run an asynchronous regression and preserve a failing process exit status. */
 function asyncTest(name, check) {
+  if (!selectedTest(name)) return;
   Promise.resolve().then(check).then(
     () => console.log(`PASS ${name}`),
     (failure) => {
@@ -296,6 +304,48 @@ asyncTest('empty master graphic remains visible and owns Add pathway', async () 
   assert.doesNotMatch(html, /id="add-pathway"/);
   const styles = readFileSync(join(__dirname, '..', 'palette', 'styles.css'), 'utf8');
   assert.match(styles, /\.relationship-map > \.block-diagram-workspace \.block-diagram-viewport \{[^}]*height: 390px;/s);
+});
+
+asyncTest('pathway node context menu adds a refine to that pathway', async () => {
+  const { context, calls } = palette();
+  const definition = harness();
+  context.send = async (action, payload) => {
+    calls.push({ action, payload });
+    return { ok: true };
+  };
+  const graphic = context.renderRelationshipMap(definition, []);
+  const workspace = descendants(
+    graphic,
+    (node) => node.className === 'block-diagram-workspace',
+  )[0];
+  const hub = descendants(
+    workspace,
+    (node) => node.className === 'relationship-pathway-hub',
+  )[0];
+  const menu = descendants(
+    workspace,
+    (node) => node.className === 'relationship-map-context-menu',
+  )[0];
+  let prevented = false;
+  let stopped = false;
+
+  hub.events.contextmenu({
+    clientX: 120,
+    clientY: 140,
+    preventDefault: () => { prevented = true; },
+    stopPropagation: () => { stopped = true; },
+  });
+
+  assert.equal(prevented, true);
+  assert.equal(stopped, true);
+  assert.equal(menu.hidden, false);
+  assert.equal(menu.children[0].textContent, 'Add refine point');
+  menu.children[0].events.click();
+  await Promise.resolve();
+  assert.equal(menu.hidden, true);
+  assert.equal(calls[0].action, 'add_pathway_refine');
+  assert.equal(calls[0].payload.harnessId, 'h');
+  assert.equal(calls[0].payload.pathwayId, 'p');
 });
 
 test('relationship diagrams use zoomable pannable floating workspaces', () => {
@@ -890,6 +940,76 @@ test('gate stacks share drag placement and both stacks have a left position colu
   const updated = descendants(context.renderPathways(definition), (node) => node.dataset.reorder === 'true');
   assert.deepEqual(updated.map((row) => row.children[0].textContent), ['1', '2', '3']);
   assert.equal(updated[2].children[1].textContent, 'Gate 1 #gate0001');
+});
+
+test('pathway popup replaces its traversal stack before a delayed close event', () => {
+  const { context } = palette();
+  const definition = harness();
+  definition.controls = [1, 2].map((index) => ({
+    controlId: `gate000${index}`, name: `Gate ${index}`, kind: 'gate', hasLinkedGeometry: true,
+  }));
+  definition.pathways[0].orderedControlIds = ['gate0001', 'gate0002'];
+  context.openPathwayPopup(definition, 'p');
+  const stalePopup = context.document.body.querySelector('.pathway-popup');
+  stalePopup.close = () => { stalePopup.open = false; };
+
+  const updated = JSON.parse(JSON.stringify(definition));
+  updated.controls = updated.controls.slice(1);
+  updated.pathways[0].orderedControlIds = ['gate0002'];
+  context.renderEditor(updated);
+
+  const refreshedPopup = context.document.body.querySelector('.pathway-popup');
+  const gateRows = descendants(refreshedPopup, (node) => node.dataset.reorder === 'true');
+  assert.notEqual(refreshedPopup, stalePopup);
+  assert.equal(context.document.body.children.includes(stalePopup), false);
+  assert.equal(gateRows.length, 1);
+  assert.equal(gateRows[0].children[1].textContent, 'Gate 2 #gate0002');
+});
+
+asyncTest('pathway popup opens interactive refine placement', async () => {
+  const { context } = palette();
+  const definition = harness();
+  const requests = [];
+  context.send = async (action, payload) => {
+    requests.push({ action, payload });
+    return { ok: true };
+  };
+  const paths = context.renderPathways(definition);
+  const button = descendants(paths, (node) => node.textContent === '+ Add Refine Point')[0];
+
+  button.events.click();
+  await Promise.resolve();
+
+  assert.equal(requests[0].action, 'add_pathway_refine');
+  assert.equal(requests[0].payload.harnessId, 'h');
+  assert.equal(requests[0].payload.pathwayId, 'p');
+});
+
+asyncTest('refine stack row highlights its marker and opens transform editing', async () => {
+  const { context, calls } = palette();
+  const definition = harness();
+  definition.controls = [{
+    controlId: 'refine-001', name: 'Refine Point 01', kind: 'refine', hasLinkedGeometry: true,
+    interpolation: { approach_mm: null, departure_mm: null }, usesDefaults: true,
+  }];
+  definition.pathways[0].orderedControlIds = ['refine-001'];
+  context.highlightMember = (_harness, type, id) => calls.push({ type, id });
+  const requests = [];
+  context.send = async (action, payload) => {
+    requests.push({ action, payload });
+    return { ok: true };
+  };
+  const paths = context.renderPathways(definition);
+  const row = descendants(paths, (node) => node.className === 'member-row')[0];
+
+  row.events.mouseenter();
+  assert.deepEqual(calls.pop(), { type: 'control', id: 'refine-001' });
+  descendants(row, (node) => node.title === 'Move, rotate, or resize refine point')[0]
+    .events.click();
+  await Promise.resolve();
+
+  assert.equal(requests[0].action, 'edit_pathway_refine');
+  assert.equal(requests[0].payload.controlId, 'refine-001');
 });
 
 test('interpolation popups target native gates and ends without changing expansion state', () => {

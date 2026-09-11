@@ -18,7 +18,28 @@ from uuid import UUID
 import pytest
 
 from wire_bundler.application import HarnessLoadResult
-from wire_bundler.domain import HarnessDefinition, WireColor, WireStripe, dumps, loads
+from wire_bundler.domain import (
+    ControlKind,
+    ControlStructure,
+    HarnessDefinition,
+    RefineGeometry,
+    WireColor,
+    WireStripe,
+    dumps,
+    loads,
+)
+from wire_bundler.routing import GateFrame, Vector3
+
+REFINE_ID = UUID("30000000-0000-0000-0000-000000000099")
+
+
+class _RefinePlacementResult(Protocol):
+    """
+    Describe the placement fields asserted by lifecycle tests.
+    """
+
+    insertion_index: int
+    geometry: RefineGeometry
 
 
 class _PaletteLifecycleModule(Protocol):
@@ -36,6 +57,7 @@ class _PaletteLifecycleModule(Protocol):
     _DocumentSavingHandler: type
     _DocumentSavedHandler: type
     _pending_palette_edit: object
+    _pending_refine_edit_ids: object
     _damaged_harness_results: dict[str, HarnessLoadResult]
     _graphics_cache_restore_value: Optional[bool]
     _graphics_cache_save_document: Optional[object]
@@ -47,6 +69,26 @@ class _PaletteLifecycleModule(Protocol):
     _send_palette_state: Callable[[object, str], None]
     reconcile_preview_history: Callable[[object, tuple[HarnessDefinition, ...]], None]
     _ShowPaletteCreatedHandler: type
+    _RefineCommandState: type
+    _RefinePreSelectHandler: type
+    _RefineMouseDragHandler: type
+    _RefineActiveSelectionHandler: type
+    _EditRefineCommandState: type
+    _EditRefineInputChangedHandler: type
+    _EditRefineExecutePreviewHandler: type
+    _read_refine_placement: Callable[[object, object], _RefinePlacementResult]
+    _update_refine_placement: Callable[..., None]
+    _refine_geometry_transform: Callable[[RefineGeometry], object]
+    _add_refine_transform_input: Callable[[object, RefineGeometry], object]
+    _read_edited_refine_geometry: Callable[[object], RefineGeometry]
+    _preview_edited_refine: Callable[[object, object], None]
+    draw_candidate_refine: Callable[[object, RefineGeometry], object]
+    draw_refine_editor: Callable[[object, RefineGeometry], object]
+    update_candidate_refine: Callable[[object, RefineGeometry], None]
+    update_refine_editor: Callable[[object, RefineGeometry], None]
+    PathwaySpine: type
+    REFINE_SPINE_ENTITY_ID: str
+    REFINE_GRAPHICS_GROUP_ID: str
     _show_palette: Callable[[object], None]
     _create_harness_gateway: Callable[[object], object]
     _serialize_palette_state: Callable[[object, str], str]
@@ -61,6 +103,7 @@ class _PaletteLifecycleModule(Protocol):
     clear_route_previews: Callable[[object], int]
     clear_wire_solids: Callable[[object], int]
     generated_wire_bodies: Callable[..., tuple[object, ...]]
+    has_refine_graphics: Callable[[object], bool]
     has_route_previews: Callable[[object], bool]
     show_route_previews: Callable[..., tuple[object, ...]]
     refresh_route_previews: Callable[..., tuple[str, ...]]
@@ -69,6 +112,8 @@ class _PaletteLifecycleModule(Protocol):
     _highlight_member: Callable[[object, str], int]
     _require_active_design: Callable[[object], object]
     highlight_route_preview: Callable[[object, object], int]
+    highlight_route_members: Callable[[object, tuple[UUID, ...]], int]
+    highlight_refine_graphics: Callable[[object, tuple[UUID, ...]], int]
     load_harnesses: Callable[[object], tuple[HarnessLoadResult, ...]]
 
 
@@ -83,7 +128,11 @@ def addin_module(monkeypatch: pytest.MonkeyPatch) -> _PaletteLifecycleModule:
     handler_names = (
         "CommandEventHandler",
         "ApplicationCommandEventHandler",
+        "ActiveSelectionEventHandler",
         "DocumentEventHandler",
+        "InputChangedEventHandler",
+        "MouseEventHandler",
+        "SelectionEventHandler",
         "ValidateInputsEventHandler",
         "CommandCreatedEventHandler",
         "HTMLEventHandler",
@@ -108,6 +157,21 @@ def addin_module(monkeypatch: pytest.MonkeyPatch) -> _PaletteLifecycleModule:
     return cast(_PaletteLifecycleModule, cast(object, module))
 
 
+def _refine_control(radius_mm: float = 10.0) -> ControlStructure:
+    """
+    Build one deterministic persisted refine for lifecycle-boundary tests.
+    """
+    return ControlStructure(
+        REFINE_ID,
+        "Refine Point 01",
+        ControlKind.REFINE,
+        "",
+        refine_geometry=RefineGeometry(
+            (1.0, 2.0, 3.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), radius_mm
+        ),
+    )
+
+
 def _configure_save_test(
     addin_module: _PaletteLifecycleModule,
     monkeypatch: pytest.MonkeyPatch,
@@ -129,6 +193,7 @@ def _configure_save_test(
     core_module.Application = SimpleNamespace(get=lambda: application)  # type: ignore[attr-defined]
     fusion_module.Design = SimpleNamespace(cast=lambda product: product)  # type: ignore[attr-defined]
     monkeypatch.setattr(addin_module, "has_route_previews", lambda _design: has_preview)
+    monkeypatch.setattr(addin_module, "has_refine_graphics", lambda _design: False)
     monkeypatch.setitem(vars(addin_module), "_graphics_cache_restore_value", None)
     monkeypatch.setitem(vars(addin_module), "_graphics_cache_save_document", None)
     return document, compatibility
@@ -188,6 +253,431 @@ def test_palette_is_shown_during_command_creation(
     created_handler.notify(SimpleNamespace(command=object()))
 
     assert shown_applications == [application]
+
+
+def test_refine_selection_accepts_only_command_spine(
+    addin_module: _PaletteLifecycleModule,
+) -> None:
+    """
+    Exclude persistent markers and unrelated Custom Graphics from placement.
+    """
+    handler = addin_module._RefinePreSelectHandler()
+    accepted = SimpleNamespace(
+        selection=SimpleNamespace(entity=SimpleNamespace(id=addin_module.REFINE_SPINE_ENTITY_ID)),
+        isSelectable=False,
+    )
+    rejected = SimpleNamespace(
+        selection=SimpleNamespace(entity=SimpleNamespace(id="another-graphic")),
+        isSelectable=True,
+    )
+    profile = SimpleNamespace(
+        selection=SimpleNamespace(entity=SimpleNamespace()),
+        isSelectable=True,
+    )
+
+    handler.notify(accepted)
+    handler.notify(rejected)
+    handler.notify(profile)
+
+    assert accepted.isSelectable
+    assert not rejected.isSelectable
+    assert not profile.isSelectable
+
+
+def test_refine_selection_uses_click_point_and_centimeter_radius(
+    addin_module: _PaletteLifecycleModule,
+) -> None:
+    """
+    Project Fusion's root-space click while converting database units to millimeters.
+    """
+    core_module = sys.modules["adsk.core"]
+    core_module.SelectionCommandInput = SimpleNamespace(cast=lambda value: value)  # type: ignore[attr-defined]
+    core_module.DistanceValueCommandInput = SimpleNamespace(cast=lambda value: value)  # type: ignore[attr-defined]
+    selection_input = SimpleNamespace(
+        selectionCount=1,
+        selection=lambda _index: SimpleNamespace(
+            entity=SimpleNamespace(id=addin_module.REFINE_SPINE_ENTITY_ID),
+            point=SimpleNamespace(x=0.0, y=0.0, z=1.5),
+        ),
+    )
+    radius_input = SimpleNamespace(isValidExpression=True, value=1.0)
+    inputs = SimpleNamespace(
+        itemById=lambda identity: selection_input if identity == "refine_spine" else radius_input
+    )
+    frame = GateFrame(
+        UUID(int=1),
+        "Gate",
+        Vector3(0.0, 0.0, 10.0),
+        Vector3(1.0, 0.0, 0.0),
+        Vector3(0.0, 1.0, 0.0),
+        5.0,
+    )
+    spine = addin_module.PathwaySpine(
+        (Vector3(0.0, 0.0, 0.0), Vector3(0.0, 0.0, 20.0)),
+        (frame,),
+    )
+
+    placement = addin_module._read_refine_placement(inputs, spine)
+
+    assert placement.insertion_index == 1
+    assert placement.geometry.origin_mm == (0.0, 0.0, 15.0)
+    assert placement.geometry.display_radius_mm == 10.0
+
+
+def test_refine_placement_rejects_selected_entity_without_graphics_id(
+    addin_module: _PaletteLifecycleModule,
+) -> None:
+    """
+    Reject an underlying Fusion profile without leaking an AttributeError.
+    """
+    core_module = sys.modules["adsk.core"]
+    core_module.SelectionCommandInput = SimpleNamespace(cast=lambda value: value)  # type: ignore[attr-defined]
+    core_module.DistanceValueCommandInput = SimpleNamespace(cast=lambda value: value)  # type: ignore[attr-defined]
+    selection_input = SimpleNamespace(
+        selectionCount=1,
+        selection=lambda _index: SimpleNamespace(
+            entity=SimpleNamespace(),
+            point=SimpleNamespace(x=0.0, y=0.0, z=1.5),
+        ),
+    )
+    radius_input = SimpleNamespace(isValidExpression=True, value=1.0)
+    inputs = SimpleNamespace(
+        itemById=lambda identity: selection_input if identity == "refine_spine" else radius_input
+    )
+
+    with pytest.raises(ValueError, match="displayed pathway spine"):
+        addin_module._read_refine_placement(inputs, SimpleNamespace())
+
+
+def test_refine_placement_drag_updates_existing_candidate_in_place(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Resize the initial-placement marker without replacing its graphics entity.
+    """
+    geometry = _refine_control(18.0).refine_geometry
+    assert geometry is not None
+    placement = SimpleNamespace(insertion_index=1, geometry=geometry)
+    candidate = SimpleNamespace(isValid=True)
+    state = addin_module._RefineCommandState(
+        UUID(int=1),
+        UUID(int=2),
+        object(),
+        object(),
+        candidate=candidate,
+    )
+    radius = SimpleNamespace(
+        isEnabled=False,
+        isVisible=False,
+        setManipulator=Mock(return_value=True),
+    )
+    inputs = SimpleNamespace(itemById=lambda _identity: radius)
+    viewport = SimpleNamespace(refresh=Mock())
+    application = SimpleNamespace(activeViewport=viewport)
+    core_module = sys.modules["adsk.core"]
+    core_module.Application = SimpleNamespace(get=lambda: application)  # type: ignore[attr-defined]
+    core_module.DistanceValueCommandInput = SimpleNamespace(cast=lambda value: value)  # type: ignore[attr-defined]
+    update_candidate = Mock()
+    monkeypatch.setattr(addin_module, "_read_refine_placement", lambda *_args: placement)
+    monkeypatch.setattr(addin_module, "update_candidate_refine", update_candidate)
+
+    addin_module._update_refine_placement(
+        state,
+        inputs,
+        position_manipulator=False,
+    )
+
+    assert state.placement is placement
+    assert radius.isEnabled
+    assert radius.isVisible
+    radius.setManipulator.assert_not_called()
+    update_candidate.assert_called_once_with(candidate, geometry)
+    viewport.refresh.assert_called_once()
+
+
+def test_refine_mouse_drag_reads_live_command_inputs(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Poll the distance manipulator throughout a click-drag gesture.
+    """
+    state = addin_module._RefineCommandState(
+        UUID(int=1),
+        UUID(int=2),
+        object(),
+        object(),
+    )
+    inputs = object()
+    update_placement = Mock()
+    monkeypatch.setattr(addin_module, "_update_refine_placement", update_placement)
+
+    addin_module._RefineMouseDragHandler(state, inputs).notify(SimpleNamespace())
+
+    update_placement.assert_called_once_with(
+        state,
+        inputs,
+        position_manipulator=False,
+    )
+
+
+def test_refine_placement_replaces_invalidated_candidate_before_redraw(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Never update a Custom Graphics handle Fusion has already invalidated.
+    """
+    geometry = _refine_control().refine_geometry
+    assert geometry is not None
+    placement = SimpleNamespace(insertion_index=1, geometry=geometry)
+    group = object()
+    invalid_candidate = SimpleNamespace(isValid=False)
+    replacement = SimpleNamespace(isValid=True)
+    state = addin_module._RefineCommandState(
+        UUID(int=1),
+        UUID(int=2),
+        object(),
+        group,
+        candidate=invalid_candidate,
+    )
+    radius = SimpleNamespace(isEnabled=False, isVisible=False)
+    inputs = SimpleNamespace(itemById=lambda _identity: radius)
+    application = SimpleNamespace(activeViewport=SimpleNamespace(refresh=Mock()))
+    core_module = sys.modules["adsk.core"]
+    core_module.Application = SimpleNamespace(get=lambda: application)  # type: ignore[attr-defined]
+    core_module.DistanceValueCommandInput = SimpleNamespace(cast=lambda value: value)  # type: ignore[attr-defined]
+    draw_candidate = Mock(return_value=replacement)
+    update_candidate = Mock()
+    monkeypatch.setattr(addin_module, "_read_refine_placement", lambda *_args: placement)
+    monkeypatch.setattr(addin_module, "draw_candidate_refine", draw_candidate)
+    monkeypatch.setattr(addin_module, "update_candidate_refine", update_candidate)
+
+    addin_module._update_refine_placement(
+        state,
+        inputs,
+        position_manipulator=False,
+    )
+
+    assert state.candidate is replacement
+    draw_candidate.assert_called_once_with(group, geometry)
+    update_candidate.assert_not_called()
+
+
+def test_edited_refine_geometry_reads_triad_and_resized_radius(
+    addin_module: _PaletteLifecycleModule,
+) -> None:
+    """
+    Convert the live triad frame and radius from centimeters to millimeters.
+    """
+    core_module = sys.modules["adsk.core"]
+    triad = SimpleNamespace(
+        isValidExpressions=True,
+        transform=SimpleNamespace(
+            getAsCoordinateSystem=lambda: (
+                SimpleNamespace(x=1.0, y=2.0, z=3.0),
+                SimpleNamespace(x=0.0, y=1.0, z=0.0),
+                SimpleNamespace(x=0.0, y=0.0, z=1.0),
+                SimpleNamespace(x=1.0, y=0.0, z=0.0),
+            )
+        ),
+    )
+    radius = SimpleNamespace(isValidExpression=True, value=1.8)
+    core_module.TriadCommandInput = SimpleNamespace(cast=lambda value: value)  # type: ignore[attr-defined]
+    core_module.DistanceValueCommandInput = SimpleNamespace(cast=lambda value: value)  # type: ignore[attr-defined]
+    inputs = SimpleNamespace(
+        itemById=lambda identity: triad if identity == "refine_transform" else radius
+    )
+
+    geometry = addin_module._read_edited_refine_geometry(inputs)
+
+    assert geometry == RefineGeometry((10.0, 20.0, 30.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), 18.0)
+
+
+def test_refine_triad_reapplies_initial_world_transform(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Work around Fusion ignoring the matrix passed during triad creation.
+    """
+    geometry = _refine_control().refine_geometry
+    assert geometry is not None
+    transform = object()
+    triad = SimpleNamespace(transform=None)
+    inputs = SimpleNamespace(addTriadCommandInput=Mock(return_value=triad))
+    monkeypatch.setattr(addin_module, "_refine_geometry_transform", lambda _geometry: transform)
+
+    result = addin_module._add_refine_transform_input(inputs, geometry)
+
+    assert result is triad
+    inputs.addTriadCommandInput.assert_called_once_with("refine_transform", transform)
+    assert triad.transform is transform
+
+
+def test_edit_refine_preview_redraws_current_triad_geometry(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Rebuild the command-local marker during Fusion's preview event.
+    """
+    initial = _refine_control().refine_geometry
+    assert initial is not None
+    changed = replace(initial, origin_mm=(10.0, 20.0, 30.0))
+    group = object()
+    state = addin_module._EditRefineCommandState(UUID(int=1), REFINE_ID, group, initial)
+    read_geometry = Mock(return_value=changed)
+    update_editor = Mock()
+    viewport = SimpleNamespace(refresh=Mock())
+    application = SimpleNamespace(activeViewport=viewport)
+    core_module = sys.modules["adsk.core"]
+    core_module.Application = SimpleNamespace(get=lambda: application)  # type: ignore[attr-defined]
+    monkeypatch.setattr(addin_module, "_read_edited_refine_geometry", read_geometry)
+    monkeypatch.setattr(addin_module, "update_refine_editor", update_editor)
+    command_inputs = object()
+
+    addin_module._EditRefineExecutePreviewHandler(state).notify(
+        SimpleNamespace(command=SimpleNamespace(commandInputs=command_inputs))
+    )
+
+    assert state.geometry == changed
+    read_geometry.assert_called_once_with(command_inputs)
+    update_editor.assert_called_once_with(group, changed)
+    viewport.refresh.assert_called_once()
+
+
+def test_edit_refine_input_change_updates_existing_marker(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Apply drag and dialog edits through the immediate input-change event.
+    """
+    geometry = _refine_control().refine_geometry
+    assert geometry is not None
+    state = addin_module._EditRefineCommandState(UUID(int=1), REFINE_ID, object(), geometry)
+    preview = Mock()
+    monkeypatch.setattr(addin_module, "_preview_edited_refine", preview)
+    command_inputs = object()
+
+    addin_module._EditRefineInputChangedHandler(state).notify(
+        SimpleNamespace(inputs=command_inputs)
+    )
+
+    preview.assert_called_once_with(state, command_inputs)
+
+
+def test_refine_editor_updates_one_graphics_transform_in_place(
+    addin_module: _PaletteLifecycleModule,
+) -> None:
+    """
+    Encode world position, orientation, and radius in the live graphics transform.
+    """
+    from wire_bundler.fusion import refine_graphics
+
+    core_module = refine_graphics.adsk.core
+    transform = SimpleNamespace(setCell=Mock(return_value=True))
+    core_module.Matrix3D = SimpleNamespace(create=lambda: transform)  # type: ignore[attr-defined]
+    geometry = RefineGeometry(
+        (10.0, 20.0, 30.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 0.0, 1.0),
+        20.0,
+    )
+    group = SimpleNamespace(isValid=True, transform=None)
+
+    addin_module.update_refine_editor(group, geometry)
+
+    assert [item.args for item in transform.setCell.call_args_list] == [
+        (0, 0, 0.0),
+        (1, 0, 2.0),
+        (2, 0, 0.0),
+        (0, 1, 0.0),
+        (1, 1, 0.0),
+        (2, 1, 2.0),
+        (0, 2, 1.0),
+        (1, 2, 0.0),
+        (2, 2, 0.0),
+        (0, 3, 1.0),
+        (1, 3, 2.0),
+        (2, 3, 3.0),
+    ]
+    assert group.transform is transform
+
+
+def test_selecting_persistent_refine_opens_transform_editor(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Turn a normal viewport selection of a refine marker into an edit command.
+    """
+    refine_id = REFINE_ID
+    refine = _refine_control()
+    definition = replace(valid_harness, controls=(*valid_harness.controls, refine))
+    command_definition = SimpleNamespace(execute=Mock(return_value=True))
+    selections = SimpleNamespace(clear=Mock(return_value=True))
+    application = SimpleNamespace(
+        userInterface=SimpleNamespace(
+            activeSelections=selections,
+            commandDefinitions=SimpleNamespace(itemById=lambda _identity: command_definition),
+        )
+    )
+    core_module = sys.modules["adsk.core"]
+    core_module.Application = SimpleNamespace(get=lambda: application)  # type: ignore[attr-defined]
+    monkeypatch.setattr(
+        addin_module,
+        "load_harnesses",
+        lambda _gateway: (SimpleNamespace(definition=definition),),
+    )
+    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: object())
+    marker = SimpleNamespace(
+        id=str(refine_id),
+        parent=SimpleNamespace(id=addin_module.REFINE_GRAPHICS_GROUP_ID),
+    )
+
+    addin_module._RefineActiveSelectionHandler().notify(
+        SimpleNamespace(currentSelection=[SimpleNamespace(entity=marker)])
+    )
+
+    selections.clear.assert_called_once_with()
+    command_definition.execute.assert_called_once_with()
+    assert addin_module._pending_refine_edit_ids == (definition.harness_id, refine_id)
+
+
+def test_refine_reconciliation_redraws_changed_geometry_with_same_identity(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Rebuild a marker even when a resize preserves its persistent control UUID.
+    """
+    from wire_bundler.fusion import refine_graphics
+
+    refine_id = REFINE_ID
+    refine = _refine_control(18.0)
+    definition = replace(valid_harness, controls=(*valid_harness.controls, refine))
+    existing = SimpleNamespace(count=1, item=lambda _index: SimpleNamespace(id=str(refine_id)))
+    marker = SimpleNamespace()
+    created_group = SimpleNamespace()
+    groups = SimpleNamespace(add=Mock(return_value=created_group))
+    design = SimpleNamespace(rootComponent=SimpleNamespace(customGraphicsGroups=groups))
+    clear = Mock()
+    add_polyline = Mock(return_value=marker)
+    monkeypatch.setattr(refine_graphics, "_find_group", lambda _design, _identity: existing)
+    monkeypatch.setattr(refine_graphics, "clear_refine_graphics", clear)
+    monkeypatch.setattr(refine_graphics, "_add_polyline", add_polyline)
+
+    refine_graphics.reconcile_refine_graphics(design, (definition,))
+
+    clear.assert_called_once_with(design)
+    groups.add.assert_called_once_with()
+    add_polyline.assert_called_once()
+    assert marker.id == str(refine_id)
 
 
 def test_palette_opens_at_relationship_graphic_working_size(
@@ -550,6 +1040,48 @@ def test_highlights_both_wire_endpoint_profiles(
         (valid_harness.wires[0].wire_id,),
     )
     viewport.refresh.assert_called_once_with()
+
+
+def test_refine_control_hover_highlights_persistent_marker(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Route a refine-row hover to Custom Graphics without requiring a profile token.
+    """
+    refine_id = REFINE_ID
+    refine = _refine_control()
+    definition = replace(valid_harness, controls=(*valid_harness.controls, refine))
+    design = SimpleNamespace(rootComponent=object())
+    selections = SimpleNamespace(clear=Mock(return_value=True), add=Mock(return_value=True))
+    application = SimpleNamespace(
+        userInterface=SimpleNamespace(activeSelections=selections),
+        activeViewport=SimpleNamespace(refresh=Mock()),
+    )
+    gateway = SimpleNamespace(
+        read_harness_definition=lambda _harness_id: dumps(definition),
+        harness_component=lambda _harness_id: object(),
+    )
+    marker_highlight = Mock(return_value=1)
+    monkeypatch.setattr(addin_module, "_require_active_design", lambda _application: design)
+    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
+    monkeypatch.setattr(addin_module, "highlight_refine_graphics", marker_highlight)
+    monkeypatch.setattr(addin_module, "highlight_route_members", lambda _design, _ids: 0)
+    monkeypatch.setattr(addin_module, "generated_wire_bodies", lambda *_args: ())
+    payload = json.dumps(
+        {
+            "harnessId": str(definition.harness_id),
+            "memberType": "control",
+            "memberId": str(refine_id),
+        }
+    )
+
+    count = addin_module._highlight_member(application, payload)
+
+    assert count == 1
+    marker_highlight.assert_called_once_with(design, (refine_id,))
+    assert not selections.add.called
 
 
 def test_preview_hover_emphasizes_only_matching_centerline(
