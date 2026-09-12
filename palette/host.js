@@ -156,6 +156,21 @@ function qaWireCard(harnessId, wireId) {
   return { harness, wire, card };
 }
 
+function qaRelationshipEdgeGap(edge) {
+  const siblings = Array.from(edge.parentElement?.children || [])
+    .filter((candidate) => typeof candidate?.getBoundingClientRect === "function");
+  const edgeIndex = siblings.indexOf(edge);
+  if (edgeIndex <= 0 || edgeIndex >= siblings.length - 1) return Number.POSITIVE_INFINITY;
+  const previousRect = siblings[edgeIndex - 1].getBoundingClientRect();
+  const edgeRect = edge.getBoundingClientRect();
+  const nextRect = siblings[edgeIndex + 1].getBoundingClientRect();
+  return Math.max(
+    0,
+    edgeRect.left - previousRect.right,
+    nextRect.left - edgeRect.right,
+  );
+}
+
 function qaObserveRelationshipDiagram() {
   const selectedHarness = currentState.harnesses.find(
     (candidate) => harnessKey(candidate) === selectedHarnessKey,
@@ -189,13 +204,29 @@ function qaObserveRelationshipDiagram() {
     const pathwayGroups = Array.from(
       diagram?.querySelectorAll?.(".relationship-pathway-group") || [],
     );
+    const pathwayHubs = Array.from(
+      diagram?.querySelectorAll?.(".relationship-pathway-hub") || [],
+    );
+    const junctionHubs = Array.from(
+      diagram?.querySelectorAll?.(".relationship-junction-hub") || [],
+    );
+    const connectorEdges = [
+      ...Array.from(diagram?.querySelectorAll?.(".relationship-connector") || []),
+      ...Array.from(diagram?.querySelectorAll?.(".relationship-chain-link") || []),
+    ];
     const paths = Array.from(diagram?.querySelectorAll?.("path") || []);
     const connectorCount = paths.length;
-    const maximumEndpointGap = 0;
+    const maximumEndpointGap = connectorEdges.length
+      ? Math.max(...connectorEdges.map(qaRelationshipEdgeGap))
+      : Number.POSITIVE_INFINITY;
     const contractVersion = diagram?.dataset.diagramContractVersion || "";
     const layout = diagram?.dataset.diagramLayout || "";
     const passed = Boolean(workspace)
-      && pathwayGroups.length === harness.pathways.length
+      && pathwayGroups.length > 0
+      && pathwayHubs.length === harness.pathways.length
+      && junctionHubs.length === (harness.junctions || []).length
+      && connectorEdges.length > 0
+      && maximumEndpointGap <= 1
       && contractVersion === RELATIONSHIP_DIAGRAM_CONTRACT_VERSION
       && layout === RELATIONSHIP_DIAGRAM_LAYOUT
       && paths.every((path) => Boolean(path.getAttribute?.("d") || path.attributes?.d));

@@ -521,11 +521,14 @@ button.route-node:hover { border-color: var(--accent); color: var(--accent); }
   position: absolute;
   z-index: 1;
   display: grid;
-  grid-template-columns: minmax(210px, 1fr) 54px 170px 54px minmax(210px, 1fr);
+  grid-template-columns: max-content 32px 154px 32px max-content;
   align-items: stretch;
-  gap: 4px;
+  gap: 0;
+  width: max-content;
 }
 .relationship-end-list {
+  position: relative;
+  z-index: 2;
   align-self: center;
   margin: 0;
   border: 1px solid #d9e1e7;
@@ -577,6 +580,8 @@ button.route-node:hover { border-color: var(--accent); color: var(--accent); }
 .relationship-end-entry:hover, .relationship-end-entry:focus { border-color: var(--accent); }
 .relationship-end-entry small { color: var(--muted); }
 .relationship-pathway-hub {
+  position: relative;
+  z-index: 2;
   align-self: center;
   min-height: 92px;
   display: grid;
@@ -590,23 +595,19 @@ button.route-node:hover { border-color: var(--accent); color: var(--accent); }
   color: var(--text);
   cursor: pointer;
 }
-.relationship-pathway-chain {
-  align-self: center;
-  min-height: 92px;
-  display: flex;
-  align-items: stretch;
-  justify-content: center;
-}
-.relationship-pathway-chain .relationship-pathway-hub {
-  width: 154px;
-}
 .relationship-chain-link {
-  align-self: center;
-  width: 22px;
-  height: 2px;
-  background: #7b9ab2;
+  position: relative;
+  z-index: 1;
+  align-self: stretch;
+  width: calc(100% + 2px);
+  min-height: 92px;
+  margin-inline: -1px;
+  overflow: visible;
+  pointer-events: none;
 }
 .relationship-junction-hub {
+  position: relative;
+  z-index: 2;
   align-self: center;
   width: 154px;
   min-height: 76px;
@@ -626,21 +627,28 @@ button.route-node:hover { border-color: var(--accent); color: var(--accent); }
 .relationship-pathway-hub strong { font-size: 12px; }
 .relationship-pathway-hub small { color: var(--muted); }
 .relationship-connector {
+  position: relative;
+  z-index: 1;
   align-self: stretch;
-  width: 54px;
+  width: calc(100% + 2px);
   min-height: 92px;
+  margin-inline: -1px;
   overflow: visible;
   pointer-events: none;
 }
-.relationship-connector path {
+.relationship-connector path,
+.relationship-chain-link path {
   fill: none;
   vector-effect: non-scaling-stroke;
   stroke-linecap: round;
 }
 .relationship-connector .aggregate-trace { stroke: #7b9ab2; stroke-width: 1.5; }
 .relationship-connector .placeholder-trace { stroke: #9aaab6; stroke-width: 1.5; }
-.relationship-connector .wire-trace { stroke-width: 7; }
-.relationship-connector .stripe-trace { stroke-width: 1.4; }
+.relationship-chain-link .structural-trace { stroke: #7b9ab2; stroke-width: 1.5; }
+.relationship-connector .wire-trace,
+.relationship-chain-link .wire-trace { stroke-width: 7; }
+.relationship-connector .stripe-trace,
+.relationship-chain-link .stripe-trace { stroke-width: 1.4; }
 .wire-relationship-graphic {
   border: 1px solid #d9e1e7;
   border-radius: 5px;

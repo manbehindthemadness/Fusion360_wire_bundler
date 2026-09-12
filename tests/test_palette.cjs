@@ -393,13 +393,93 @@ asyncTest('pathway context menu segments eligible controls and renders its junct
   const junction = descendants(
     workspace, (node) => node.className === 'relationship-junction-hub',
   )[0];
+  const endLists = descendants(
+    workspace, (node) => node.className?.startsWith('relationship-end-list'),
+  );
+  const connectors = descendants(
+    workspace, (node) => node.className === 'relationship-connector',
+  );
+  const junctionLinks = descendants(
+    workspace, (node) => node.className === 'relationship-chain-link',
+  );
+  const pathwayGroup = descendants(
+    workspace, (node) => node.className === 'relationship-pathway-group',
+  )[0];
   assert.ok(junction);
   assert.equal(junction.children[0].textContent, 'Junction 01');
+  assert.deepEqual(endLists.map((list) => [list.dataset.pathwayId, list.dataset.endpoint]), [
+    ['p', 'start'], ['p', 'end'], ['p2', 'start'], ['p2', 'end'],
+  ]);
+  assert.deepEqual(endLists.map((list) => descendants(
+    list, (node) => node.className === 'relationship-end-entry',
+  ).length), [3, 0, 0, 3]);
+  assert.equal(connectors.length, 4);
+  assert.ok(connectors.every((connector) => descendants(
+    connector, (node) => node.className === 'wire-trace',
+  ).length === 3));
+  assert.equal(junctionLinks.length, 2);
+  assert.ok(junctionLinks.every((link) => descendants(
+    link, (node) => node.className === 'wire-trace',
+  ).length === 3));
+  assert.equal(pathwayGroup.style.gridTemplateColumns, [
+    '210px', '32px', '154px', '32px', 'max-content',
+    '14px', '154px', '14px',
+    'max-content', '32px', '154px', '32px', '210px',
+  ].join(' '));
+  assert.equal(pathwayGroup.style.width, undefined);
   junction.events.mouseenter();
   await Promise.resolve();
   assert.equal(calls.at(-1).action, 'highlight_member');
   assert.equal(calls.at(-1).payload.memberType, 'junction');
   assert.equal(calls.at(-1).payload.memberId, 'j1');
+});
+
+test('multi-junction chains retain pathway ends and continuous procedural traces', () => {
+  const { context } = palette();
+  const definition = harness();
+  definition.pathways = [
+    definition.pathways[0],
+    { pathwayId: 'p2', name: 'path ext 1', startName: '', endName: '', orderedControlIds: [] },
+    { pathwayId: 'p3', name: 'path ext 2', startName: '', endName: 'finish', orderedControlIds: [] },
+  ];
+  definition.junctions = [
+    { junctionId: 'j1', name: 'Junction 01', controlId: 'c1',
+      precedingPathwayId: 'p', followingPathwayId: 'p2' },
+    { junctionId: 'j2', name: 'Junction 02', controlId: 'c2',
+      precedingPathwayId: 'p2', followingPathwayId: 'p3' },
+  ];
+  definition.wires.forEach((wire) => { wire.orderedPathwayIds = ['p', 'p2', 'p3']; });
+
+  const rendered = context.renderRelationshipMap(definition, []);
+  const endLists = descendants(
+    rendered, (node) => node.className?.startsWith('relationship-end-list'),
+  );
+  const junctionLinks = descendants(
+    rendered, (node) => node.className === 'relationship-chain-link',
+  );
+
+  assert.equal(endLists.length, 6);
+  assert.deepEqual(endLists.map((list) => descendants(
+    list, (node) => node.className === 'relationship-end-entry',
+  ).length), [3, 0, 0, 0, 0, 3]);
+  assert.equal(junctionLinks.length, 4);
+  assert.ok(junctionLinks.every((link) => descendants(
+    link, (node) => node.className === 'wire-trace',
+  ).length === 3));
+
+  definition.wires = [];
+  const unoccupied = context.renderRelationshipMap(definition, []);
+  const structuralLinks = descendants(
+    unoccupied, (node) => node.className === 'relationship-chain-link',
+  );
+  assert.ok(structuralLinks.every((link) => descendants(
+    link, (node) => node.className === 'structural-trace',
+  ).length === 1));
+
+  const styles = readFileSync(join(__dirname, '..', 'palette', 'styles.css'), 'utf8');
+  assert.match(styles, /\.relationship-pathway-group \{[^}]*gap: 0;[^}]*width: max-content;/s);
+  assert.match(styles, /\.relationship-chain-link \{[^}]*margin-inline: -1px;/s);
+  assert.match(styles, /\.relationship-connector \{[^}]*margin-inline: -1px;/s);
 });
 
 test('relationship diagrams use zoomable pannable floating workspaces', () => {
@@ -647,7 +727,7 @@ test('master collapse limit defaults to seven, clamps, persists, and search reve
   assert.equal(endLists[0].children[0].children[1].textContent, '1 of 8');
   connectors = descendants(rendered, (node) => node.className === 'relationship-connector');
   assert.equal(descendants(connectors[0], (node) => node.tag === 'path').length, 1);
-  assert.equal(descendants(connectors[1], (node) => node.tag === 'path').length, 0);
+  assert.equal(descendants(connectors[1], (node) => node.tag === 'path').length, 1);
 });
 
 test('master and per-wire graphics preserve scoped Fusion highlighting', () => {
@@ -1307,6 +1387,15 @@ asyncTest('developer visual QA probe verifies the relationship-diagram structure
   ]);
   const { context } = palette(new Map(), preferences);
   const definition = harness();
+  definition.pathways.push({
+    pathwayId: 'p2', name: 'lower fuse box path ext 1', startName: '', endName: '',
+    orderedControlIds: [],
+  });
+  definition.junctions = [{
+    junctionId: 'j1', name: 'Junction 01', controlId: 'c1',
+    precedingPathwayId: 'p', followingPathwayId: 'p2',
+  }];
+  definition.wires.forEach((wire) => { wire.orderedPathwayIds = ['p', 'p2']; });
   const sent = [];
   context.window.scrollTo = () => {};
   context.send = async (action, payload) => sent.push({ action, payload });
@@ -1325,7 +1414,7 @@ asyncTest('developer visual QA probe verifies the relationship-diagram structure
     action: 'qa_diagram_observation',
     payload: {
       status: 'passed',
-      connectorCount: 6,
+      connectorCount: 18,
       maximumEndpointGap: 0,
       contractVersion: '1',
       layout: 'measured-pathway-stack',

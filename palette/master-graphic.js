@@ -1,12 +1,15 @@
 const RELATIONSHIP_DIAGRAM_CONTRACT_VERSION = "1";
 const RELATIONSHIP_DIAGRAM_LAYOUT = "measured-pathway-stack";
 
-function relationshipEndGroups(harness, pathwayIds, endpoint, connections) {
+function relationshipEndGroups(harness, pathwayId, endpoint, connections) {
   const connectionField = endpoint === "start" ? "startConnectionId" : "endConnectionId";
   const endpointNameField = endpoint === "start" ? "startEndName" : "endEndName";
   const groups = new Map();
   harness.wires
-    .filter((wire) => wire.orderedPathwayIds.some((pathwayId) => pathwayIds.includes(pathwayId)))
+    .filter((wire) => {
+      const pathwayIndex = endpoint === "start" ? 0 : wire.orderedPathwayIds.length - 1;
+      return wire.orderedPathwayIds[pathwayIndex] === pathwayId;
+    })
     .forEach((wire) => {
       const connectionId = wire[connectionField] || "";
       const groupKey = connectionId || `missing:${wire.wireId}`;
@@ -37,6 +40,17 @@ function relationshipEndGroups(harness, pathwayIds, endpoint, connections) {
         .toLocaleLowerCase(),
     };
   });
+}
+
+function relationshipPathwayWires(harness, pathwayId) {
+  return harness.wires.filter((wire) => wire.orderedPathwayIds.includes(pathwayId));
+}
+
+function relationshipJunctionWires(harness, junction) {
+  return harness.wires.filter((wire) => wire.orderedPathwayIds.some((pathwayId, index) => (
+    pathwayId === junction.precedingPathwayId
+      && wire.orderedPathwayIds[index + 1] === junction.followingPathwayId
+  )));
 }
 
 function relationshipPathwayChains(harness) {
@@ -71,7 +85,9 @@ function relationshipPathwayChains(harness) {
   return chains;
 }
 
-function renderRelationshipConnector(groups, fromEndList, expanded, showPlaceholder = false) {
+function renderRelationshipConnector(
+  groups, wires, fromEndList, expanded, showPlaceholder = false,
+) {
   const svg = svgElement("svg", {
     class: "relationship-connector",
     viewBox: "0 0 54 100",
@@ -83,51 +99,95 @@ function renderRelationshipConnector(groups, fromEndList, expanded, showPlacehol
     : `M 0 ${hubY} C 24 ${hubY}, 30 ${listY}, 54 ${listY}`;
   const redraw = (isExpanded) => {
     svg.replaceChildren();
-    if (!groups.length && showPlaceholder) {
+    if (!wires.length && showPlaceholder) {
       svg.append(svgElement("path", {
         class: "placeholder-trace",
         d: curvePath(50, 50),
       }));
       return;
     }
-    if (!groups.length) return;
-    if (!isExpanded) {
+    if (!wires.length) return;
+    const groupedWireIds = new Set(
+      groups.flatMap((group) => group.wires.map((wire) => wire.wireId)),
+    );
+    if (!isExpanded && wires.every((wire) => groupedWireIds.has(wire.wireId))) {
       svg.append(svgElement("path", { class: "aggregate-trace", d: curvePath(50, 50) }));
       return;
     }
-    const wireCount = groups.reduce((count, group) => count + group.wires.length, 0);
-    let wireIndex = 0;
+    const groupPositions = new Map();
     groups.forEach((group, groupIndex) => {
       const groupY = 20 + 75 * ((groupIndex + 0.5) / groups.length);
-      const listSpacing = Math.min(6, 14 / Math.max(1, group.wires.length - 1));
-      const hubSpacing = Math.min(2.5, 14 / Math.max(1, wireCount - 1));
-      group.wires.forEach((wire, groupWireIndex) => {
-        const listY = groupY + (groupWireIndex - (group.wires.length - 1) / 2) * listSpacing;
-        const hubY = 50 + (wireIndex - (wireCount - 1) / 2) * hubSpacing;
-        const pathData = curvePath(listY, hubY);
+      const spacing = Math.min(6, 14 / Math.max(1, group.wires.length - 1));
+      group.wires.forEach((wire, wireIndex) => {
+        groupPositions.set(
+          wire.wireId,
+          groupY + (wireIndex - (group.wires.length - 1) / 2) * spacing,
+        );
+      });
+    });
+    const hubSpacing = Math.min(2.5, 14 / Math.max(1, wires.length - 1));
+    wires.forEach((wire, wireIndex) => {
+      const hubY = 50 + (wireIndex - (wires.length - 1) / 2) * hubSpacing;
+      const listY = groupPositions.get(wire.wireId) ?? hubY;
+      const pathData = curvePath(listY, hubY);
+      svg.append(svgElement("path", {
+        class: "wire-trace",
+        d: pathData,
+        stroke: wire.materials?.mainColor?.hex || "#1777c8",
+        "data-wire-id": wire.wireId,
+      }));
+      const stripes = (wire.materials?.stripes || []).slice(0, 3);
+      stripes.forEach((stripe, stripeIndex) => {
+        const stripeOffset = centeredStripeOffset(stripeIndex, stripes.length, 2);
         svg.append(svgElement("path", {
-          class: "wire-trace",
-          d: pathData,
-          stroke: wire.materials?.mainColor?.hex || "#1777c8",
+          class: "stripe-trace",
+          d: curvePath(listY + stripeOffset, hubY + stripeOffset),
+          stroke: stripe.color?.hex || "#fff",
+          "stroke-dasharray": stripe.pattern === "solid" ? "none" : "8 5",
           "data-wire-id": wire.wireId,
         }));
-        const stripes = (wire.materials?.stripes || []).slice(0, 3);
-        stripes.forEach((stripe, stripeIndex) => {
-          const stripeOffset = centeredStripeOffset(stripeIndex, stripes.length, 2);
-          svg.append(svgElement("path", {
-            class: "stripe-trace",
-            d: curvePath(listY + stripeOffset, hubY + stripeOffset),
-            stroke: stripe.color?.hex || "#fff",
-            "stroke-dasharray": stripe.pattern === "solid" ? "none" : "8 5",
-            "data-wire-id": wire.wireId,
-          }));
-        });
-        wireIndex += 1;
       });
     });
   };
   svg.redraw = redraw;
   redraw(expanded);
+  return svg;
+}
+
+function renderRelationshipBridge(wires) {
+  const svg = svgElement("svg", {
+    class: "relationship-chain-link",
+    viewBox: "0 0 22 100",
+    preserveAspectRatio: "none",
+    "aria-hidden": "true",
+  });
+  if (!wires.length) {
+    svg.append(svgElement("path", {
+      class: "structural-trace",
+      d: "M 0 50 L 22 50",
+    }));
+    return svg;
+  }
+  const spacing = Math.min(2.5, 14 / Math.max(1, wires.length - 1));
+  wires.forEach((wire, wireIndex) => {
+    const y = 50 + (wireIndex - (wires.length - 1) / 2) * spacing;
+    svg.append(svgElement("path", {
+      class: "wire-trace",
+      d: `M 0 ${y} L 22 ${y}`,
+      stroke: wire.materials?.mainColor?.hex || "#1777c8",
+      "data-wire-id": wire.wireId,
+    }));
+    (wire.materials?.stripes || []).slice(0, 3).forEach((stripe, stripeIndex, stripes) => {
+      const stripeOffset = centeredStripeOffset(stripeIndex, stripes.length, 2);
+      svg.append(svgElement("path", {
+        class: "stripe-trace",
+        d: `M 0 ${y + stripeOffset} L 22 ${y + stripeOffset}`,
+        stroke: stripe.color?.hex || "#fff",
+        "stroke-dasharray": stripe.pattern === "solid" ? "none" : "8 5",
+        "data-wire-id": wire.wireId,
+      }));
+    });
+  });
   return svg;
 }
 
@@ -312,88 +372,117 @@ function renderRelationshipMap(harness, auditIssues) {
     relationshipPathwayChains(harness).forEach((chain, chainIndex) => {
       const pathwayNodes = chain.filter((node) => node.kind === "pathway");
       const pathway = pathwayNodes[0].item;
-      const pathwayIds = pathwayNodes.map((node) => node.item.pathwayId);
-      const startGroups = relationshipEndGroups(harness, pathwayIds, "start", connections);
-      const endGroups = relationshipEndGroups(harness, pathwayIds, "end", connections);
+      const endpointGroups = new Map();
+      pathwayNodes.forEach((node) => {
+        endpointGroups.set(node.item.pathwayId, {
+          start: relationshipEndGroups(harness, node.item.pathwayId, "start", connections),
+          end: relationshipEndGroups(harness, node.item.pathwayId, "end", connections),
+        });
+      });
       const pathwayMatches = chain.map((node) => (
         node.kind === "pathway"
           ? `${node.item.name} ${node.item.startName || ""} ${node.item.endName || ""}`
           : node.item.name
       )).join(" ")
         .toLocaleLowerCase().includes(query);
-      const visibleStart = !query || pathwayMatches
-        ? startGroups : startGroups.filter((group) => group.searchable.includes(query));
-      const visibleEnd = !query || pathwayMatches
-        ? endGroups : endGroups.filter((group) => group.searchable.includes(query));
-      if (query && !pathwayMatches && !visibleStart.length && !visibleEnd.length) return;
+      const matchingWireIds = new Set();
+      endpointGroups.forEach((groups) => {
+        [...groups.start, ...groups.end]
+          .filter((group) => group.searchable.includes(query))
+          .forEach((group) => group.wires.forEach((wire) => matchingWireIds.add(wire.wireId)));
+      });
+      if (query && !pathwayMatches && !matchingWireIds.size) return;
       const pathwayGroup = document.createElement("div");
-      const hubChain = document.createElement("div");
-      const startList = renderRelationshipEndList(
-        harness, pathway, "start", startGroups, visibleStart, query, collapseLimit,
-      );
-      const endList = renderRelationshipEndList(
-        harness, pathway, "end", endGroups, visibleEnd, query, collapseLimit,
-      );
-      const startConnector = renderRelationshipConnector(
-        visibleStart, true, startList.open, startGroups.length === 0,
-      );
-      const endConnector = renderRelationshipConnector(
-        visibleEnd, false, endList.open, endGroups.length === 0,
-      );
+      const columns = [];
       pathwayGroup.className = "relationship-pathway-group";
       pathwayGroup.dataset.pathwayId = pathway.pathwayId;
-      const chainWidth = Math.max(170, chain.length * 154 + Math.max(0, chain.length - 1) * 22);
-      pathwayGroup.style.gridTemplateColumns = `minmax(210px, 1fr) 54px ${chainWidth}px 54px minmax(210px, 1fr)`;
       pathwayGroups.set(`chain-${chainIndex}`, pathwayGroup);
-      hubChain.className = "relationship-pathway-chain";
-      chain.forEach((node, nodeIndex) => {
-        if (nodeIndex) {
-          const link = document.createElement("span");
-          link.className = "relationship-chain-link";
-          link.setAttribute("aria-hidden", "true");
-          hubChain.append(link);
+      chain.forEach((node) => {
+        if (node.kind === "junction") {
+          const junctionWires = relationshipJunctionWires(harness, node.item)
+            .filter((wire) => !query || pathwayMatches || matchingWireIds.has(wire.wireId));
+          const junction = document.createElement("button");
+          const junctionName = document.createElement("strong");
+          const junctionKind = document.createElement("small");
+          junction.type = "button";
+          junction.className = "relationship-junction-hub";
+          junction.title = "Junction routing control";
+          junctionName.textContent = node.item.name || "Unnamed junction";
+          junctionKind.textContent = "Junction";
+          hoverHighlight(
+            junction,
+            () => highlightMember(harness, "junction", node.item.junctionId),
+          );
+          junction.append(junctionName, junctionKind);
+          pathwayGroup.append(
+            renderRelationshipBridge(junctionWires),
+            junction,
+            renderRelationshipBridge(junctionWires),
+          );
+          columns.push("14px", "154px", "14px");
+          return;
         }
+
+        const candidate = node.item;
+        const groups = endpointGroups.get(candidate.pathwayId);
+        const visibleStart = !query || pathwayMatches
+          ? groups.start : groups.start.filter((group) => group.searchable.includes(query));
+        const visibleEnd = !query || pathwayMatches
+          ? groups.end : groups.end.filter((group) => group.searchable.includes(query));
+        const pathwayWires = relationshipPathwayWires(harness, candidate.pathwayId)
+          .filter((wire) => !query || pathwayMatches || matchingWireIds.has(wire.wireId));
+        const startList = renderRelationshipEndList(
+          harness, candidate, "start", groups.start, visibleStart, query, collapseLimit,
+        );
+        const endList = renderRelationshipEndList(
+          harness, candidate, "end", groups.end, visibleEnd, query, collapseLimit,
+        );
+        const startConnector = renderRelationshipConnector(
+          visibleStart, pathwayWires, true, startList.open, pathwayWires.length === 0,
+        );
+        const endConnector = renderRelationshipConnector(
+          visibleEnd, pathwayWires, false, endList.open, pathwayWires.length === 0,
+        );
         const hub = document.createElement("button");
         const hubName = document.createElement("strong");
         const hubDirection = document.createElement("small");
+        const controls = new Map(harness.controls.map((control) => [control.controlId, control]));
+        const canSegment = candidate.orderedControlIds.slice(1, -1).some((controlId) => {
+          const control = controls.get(controlId);
+          return control && ["routing_gate", "refine"].includes(control.kind);
+        });
         hub.type = "button";
-        hubName.textContent = node.item.name || `Unnamed ${node.kind}`;
-        if (node.kind === "junction") {
-          hub.className = "relationship-junction-hub";
-          hub.title = "Junction routing control";
-          hubDirection.textContent = "Junction";
-          hoverHighlight(hub, () => highlightMember(harness, "junction", node.item.junctionId));
-        } else {
-          const candidate = node.item;
-          const controls = new Map(harness.controls.map((control) => [control.controlId, control]));
-          const canSegment = candidate.orderedControlIds.slice(1, -1).some((controlId) => {
-            const control = controls.get(controlId);
-            return control && ["routing_gate", "refine"].includes(control.kind);
-          });
-          hub.className = "relationship-pathway-hub";
-          hub.title = "Open pathway configuration";
-          hubDirection.textContent = pathwayDirection(candidate);
-          hoverHighlight(hub, () => highlightMember(harness, "pathway_gates", candidate.pathwayId));
-          hub.addEventListener("click", () => openPathwayPopup(harness, candidate.pathwayId));
-          hub.addEventListener("contextmenu", (event) => {
-            event.stopPropagation();
-            showContextMenu(event, [
-              { label: "Add refine point", action: () => addPathwayRefine(harness, candidate) },
-              {
-                label: "Segment",
-                action: () => segmentPathway(harness, candidate),
-                disabled: !canSegment,
-                title: canSegment ? "" : "Requires an interior routing gate or refine point",
-              },
-            ]);
-          });
-        }
+        hub.className = "relationship-pathway-hub";
+        hub.title = "Open pathway configuration";
+        hubName.textContent = candidate.name || "Unnamed pathway";
+        hubDirection.textContent = pathwayDirection(candidate);
+        hoverHighlight(hub, () => highlightMember(harness, "pathway_gates", candidate.pathwayId));
+        hub.addEventListener("click", () => openPathwayPopup(harness, candidate.pathwayId));
+        hub.addEventListener("contextmenu", (event) => {
+          event.stopPropagation();
+          showContextMenu(event, [
+            { label: "Add refine point", action: () => addPathwayRefine(harness, candidate) },
+            {
+              label: "Segment",
+              action: () => segmentPathway(harness, candidate),
+              disabled: !canSegment,
+              title: canSegment ? "" : "Requires an interior routing gate or refine point",
+            },
+          ]);
+        });
         hub.append(hubName, hubDirection);
-        hubChain.append(hub);
+        startList.redrawConnector = startConnector.redraw;
+        endList.redrawConnector = endConnector.redraw;
+        pathwayGroup.append(startList, startConnector, hub, endConnector, endList);
+        columns.push(
+          groups.start.length ? "210px" : "max-content",
+          "32px",
+          "154px",
+          "32px",
+          groups.end.length ? "210px" : "max-content",
+        );
       });
-      startList.redrawConnector = startConnector.redraw;
-      endList.redrawConnector = endConnector.redraw;
-      pathwayGroup.append(startList, startConnector, hubChain, endConnector, endList);
+      pathwayGroup.style.gridTemplateColumns = columns.join(" ");
       stack.append(pathwayGroup);
       visiblePathways += 1;
     });
