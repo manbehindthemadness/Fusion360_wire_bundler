@@ -1554,6 +1554,50 @@ def test_junction_relationship_bridge_persists_endpoint_list(
     assert saved.junctions[0].pathway_relationships[0].endpoint is PathwayEndpoint.END
 
 
+def test_junction_rename_bridge_persists_name(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Translate a palette junction rename into one transactional metadata edit.
+    """
+    control = ControlStructure(
+        UUID("37000000-0000-0000-0000-000000000011"),
+        "Junction Gate",
+        ControlKind.ROUTING_GATE,
+        "junction-token",
+    )
+    junction = JunctionDefinition(
+        UUID("38000000-0000-0000-0000-000000000011"),
+        "Junction 01",
+        control.control_id,
+    )
+    definition = replace(
+        valid_harness,
+        controls=(*valid_harness.controls, control),
+        junctions=(junction,),
+    )
+    gateway = Mock(read_harness_definition=Mock(return_value=dumps(definition)))
+    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
+
+    notice = addin_module._apply_palette_edit(
+        object(),
+        "rename_junction",
+        json.dumps(
+            {
+                "harnessId": str(definition.harness_id),
+                "junctionId": str(junction.junction_id),
+                "name": "Main Splice",
+            }
+        ),
+    )
+
+    saved = loads(gateway.replace_harness_definition.call_args.args[1])
+    assert notice == "Saved name."
+    assert saved.junctions[0] == replace(junction, name="Main Splice")
+
+
 def test_junction_relationship_bridge_removes_one_endpoint(
     addin_module: _PaletteLifecycleModule,
     monkeypatch: pytest.MonkeyPatch,

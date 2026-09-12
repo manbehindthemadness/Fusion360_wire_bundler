@@ -402,7 +402,15 @@ asyncTest('junction popup shows only its collapsed relationship stack and one ad
     dialog, (node) => node.className === 'junction-relationship-stack',
   )[0];
   assert.ok(!stack.open);
-  assert.equal(descendants(dialog, (node) => node.tag === 'input').length, 0);
+  const inputs = descendants(dialog, (node) => node.tag === 'input');
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0].value, 'Intersection');
+  inputs[0].value = 'Main Splice';
+  inputs[0].events.change();
+  assert.equal(calls[0].action, 'rename_junction');
+  assert.equal(calls[0].payload.harnessId, 'h');
+  assert.equal(calls[0].payload.junctionId, 'j1');
+  assert.equal(calls[0].payload.name, 'Main Splice');
   const rows = descendants(dialog, (node) => node.className === 'member-row');
   assert.equal(rows.length, 1);
   assert.equal(descendants(
@@ -412,8 +420,8 @@ asyncTest('junction popup shows only its collapsed relationship stack and one ad
     dialog, (node) => ['Branch', 'Owner'].includes(node.textContent),
   ).length, 0);
   descendants(rows[0], (node) => node.textContent === '×')[0].events.click();
-  assert.equal(calls[0].action, 'remove_junction_relationship');
-  assert.equal(calls[0].payload.pathwayId, 'p');
+  assert.equal(calls[1].action, 'remove_junction_relationship');
+  assert.equal(calls[1].payload.pathwayId, 'p');
   runInNewContext(
     'currentState = { harnesses: [definition] }; selectedHarnessKey = "h";',
     Object.assign(context, { definition }),

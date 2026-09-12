@@ -214,6 +214,49 @@ def remove_junction_relationship(
     return updated_junction
 
 
+def rename_junction(
+    harness_id: UUID,
+    junction_id: UUID,
+    name: str,
+    gateway: HarnessEditGateway,
+) -> None:
+    """
+    Rename one junction without changing its control or pathway relationships.
+
+    Clearing the name restores an available generated junction designation.
+    """
+    if not isinstance(name, str):
+        raise ValueError("Junction name must be a string.")
+    original, definition = _read_definition(harness_id, gateway)
+    junction = next(
+        (candidate for candidate in definition.junctions if candidate.junction_id == junction_id),
+        None,
+    )
+    if junction is None:
+        raise ValueError("Selected junction does not exist in this harness.")
+    resolved_name = next_available_name(
+        name.strip() or "Junction 01",
+        (
+            candidate.name
+            for candidate in definition.junctions
+            if candidate.junction_id != junction_id
+        ),
+    )
+    updated = replace(junction, name=resolved_name)
+    _persist(
+        harness_id,
+        original,
+        replace(
+            definition,
+            junctions=tuple(
+                updated if candidate.junction_id == junction_id else candidate
+                for candidate in definition.junctions
+            ),
+        ),
+        gateway,
+    )
+
+
 def _replace_junction_relationships(
     definition: HarnessDefinition,
     junction_id: UUID,

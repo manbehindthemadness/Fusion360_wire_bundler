@@ -37,6 +37,7 @@ from .application import (
     remove_junction_relationship,
     remove_pathway_gate,
     remove_wire,
+    rename_junction,
     rename_pathway,
     rename_route_end,
     rename_wire,
@@ -206,6 +207,7 @@ _PALETTE_EDIT_NAMES = {
     "remove_pathway_gate": "Remove Pathway Gate",
     "move_wire_endpoint": "Reorder Wire Ends",
     "remove_wire": "Delete Wire",
+    "rename_junction": "Rename Junction",
     "rename_route_end": "Rename Wire End",
     "rename_pathway": "Rename Pathway",
     "rename_wire": "Rename Wire",
@@ -3792,12 +3794,19 @@ def _apply_palette_edit(
             gateway,
         )
         return "Saved wire-material overrides."
-    if action in {"rename_pathway", "rename_wire"}:
+    if action in {"rename_junction", "rename_pathway", "rename_wire"}:
         name = payload.get("name")
         if not isinstance(name, str):
             raise ValueError("Rename request requires a text name.")
         if action == "rename_wire":
             rename_wire(harness_id, _read_payload_uuid(payload, "wireId", "wire"), name, gateway)
+        elif action == "rename_junction":
+            rename_junction(
+                harness_id,
+                _read_payload_uuid(payload, "junctionId", "junction"),
+                name,
+                gateway,
+            )
         else:
             field = payload.get("field")
             if not isinstance(field, str):

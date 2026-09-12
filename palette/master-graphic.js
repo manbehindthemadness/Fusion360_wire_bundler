@@ -203,7 +203,19 @@ function openJunctionRelationships(harness, junction) {
     }
     dialog.remove();
   });
-  content.append(heading, relationships, add, actions);
+  content.append(
+    heading,
+    nameField(
+      "Junction Name",
+      junction.name,
+      "rename_junction",
+      { harnessId: harness.harnessId, junctionId: junction.junctionId },
+      "Junction name",
+    ),
+    relationships,
+    add,
+    actions,
+  );
   dialog.append(content);
   document.body.append(dialog);
   dialog.showModal();

@@ -25,6 +25,7 @@ from wire_bundler.application import (
     remove_junction_relationship,
     remove_pathway_gate,
     remove_wire,
+    rename_junction,
     rename_pathway,
     rename_route_end,
     rename_wire,
@@ -697,6 +698,64 @@ def test_renaming_preserves_routes_and_wire_identity(valid_harness: HarnessDefin
     assert cleared.wires[0] == wire
     assert cleared.pathways[0].start_name == ""
     assert cleared.pathways[0].end_name == "can_bus-ctrl"
+
+
+def test_junction_rename_preserves_identity_topology_and_resolves_names(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Rename only junction metadata and keep required names deterministic.
+    """
+    first_control = ControlStructure(
+        UUID("39000000-0000-0000-0000-000000000001"),
+        "First Junction Gate",
+        ControlKind.ROUTING_GATE,
+        "first-junction-token",
+    )
+    second_control = ControlStructure(
+        UUID("39000000-0000-0000-0000-000000000002"),
+        "Second Junction Gate",
+        ControlKind.ROUTING_GATE,
+        "second-junction-token",
+    )
+    relationship = JunctionPathwayRelationship(
+        valid_harness.pathways[0].pathway_id,
+        PathwayEndpoint.END,
+    )
+    first = JunctionDefinition(
+        UUID("39000000-0000-0000-0000-000000000011"),
+        "Junction 01",
+        first_control.control_id,
+        (relationship,),
+    )
+    second = JunctionDefinition(
+        UUID("39000000-0000-0000-0000-000000000012"),
+        "Owner",
+        second_control.control_id,
+    )
+    definition = replace(
+        valid_harness,
+        controls=(*valid_harness.controls, first_control, second_control),
+        junctions=(first, second),
+    )
+    gateway = _recording_gateway(definition)
+
+    rename_junction(definition.harness_id, first.junction_id, "  Splice  ", gateway)
+    renamed = loads(gateway.serialized_definition)
+    assert renamed.junctions[0] == replace(first, name="Splice")
+    assert renamed.controls == definition.controls
+    assert renamed.wires == definition.wires
+
+    rename_junction(definition.harness_id, first.junction_id, "owner", gateway)
+    collision = loads(gateway.serialized_definition)
+    assert collision.junctions[0].name == "owner_2"
+
+    rename_junction(definition.harness_id, first.junction_id, " ", gateway)
+    cleared = loads(gateway.serialized_definition)
+    assert cleared.junctions[0].name == "Junction 01"
+    assert cleared.junctions[0].junction_id == first.junction_id
+    assert cleared.junctions[0].control_id == first.control_id
+    assert cleared.junctions[0].pathway_relationships == first.pathway_relationships
 
 
 def test_wire_rename_resolves_collisions(valid_harness: HarnessDefinition) -> None:
