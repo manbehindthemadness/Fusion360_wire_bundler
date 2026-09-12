@@ -131,6 +131,14 @@ class Element {
     if (this.events[event.type]) this.events[event.type](event);
     return true;
   }
+  contains(candidate) {
+    let node = candidate;
+    while (node) {
+      if (node === this) return true;
+      node = node.parentElement;
+    }
+    return false;
+  }
 }
 
 /** Evaluate the complete palette script with the Fusion transport mocked. */
@@ -141,9 +149,17 @@ function palette(storage = new Map(), preferences = storage) {
     document: {
       body: new Element('body'),
       scrollingElement: { scrollTop: 0 },
+      events: {},
       createElement: (tag) => new Element(tag),
       createElementNS: (_namespace, tag) => new Element(tag),
       getElementById: () => new Element('div'),
+      addEventListener(event, handler) { this.events[event] = handler; },
+      removeEventListener(event, handler) {
+        if (this.events[event] === handler) delete this.events[event];
+      },
+      dispatchEvent(event) {
+        if (this.events[event.type]) this.events[event.type](event);
+      },
     },
     window: {
       innerWidth: 800,
@@ -340,6 +356,28 @@ asyncTest('pathway node context menu adds a refine to that pathway', async () =>
   assert.equal(stopped, true);
   assert.equal(menu.hidden, false);
   assert.equal(menu.children[0].textContent, 'Add refine point');
+  const nestedMenuTarget = new Element('span');
+  menu.children[0].append(nestedMenuTarget);
+  context.document.dispatchEvent({ type: 'mousedown', target: nestedMenuTarget });
+  assert.equal(menu.hidden, false);
+  let outsidePrevented = false;
+  let outsideStopped = false;
+  context.document.dispatchEvent({
+    type: 'mousedown',
+    target: workspace,
+    preventDefault: () => { outsidePrevented = true; },
+    stopPropagation: () => { outsideStopped = true; },
+  });
+  assert.equal(menu.hidden, true);
+  assert.equal(outsidePrevented, false);
+  assert.equal(outsideStopped, false);
+
+  hub.events.contextmenu({
+    clientX: 120,
+    clientY: 140,
+    preventDefault: () => {},
+    stopPropagation: () => {},
+  });
   menu.children[0].events.click();
   await Promise.resolve();
   assert.equal(menu.hidden, true);

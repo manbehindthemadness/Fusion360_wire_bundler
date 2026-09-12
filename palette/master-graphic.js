@@ -276,12 +276,19 @@ function layoutRelationshipGraph(stack, pathwayGroups) {
 
 function addRelationshipMapContextMenu(workspace) {
   const menu = document.createElement("div");
+  const close = () => {
+    menu.hidden = true;
+    document.removeEventListener("mousedown", dismissOnOutsideMouseDown, true);
+  };
+  const dismissOnOutsideMouseDown = (event) => {
+    if (!menu.contains(event.target)) close();
+  };
   menu.className = "relationship-map-context-menu";
   menu.hidden = true;
   menu.setAttribute("role", "menu");
   menu.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
-      menu.hidden = true;
+      close();
       workspace.viewport.focus();
     }
   });
@@ -307,12 +314,13 @@ function addRelationshipMapContextMenu(workspace) {
       button.disabled = disabled;
       button.title = title;
       button.addEventListener("click", () => {
-        menu.hidden = true;
+        close();
         void action();
       });
       menu.append(button);
     });
     menu.hidden = false;
+    document.addEventListener("mousedown", dismissOnOutsideMouseDown, true);
     const firstEnabled = Array.from(menu.children).find((button) => !button.disabled);
     if (firstEnabled) firstEnabled.focus();
   };
