@@ -1004,10 +1004,7 @@ def _update_junction_relationship_choices(
     )
     if choice_input is None or selection_input is None:
         raise RuntimeError("Junction relationship inputs are unavailable.")
-    while choice_input.listItems.count:
-        item = choice_input.listItems.item(choice_input.listItems.count - 1)
-        if item is None or not item.deleteMe():
-            raise RuntimeError("Fusion could not refresh pathway-end choices.")
+    choice_input.listItems.clear()
     matches: tuple[_JunctionRelationshipCandidate, ...] = ()
     if selection_input.selectionCount == 1:
         selection = selection_input.selection(0)
@@ -1056,6 +1053,8 @@ class _AddJunctionRelationshipInputChangedHandler(adsk.core.InputChangedEventHan
         """
         Refresh the ambiguity choice from the current selection.
         """
+        if getattr(args.input, "id", None) != JUNCTION_RELATIONSHIP_GEOMETRY_INPUT_ID:
+            return
         try:
             _update_junction_relationship_choices(args.inputs, self._state)
         except (AttributeError, RuntimeError, TypeError, ValueError):

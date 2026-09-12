@@ -53,6 +53,7 @@ class _PaletteLifecycleModule(Protocol):
     _handlers: list[object]
     PALETTE_RESOURCE_FILES: tuple[Path, ...]
     JUNCTION_RELATIONSHIP_GEOMETRY_INPUT_ID: str
+    JUNCTION_RELATIONSHIP_CHOICE_INPUT_ID: str
     _PaletteIncomingHandler: type
     _PaletteEditExecuteHandler: type
     _PaletteEditDestroyedHandler: type
@@ -77,6 +78,7 @@ class _PaletteLifecycleModule(Protocol):
     _AddJunctionCommandState: type
     _AddJunctionPreSelectHandler: type
     _AddJunctionRelationshipCommandState: type
+    _AddJunctionRelationshipInputChangedHandler: type
     _JunctionRelationshipCandidate: type
     _SegmentCommandState: type
     _SegmentPreSelectHandler: type
@@ -89,6 +91,7 @@ class _PaletteLifecycleModule(Protocol):
     _read_refine_placement: Callable[[object, object], _RefinePlacementResult]
     _junction_profile_token: Callable[[object, object], str]
     _read_junction_relationship_candidate: Callable[[object, object], object]
+    _update_junction_relationship_choices: Callable[[object, object], None]
     _open_add_junction_command: Callable[[object, str], None]
     _open_add_junction_relationship_command: Callable[[object, str], None]
     _update_refine_placement: Callable[..., None]
@@ -211,6 +214,21 @@ def _configure_save_test(
     monkeypatch.setitem(vars(addin_module), "_graphics_cache_restore_value", None)
     monkeypatch.setitem(vars(addin_module), "_graphics_cache_save_document", None)
     return document, compatibility
+
+
+def _configure_relationship_selector_casts() -> None:
+    """
+    Make command-input and profile casts transparent for selector tests.
+    """
+    core_module = sys.modules["adsk.core"]
+    fusion_module = sys.modules["adsk.fusion"]
+    core_module.SelectionCommandInput = SimpleNamespace(  # type: ignore[attr-defined]
+        cast=lambda value: value
+    )
+    core_module.DropDownCommandInput = SimpleNamespace(  # type: ignore[attr-defined]
+        cast=lambda value: value
+    )
+    fusion_module.Profile = SimpleNamespace(cast=lambda value: value)  # type: ignore[attr-defined]
 
 
 def test_save_with_active_preview_temporarily_disables_graphics_cache(
@@ -346,19 +364,99 @@ def test_relationship_selector_narrows_ambiguous_geometry_to_endpoint_choice(
             else choice_input
         )
     )
-    core_module = sys.modules["adsk.core"]
-    fusion_module = sys.modules["adsk.fusion"]
-    core_module.SelectionCommandInput = SimpleNamespace(  # type: ignore[attr-defined]
-        cast=lambda value: value
-    )
-    core_module.DropDownCommandInput = SimpleNamespace(  # type: ignore[attr-defined]
-        cast=lambda value: value
-    )
-    fusion_module.Profile = SimpleNamespace(cast=lambda value: value)  # type: ignore[attr-defined]
+    _configure_relationship_selector_casts()
 
     selected = addin_module._read_junction_relationship_candidate(inputs, state)
 
     assert selected.relationship == second
+
+
+def test_relationship_selector_refreshes_choices_as_a_collection(
+    addin_module: _PaletteLifecycleModule,
+) -> None:
+    """
+    Clear an active drop-down safely before adding current geometry matches.
+    """
+    profile = SimpleNamespace(nativeObject=None)
+    candidates = tuple(
+        addin_module._JunctionRelationshipCandidate(
+            JunctionPathwayRelationship(UUID(int=10), endpoint),
+            f"Pathway_001 · {label}",
+            UUID(int=20),
+            profile,
+        )
+        for endpoint, label in (
+            (PathwayEndpoint.START, "End A"),
+            (PathwayEndpoint.END, "End B"),
+        )
+    )
+    state = addin_module._AddJunctionRelationshipCommandState(
+        UUID(int=1),
+        UUID(int=2),
+        candidates,
+    )
+    selection_input = SimpleNamespace(
+        selectionCount=1,
+        selection=lambda _index: SimpleNamespace(entity=profile),
+    )
+    list_items = SimpleNamespace(clear=Mock(), add=Mock(side_effect=lambda *_args: object()))
+    choice_input = SimpleNamespace(listItems=list_items, isVisible=False)
+    inputs = SimpleNamespace(
+        itemById=lambda identity: (
+            selection_input
+            if identity == addin_module.JUNCTION_RELATIONSHIP_GEOMETRY_INPUT_ID
+            else choice_input
+        )
+    )
+    _configure_relationship_selector_casts()
+
+    addin_module._update_junction_relationship_choices(inputs, state)
+
+    list_items.clear.assert_called_once_with()
+    assert [record.args for record in list_items.add.call_args_list] == [
+        ("Pathway_001 · End A", True),
+        ("Pathway_001 · End B", False),
+    ]
+    assert choice_input.isVisible is True
+
+
+def test_relationship_selector_refreshes_only_for_geometry_input_changes(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Preserve an active choice while continuing to respond to geometry changes.
+    """
+    state = addin_module._AddJunctionRelationshipCommandState(
+        UUID(int=1),
+        UUID(int=2),
+        (),
+    )
+    update_choices = Mock()
+    monkeypatch.setattr(
+        addin_module,
+        "_update_junction_relationship_choices",
+        update_choices,
+    )
+
+    addin_module._AddJunctionRelationshipInputChangedHandler(state).notify(
+        SimpleNamespace(
+            input=SimpleNamespace(id=addin_module.JUNCTION_RELATIONSHIP_CHOICE_INPUT_ID),
+            inputs=object(),
+        )
+    )
+
+    update_choices.assert_not_called()
+
+    inputs = object()
+    addin_module._AddJunctionRelationshipInputChangedHandler(state).notify(
+        SimpleNamespace(
+            input=SimpleNamespace(id=addin_module.JUNCTION_RELATIONSHIP_GEOMETRY_INPUT_ID),
+            inputs=inputs,
+        )
+    )
+
+    update_choices.assert_called_once_with(inputs, state)
 
 
 def test_refine_selection_accepts_only_command_spine(
