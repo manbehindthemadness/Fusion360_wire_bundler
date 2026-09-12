@@ -211,6 +211,7 @@ function openJunctionRelationships(harness, junction) {
       "rename_junction",
       { harnessId: harness.harnessId, junctionId: junction.junctionId },
       "Junction name",
+      { showLabel: false },
     ),
     relationships,
     add,

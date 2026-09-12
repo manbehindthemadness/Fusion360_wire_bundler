@@ -227,14 +227,17 @@ function memberRow(label, onReveal, actions = [], missing = false, clickToActiva
   return row;
 }
 
-function nameField(label, value, action, payload, placeholder = "Optional name") {
+function nameField(
+  label, value, action, payload, placeholder = "Optional name", { showLabel = true } = {},
+) {
   const field = document.createElement("label");
   const input = document.createElement("input");
-  field.textContent = label;
+  if (showLabel) field.textContent = label;
   input.type = "text";
   input.className = "filter";
   input.value = value || "";
   input.placeholder = placeholder;
+  input.setAttribute("aria-label", label);
   input.addEventListener("change", () => mutate(
     action, { ...payload, name: input.value }, "Saving name…",
   ));

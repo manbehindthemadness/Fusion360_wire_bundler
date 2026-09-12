@@ -405,6 +405,10 @@ asyncTest('junction popup shows only its collapsed relationship stack and one ad
   const inputs = descendants(dialog, (node) => node.tag === 'input');
   assert.equal(inputs.length, 1);
   assert.equal(inputs[0].value, 'Intersection');
+  assert.equal(inputs[0].attributes['aria-label'], 'Junction Name');
+  assert.equal(descendants(
+    dialog, (node) => node.textContent === 'Junction Name',
+  ).length, 0);
   inputs[0].value = 'Main Splice';
   inputs[0].events.change();
   assert.equal(calls[0].action, 'rename_junction');
