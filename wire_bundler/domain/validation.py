@@ -12,8 +12,10 @@ from .model import (
     SCHEMA_VERSION,
     ControlKind,
     HarnessDefinition,
+    JunctionDefinition,
     PathwayDefinition,
     RoutingMode,
+    route_control_ids,
 )
 
 
@@ -51,6 +53,7 @@ def validate_harness(definition: HarnessDefinition) -> tuple[ValidationIssue, ..
     _validate_connections(definition, issues)
     _validate_controls(definition, issues)
     _validate_pathways(definition, issues)
+    _validate_junctions(definition, issues)
     _validate_wires(definition, issues)
     return tuple(issues)
 
@@ -79,6 +82,10 @@ def _validate_unique_ids(
         *(
             (pathway.pathway_id, f"pathways[{index}].pathway_id")
             for index, pathway in enumerate(definition.pathways)
+        ),
+        *(
+            (junction.junction_id, f"junctions[{index}].junction_id")
+            for index, junction in enumerate(definition.junctions)
         ),
         *((wire.wire_id, f"wires[{index}].wire_id") for index, wire in enumerate(definition.wires)),
     ]
@@ -257,6 +264,156 @@ def _validate_pathways(
                 seen_control_ids.add(control_id)
 
 
+def _validate_junctions(
+    definition: HarnessDefinition,
+    issues: list[ValidationIssue],
+) -> None:
+    """
+    Validate standalone controls and unambiguous directed pathway chains.
+    """
+    controls = {control.control_id: control for control in definition.controls}
+    pathway_ids = {pathway.pathway_id for pathway in definition.pathways}
+    pathway_control_ids = {
+        control_id for pathway in definition.pathways for control_id in pathway.ordered_control_ids
+    }
+    names: dict[str, str] = {}
+    controls_in_use: dict[UUID, str] = {}
+    adjacencies: dict[tuple[UUID, UUID], str] = {}
+    outgoing: dict[UUID, str] = {}
+    incoming: dict[UUID, str] = {}
+    for index, junction in enumerate(definition.junctions):
+        path = f"junctions[{index}]"
+        normalized_name = junction.name.strip()
+        if not normalized_name:
+            issues.append(
+                ValidationIssue(
+                    "missing_junction_name", f"{path}.name", "Junction name is required."
+                )
+            )
+        else:
+            key = normalized_name.casefold()
+            if key in names:
+                issues.append(
+                    ValidationIssue(
+                        "duplicate_junction_name",
+                        f"{path}.name",
+                        f"Junction name duplicates {names[key]}.",
+                    )
+                )
+            else:
+                names[key] = f"{path}.name"
+
+        control = controls.get(junction.control_id)
+        if control is None:
+            issues.append(
+                ValidationIssue(
+                    "missing_junction_control_reference",
+                    f"{path}.control_id",
+                    "Referenced junction control does not exist.",
+                )
+            )
+        elif junction.control_id in pathway_control_ids:
+            issues.append(
+                ValidationIssue(
+                    "junction_control_in_pathway",
+                    f"{path}.control_id",
+                    "A junction control must not also belong to a pathway.",
+                )
+            )
+        previous_control_path = controls_in_use.get(junction.control_id)
+        if previous_control_path is not None:
+            issues.append(
+                ValidationIssue(
+                    "duplicate_junction_control",
+                    f"{path}.control_id",
+                    f"Junction control duplicates {previous_control_path}.",
+                )
+            )
+        else:
+            controls_in_use[junction.control_id] = f"{path}.control_id"
+
+        for field, pathway_id in (
+            ("preceding_pathway_id", junction.preceding_pathway_id),
+            ("following_pathway_id", junction.following_pathway_id),
+        ):
+            if pathway_id not in pathway_ids:
+                issues.append(
+                    ValidationIssue(
+                        "missing_junction_pathway_reference",
+                        f"{path}.{field}",
+                        "Referenced junction pathway does not exist.",
+                    )
+                )
+        if junction.preceding_pathway_id == junction.following_pathway_id:
+            issues.append(
+                ValidationIssue(
+                    "identical_junction_pathways",
+                    f"{path}.following_pathway_id",
+                    "A junction must connect two different pathways.",
+                )
+            )
+        adjacency = (junction.preceding_pathway_id, junction.following_pathway_id)
+        if adjacency in adjacencies:
+            issues.append(
+                ValidationIssue(
+                    "duplicate_junction_adjacency",
+                    f"{path}.following_pathway_id",
+                    f"Junction adjacency duplicates {adjacencies[adjacency]}.",
+                )
+            )
+        else:
+            adjacencies[adjacency] = path
+        if junction.preceding_pathway_id in outgoing:
+            issues.append(
+                ValidationIssue(
+                    "ambiguous_junction_successor",
+                    f"{path}.preceding_pathway_id",
+                    "A segmented pathway may have only one following pathway.",
+                )
+            )
+        else:
+            outgoing[junction.preceding_pathway_id] = path
+        if junction.following_pathway_id in incoming:
+            issues.append(
+                ValidationIssue(
+                    "ambiguous_junction_predecessor",
+                    f"{path}.following_pathway_id",
+                    "A segmented pathway may have only one preceding pathway.",
+                )
+            )
+        else:
+            incoming[junction.following_pathway_id] = path
+
+    _validate_junction_cycles(definition.junctions, issues)
+
+
+def _validate_junction_cycles(
+    junctions: tuple[JunctionDefinition, ...],
+    issues: list[ValidationIssue],
+) -> None:
+    """
+    Reject segmentation chains that loop back to an earlier pathway.
+    """
+    successors = {
+        junction.preceding_pathway_id: junction.following_pathway_id for junction in junctions
+    }
+    for start in successors:
+        seen: set[UUID] = set()
+        current = start
+        while current in successors:
+            if current in seen:
+                issues.append(
+                    ValidationIssue(
+                        "cyclic_junction_chain",
+                        "junctions",
+                        "Junction pathway relationships must not form a cycle.",
+                    )
+                )
+                return
+            seen.add(current)
+            current = successors[current]
+
+
 def _validate_wires(
     definition: HarnessDefinition,
     issues: list[ValidationIssue],
@@ -355,11 +512,10 @@ def _validate_wires(
             and controls_are_resolvable
             and len(resolved_pathways) == len(wire.ordered_pathway_ids)
         ):
-            expected_control_ids = tuple(
-                control_id
-                for pathway in resolved_pathways
-                for control_id in pathway.ordered_control_ids
-            )
+            try:
+                expected_control_ids = route_control_ids(definition, wire.ordered_pathway_ids)
+            except ValueError:
+                expected_control_ids = ()
             if expected_control_ids != wire.ordered_control_ids:
                 issues.append(
                     ValidationIssue(

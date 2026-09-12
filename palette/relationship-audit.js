@@ -8,6 +8,10 @@ function relationshipAuditIssues(harness) {
   const usage = new Map(
     (projection.connectionUsage || []).map((item) => [item.connectionId, item.endpoints || []]),
   );
+  const junctions = new Map((harness.junctions || []).map((junction) => [
+    `${junction.precedingPathwayId}:${junction.followingPathwayId}`,
+    junction,
+  ]));
   const addIssue = (code, message, memberType = "", memberId = "") => {
     if (!issues.some((issue) => issue.code === code && issue.memberId === memberId)) {
       issues.push({ code, message, memberType, memberId });
@@ -15,11 +19,14 @@ function relationshipAuditIssues(harness) {
   };
   harness.wires.forEach((wire) => {
     const route = routes.get(wire.wireId);
-    const expectedNodes = [
-      `connection:${wire.startConnectionId}`,
-      ...wire.orderedPathwayIds.map((id) => `pathway:${id}`),
-      `connection:${wire.endConnectionId}`,
-    ];
+    const expectedNodes = [`connection:${wire.startConnectionId}`];
+    wire.orderedPathwayIds.forEach((id, index) => {
+      expectedNodes.push(`pathway:${id}`);
+      const followingId = wire.orderedPathwayIds[index + 1];
+      const junction = junctions.get(`${id}:${followingId}`);
+      if (junction) expectedNodes.push(`junction:${junction.junctionId}`);
+    });
+    expectedNodes.push(`connection:${wire.endConnectionId}`);
     if (!route || JSON.stringify(route.nodeIds || []) !== JSON.stringify(expectedNodes)) {
       addIssue(
         "palette_wire_route_mismatch",
@@ -72,4 +79,3 @@ function relationshipAuditIssues(harness) {
   });
   return issues;
 }
-

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Optional, Protocol
 from uuid import UUID, uuid4
 
@@ -15,6 +15,7 @@ from ..domain import (
     ControlKind,
     ControlStructure,
     HarnessDefinition,
+    JunctionDefinition,
     PathwayDefinition,
     RefineGeometry,
     RoutingMode,
@@ -24,6 +25,7 @@ from ..domain import (
     dumps,
     loads,
     next_available_name,
+    route_control_ids,
 )
 from ..domain.model import InterpolationSettings
 
@@ -48,6 +50,153 @@ class HarnessEditError(RuntimeError):
     """
     Report an edit that failed and could not be rolled back cleanly.
     """
+
+
+@dataclass(frozen=True)
+class PathwaySegmentResult:
+    """
+    Return the two pathway halves and their intervening junction.
+    """
+
+    preceding_pathway: PathwayDefinition
+    following_pathway: PathwayDefinition
+    junction: JunctionDefinition
+
+
+def suggest_pathway_extension_name(
+    harness_id: UUID,
+    pathway_id: UUID,
+    gateway: HarnessEditGateway,
+) -> str:
+    """
+    Return the next root-sequenced extension name for a pathway chain.
+    """
+    _original, definition = _read_definition(harness_id, gateway)
+    pathway = _require_pathway(definition, pathway_id)
+    predecessors: dict[UUID, UUID] = {}
+    for junction in definition.junctions:
+        if junction.following_pathway_id in predecessors:
+            raise ValueError("The pathway has an ambiguous junction predecessor.")
+        predecessors[junction.following_pathway_id] = junction.preceding_pathway_id
+    root_id = pathway.pathway_id
+    visited: set[UUID] = set()
+    while root_id in predecessors:
+        if root_id in visited:
+            raise ValueError("The pathway junction chain contains a cycle.")
+        visited.add(root_id)
+        root_id = predecessors[root_id]
+    root = _require_pathway(definition, root_id)
+    return next_available_name(
+        f"{root.name} ext 1",
+        (candidate.name for candidate in definition.pathways),
+    )
+
+
+def segment_pathway(
+    harness_id: UUID,
+    pathway_id: UUID,
+    control_id: UUID,
+    following_name: str,
+    gateway: HarnessEditGateway,
+    id_factory: Callable[[], UUID] = uuid4,
+) -> PathwaySegmentResult:
+    """
+    Split a pathway around one interior control and persist its junction atomically.
+    """
+    normalized_name = following_name.strip()
+    if not normalized_name:
+        raise ValueError("New pathway name must not be empty.")
+    original, definition = _read_definition(harness_id, gateway)
+    pathway = _require_pathway(definition, pathway_id)
+    try:
+        control_index = pathway.ordered_control_ids.index(control_id)
+    except ValueError as error:
+        raise ValueError("Selected control does not belong to this pathway.") from error
+    if control_index == 0 or control_index == len(pathway.ordered_control_ids) - 1:
+        raise ValueError("Select a pathway control that is not an end.")
+    control = next(
+        (candidate for candidate in definition.controls if candidate.control_id == control_id),
+        None,
+    )
+    if control is None:
+        raise ValueError("Selected pathway control no longer exists.")
+    if control.kind not in {ControlKind.ROUTING_GATE, ControlKind.REFINE}:
+        raise ValueError("Only routing gates and refine points can currently segment a pathway.")
+
+    following_pathway_id = id_factory()
+    junction_id = id_factory()
+    existing_ids = {
+        definition.harness_id,
+        *(profile.profile_id for profile in definition.profiles),
+        *(connection.connection_id for connection in definition.connections),
+        *(candidate.control_id for candidate in definition.controls),
+        *(candidate.pathway_id for candidate in definition.pathways),
+        *(candidate.junction_id for candidate in definition.junctions),
+        *(wire.wire_id for wire in definition.wires),
+    }
+    if following_pathway_id in existing_ids or junction_id in existing_ids | {following_pathway_id}:
+        raise ValueError("Generated pathway or junction identity is already in use.")
+    resolved_name = next_available_name(
+        normalized_name,
+        (candidate.name for candidate in definition.pathways),
+    )
+    preceding_pathway = replace(
+        pathway,
+        ordered_control_ids=pathway.ordered_control_ids[:control_index],
+        end_name="",
+    )
+    following_pathway = PathwayDefinition(
+        pathway_id=following_pathway_id,
+        name=resolved_name,
+        routing_mode=pathway.routing_mode,
+        ordered_control_ids=pathway.ordered_control_ids[control_index + 1 :],
+        end_name=pathway.end_name,
+    )
+    junction = JunctionDefinition(
+        junction_id=junction_id,
+        name=next_available_name(
+            "Junction 01", (candidate.name for candidate in definition.junctions)
+        ),
+        control_id=control_id,
+        preceding_pathway_id=pathway.pathway_id,
+        following_pathway_id=following_pathway.pathway_id,
+    )
+
+    pathways: list[PathwayDefinition] = []
+    for candidate in definition.pathways:
+        pathways.append(preceding_pathway if candidate.pathway_id == pathway_id else candidate)
+        if candidate.pathway_id == pathway_id:
+            pathways.append(following_pathway)
+    prior_junctions = tuple(
+        replace(candidate, preceding_pathway_id=following_pathway.pathway_id)
+        if candidate.preceding_pathway_id == pathway_id
+        else candidate
+        for candidate in definition.junctions
+    )
+    wires = tuple(
+        replace(
+            wire,
+            ordered_pathway_ids=tuple(
+                inserted_id
+                for candidate_id in wire.ordered_pathway_ids
+                for inserted_id in (
+                    (candidate_id, following_pathway.pathway_id)
+                    if candidate_id == pathway_id
+                    else (candidate_id,)
+                )
+            ),
+        )
+        for wire in definition.wires
+    )
+    updated = replace(
+        definition,
+        pathways=tuple(pathways),
+        junctions=(*prior_junctions, junction),
+        wires=wires,
+    )
+    updated = _synchronize_wire_controls(updated)
+    _persist(harness_id, original, updated, gateway)
+    return PathwaySegmentResult(preceding_pathway, following_pathway, junction)
 
 
 def add_pathway_refine(
@@ -646,27 +795,20 @@ def _synchronize_wire_controls(definition: HarnessDefinition) -> HarnessDefiniti
     """
     Rebuild every wire's flattened controls from its ordered pathways.
     """
-    pathways = {pathway.pathway_id: pathway for pathway in definition.pathways}
+    wires: list[WireDefinition] = []
     for wire in definition.wires:
-        missing_pathway_ids = tuple(
-            pathway_id for pathway_id in wire.ordered_pathway_ids if pathway_id not in pathways
-        )
-        if missing_pathway_ids:
+        try:
+            control_ids = route_control_ids(definition, wire.ordered_pathway_ids)
+        except ValueError as error:
+            if "missing pathway" in str(error):
+                raise ValueError(
+                    f"Wire {wire.wire_number} references a missing pathway and cannot be updated."
+                ) from error
             raise ValueError(
-                f"Wire {wire.wire_number} references a missing pathway and cannot be updated."
-            )
-    wires = tuple(
-        replace(
-            wire,
-            ordered_control_ids=tuple(
-                control_id
-                for pathway_id in wire.ordered_pathway_ids
-                for control_id in pathways[pathway_id].ordered_control_ids
-            ),
-        )
-        for wire in definition.wires
-    )
-    return replace(definition, wires=wires)
+                f"Wire {wire.wire_number} references an invalid pathway route and cannot be updated."
+            ) from error
+        wires.append(replace(wire, ordered_control_ids=control_ids))
+    return replace(definition, wires=tuple(wires))
 
 
 def _persist(

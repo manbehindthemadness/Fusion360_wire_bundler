@@ -9,6 +9,7 @@ from .model import (
     ControlKind,
     ControlStructure,
     HarnessDefinition,
+    JunctionDefinition,
     PathwayDefinition,
     RefineGeometry,
     RoutingMode,
@@ -20,6 +21,7 @@ from .model import (
     WireMaterialSettings,
     WireProfile,
     WireStripe,
+    route_control_ids,
 )
 from .naming import next_available_name
 from .validation import ValidationIssue, validate_harness
@@ -31,6 +33,7 @@ __all__ = [
     "ControlStructure",
     "DefinitionParseError",
     "HarnessDefinition",
+    "JunctionDefinition",
     "PathwayDefinition",
     "RefineGeometry",
     "RoutingMode",
@@ -46,5 +49,6 @@ __all__ = [
     "dumps",
     "loads",
     "next_available_name",
+    "route_control_ids",
     "validate_harness",
 ]

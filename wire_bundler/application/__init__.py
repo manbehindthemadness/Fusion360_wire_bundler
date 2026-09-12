@@ -23,6 +23,7 @@ from .create_harness import (
 from .edit_harness import (
     HarnessEditError,
     HarnessEditGateway,
+    PathwaySegmentResult,
     add_pathway_refine,
     append_pathway_gates,
     move_pathway_gate,
@@ -32,9 +33,11 @@ from .edit_harness import (
     rename_pathway,
     rename_route_end,
     rename_wire,
+    segment_pathway,
     set_harness_material_defaults,
     set_wire_diameter,
     set_wire_material_overrides,
+    suggest_pathway_extension_name,
     update_pathway_refine,
 )
 from .load_harnesses import (
@@ -55,6 +58,7 @@ from .relationship_map import (
     RelationshipNodeKind,
     RelationshipOccupancy,
     RelationshipRoute,
+    RelationshipStructuralEdge,
     audit_relationship_map,
     build_relationship_map,
 )
@@ -64,6 +68,7 @@ __all__ = [
     "HarnessCreationError",
     "HarnessEditError",
     "HarnessEditGateway",
+    "PathwaySegmentResult",
     "HarnessGateway",
     "HarnessLibraryGateway",
     "HarnessLoadResult",
@@ -82,6 +87,7 @@ __all__ = [
     "RelationshipNodeKind",
     "RelationshipOccupancy",
     "RelationshipRoute",
+    "RelationshipStructuralEdge",
     "add_pathway",
     "add_pathway_refine",
     "add_wire_batch",
@@ -98,11 +104,13 @@ __all__ = [
     "rename_route_end",
     "rename_pathway",
     "rename_wire",
+    "segment_pathway",
     "set_harness_material_defaults",
     "set_wire_diameter",
     "set_wire_material_overrides",
     "update_pathway_refine",
     "load_wire_material_catalog",
     "suggest_harness_name",
+    "suggest_pathway_extension_name",
     "suggest_pathway_name",
 ]

@@ -348,6 +348,60 @@ asyncTest('pathway node context menu adds a refine to that pathway', async () =>
   assert.equal(calls[0].payload.pathwayId, 'p');
 });
 
+asyncTest('pathway context menu segments eligible controls and renders its junction', async () => {
+  const { context, calls } = palette();
+  const definition = harness();
+  definition.controls = [1, 2, 3].map((index) => ({
+    controlId: `c${index}`, name: `Routing Gate 0${index}`, kind: 'routing_gate',
+  }));
+  definition.pathways[0].orderedControlIds = ['c1', 'c2', 'c3'];
+  context.send = async (action, payload) => {
+    calls.push({ action, payload });
+    return { ok: true };
+  };
+  let graphic = context.renderRelationshipMap(definition, []);
+  let workspace = descendants(
+    graphic, (node) => node.className === 'block-diagram-workspace',
+  )[0];
+  let hub = descendants(
+    workspace, (node) => node.className === 'relationship-pathway-hub',
+  )[0];
+  let menu = descendants(
+    workspace, (node) => node.className === 'relationship-map-context-menu',
+  )[0];
+  hub.events.contextmenu({
+    clientX: 120, clientY: 140, preventDefault: () => {}, stopPropagation: () => {},
+  });
+  assert.equal(menu.children[1].textContent, 'Segment');
+  assert.equal(menu.children[1].disabled, false);
+  menu.children[1].events.click();
+  await Promise.resolve();
+  assert.equal(calls[0].action, 'segment_pathway');
+  assert.equal(calls[0].payload.pathwayId, 'p');
+
+  definition.pathways = [
+    { ...definition.pathways[0], orderedControlIds: ['c1'] },
+    { pathwayId: 'p2', name: 'lower fuse box path ext 1', startName: '',
+      endName: 'CAN_BUS-ctrl', orderedControlIds: ['c3'] },
+  ];
+  definition.pathways[0].endName = '';
+  definition.junctions = [{ junctionId: 'j1', name: 'Junction 01', controlId: 'c2',
+    precedingPathwayId: 'p', followingPathwayId: 'p2' }];
+  definition.wires.forEach((wire) => { wire.orderedPathwayIds = ['p', 'p2']; });
+  graphic = context.renderRelationshipMap(definition, []);
+  workspace = descendants(graphic, (node) => node.className === 'block-diagram-workspace')[0];
+  const junction = descendants(
+    workspace, (node) => node.className === 'relationship-junction-hub',
+  )[0];
+  assert.ok(junction);
+  assert.equal(junction.children[0].textContent, 'Junction 01');
+  junction.events.mouseenter();
+  await Promise.resolve();
+  assert.equal(calls.at(-1).action, 'highlight_member');
+  assert.equal(calls.at(-1).payload.memberType, 'junction');
+  assert.equal(calls.at(-1).payload.memberId, 'j1');
+});
+
 test('relationship diagrams use zoomable pannable floating workspaces', () => {
   const { context } = palette();
   const definition = harness();

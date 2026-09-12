@@ -25,9 +25,11 @@ from wire_bundler.application import (
     rename_pathway,
     rename_route_end,
     rename_wire,
+    segment_pathway,
     set_harness_material_defaults,
     set_wire_diameter,
     set_wire_material_overrides,
+    suggest_pathway_extension_name,
     update_pathway_refine,
 )
 from wire_bundler.application.edit_harness import edit_end_members, set_interpolation
@@ -51,6 +53,108 @@ GATE_3_ID = UUID("30000000-0000-0000-0000-000000000003")
 WIRE_2_ID = UUID("50000000-0000-0000-0000-000000000002")
 SOURCE_2_ID = UUID("20000000-0000-0000-0000-000000000003")
 END_2_ID = UUID("20000000-0000-0000-0000-000000000004")
+EXTENSION_ID = UUID("35000000-0000-0000-0000-000000000002")
+JUNCTION_ID = UUID("36000000-0000-0000-0000-000000000001")
+
+
+def test_segments_pathway_at_standalone_junction_and_preserves_wire_route(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Split all occupants while retaining their exact ordered routing controls.
+    """
+    definition = _expanded_harness(valid_harness)
+    pathway = replace(definition.pathways[0], start_name="Input", end_name="Output")
+    definition = replace(definition, pathways=(pathway,))
+    gateway = _recording_gateway(definition)
+    identifiers = iter((EXTENSION_ID, JUNCTION_ID))
+
+    result = segment_pathway(
+        definition.harness_id,
+        pathway.pathway_id,
+        GATE_2_ID,
+        "Main Pathway ext 1",
+        gateway,
+        id_factory=lambda: next(identifiers),
+    )
+
+    stored = loads(gateway.serialized_definition)
+    assert result.preceding_pathway.pathway_id == pathway.pathway_id
+    assert result.preceding_pathway.ordered_control_ids == (pathway.ordered_control_ids[0],)
+    assert result.preceding_pathway.start_name == "Input"
+    assert result.preceding_pathway.end_name == ""
+    assert result.following_pathway.pathway_id == EXTENSION_ID
+    assert result.following_pathway.ordered_control_ids == (GATE_3_ID,)
+    assert result.following_pathway.start_name == ""
+    assert result.following_pathway.end_name == "Output"
+    assert result.junction.control_id == GATE_2_ID
+    assert result.junction.name == "Junction 01"
+    assert stored.pathways == (result.preceding_pathway, result.following_pathway)
+    assert all(
+        wire.ordered_pathway_ids == (pathway.pathway_id, EXTENSION_ID) for wire in stored.wires
+    )
+    assert all(wire.ordered_control_ids == pathway.ordered_control_ids for wire in stored.wires)
+
+
+def test_suggests_root_sequence_and_rejects_unsupported_segment_control(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Keep extension defaults rooted while profile-gate segmentation remains deferred.
+    """
+    definition = _expanded_harness(valid_harness)
+    profile_control = replace(definition.controls[1], kind=ControlKind.PROFILE_GATE)
+    definition = replace(
+        definition,
+        controls=(definition.controls[0], profile_control, definition.controls[2]),
+    )
+    gateway = _recording_gateway(definition)
+
+    assert (
+        suggest_pathway_extension_name(
+            definition.harness_id, definition.pathways[0].pathway_id, gateway
+        )
+        == "Main Pathway ext 1"
+    )
+    with pytest.raises(ValueError, match="currently segment"):
+        segment_pathway(
+            definition.harness_id,
+            definition.pathways[0].pathway_id,
+            GATE_2_ID,
+            "Extension",
+            gateway,
+        )
+    with pytest.raises(ValueError, match="not an end"):
+        segment_pathway(
+            definition.harness_id,
+            definition.pathways[0].pathway_id,
+            definition.pathways[0].ordered_control_ids[0],
+            "Extension",
+            gateway,
+        )
+    assert gateway.writes == []
+
+
+def test_segment_pathway_restores_definition_after_failed_write(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Preserve the exact original metadata when segmentation persistence fails.
+    """
+    definition = _expanded_harness(valid_harness)
+    gateway = _recording_gateway(definition, (RuntimeError("write failed"), None))
+
+    with pytest.raises(RuntimeError, match="write failed"):
+        segment_pathway(
+            definition.harness_id,
+            definition.pathways[0].pathway_id,
+            GATE_2_ID,
+            "Main Pathway ext 1",
+            gateway,
+            id_factory=iter((EXTENSION_ID, JUNCTION_ID)).__next__,
+        )
+
+    assert gateway.serialized_definition == dumps(definition)
 
 
 def test_refine_insertion_updates_pathway_and_occupied_wire(

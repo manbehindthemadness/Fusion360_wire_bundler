@@ -37,10 +37,12 @@ from .application import (
     rename_pathway,
     rename_route_end,
     rename_wire,
+    segment_pathway,
     set_harness_material_defaults,
     set_wire_diameter,
     set_wire_material_overrides,
     suggest_harness_name,
+    suggest_pathway_extension_name,
     suggest_pathway_name,
     update_pathway_refine,
 )
@@ -106,6 +108,7 @@ CREATE_COMMAND_ID = "kev0_wire_bundler_create_harness"
 ADD_PATHWAY_COMMAND_ID = "kev0_wire_bundler_add_pathway"
 APPEND_GATES_COMMAND_ID = "kev0_wire_bundler_append_pathway_gates"
 ADD_REFINE_COMMAND_ID = "kev0_wire_bundler_add_pathway_refine"
+SEGMENT_PATHWAY_COMMAND_ID = "kev0_wire_bundler_segment_pathway"
 EDIT_REFINE_COMMAND_ID = "kev0_wire_bundler_edit_pathway_refine"
 EDIT_END_COMMAND_ID = "kev0_wire_bundler_edit_end_members"
 ADD_WIRES_COMMAND_ID = "kev0_wire_bundler_add_wires"
@@ -115,6 +118,7 @@ CREATE_COMMAND_NAME = "Create Harness"
 ADD_PATHWAY_COMMAND_NAME = "Add Pathway"
 APPEND_GATES_COMMAND_NAME = "Add Gates"
 ADD_REFINE_COMMAND_NAME = "Add Refine Point"
+SEGMENT_PATHWAY_COMMAND_NAME = "Segment Pathway"
 EDIT_REFINE_COMMAND_NAME = "Edit Refine Point"
 ADD_WIRES_COMMAND_NAME = "Add Wires"
 PALETTE_ID = "kev0_wire_bundler_harness_builder_palette"
@@ -129,6 +133,8 @@ PATHWAY_GATES_INPUT_ID = "pathway_gates"
 REFINE_SPINE_INPUT_ID = "refine_spine"
 REFINE_RADIUS_INPUT_ID = "refine_radius"
 REFINE_TRANSFORM_INPUT_ID = "refine_transform"
+SEGMENT_CONTROL_INPUT_ID = "segment_control"
+SEGMENT_PATHWAY_NAME_INPUT_ID = "segment_pathway_name"
 WIRE_PATHWAY_INPUT_ID = "wire_pathway"
 WIRE_DIAMETER_INPUT_ID = "wire_diameter"
 SOURCE_CONNECTIONS_INPUT_ID = "source_connections"
@@ -162,6 +168,7 @@ _handlers: list[object] = []
 _pending_pathway_harness_id: Optional[UUID] = None
 _pending_append_gate_ids: Optional[tuple[UUID, UUID]] = None
 _pending_refine_ids: Optional[tuple[UUID, UUID]] = None
+_pending_segment_ids: Optional[tuple[UUID, UUID]] = None
 _pending_refine_edit_ids: Optional[tuple[UUID, UUID]] = None
 _pending_end_edit: Optional[dict[str, object]] = None
 _pending_wire_harness_id: Optional[UUID] = None
@@ -814,6 +821,188 @@ class _AppendGatesValidateInputsHandler(adsk.core.ValidateInputsEventHandler):
             args.areInputsValid = False
             return
         args.areInputsValid = True
+
+
+@dataclass(frozen=True)
+class _SegmentCommandState:
+    """
+    Retain eligible resolved controls for one pathway-segmentation command.
+    """
+
+    harness_id: UUID
+    pathway_id: UUID
+    profile_controls: tuple[tuple[UUID, object], ...]
+    refine_control_ids: frozenset[UUID]
+
+
+class _SegmentPreSelectHandler(adsk.core.SelectionEventHandler):
+    """
+    Restrict segmentation selection to supported interior pathway controls.
+    """
+
+    def __init__(self, state: _SegmentCommandState) -> None:
+        """
+        Retain the resolved eligible controls.
+        """
+        super().__init__()
+        self._state = state
+
+    def notify(self, args: adsk.core.SelectionEventArgs) -> None:
+        """
+        Accept an eligible profile or persistent refine marker.
+        """
+        selection = args.selection
+        entity = selection.entity if selection is not None else None
+        args.isSelectable = _segment_entity_control_id(entity, self._state) is not None
+
+
+class _SegmentValidateInputsHandler(adsk.core.ValidateInputsEventHandler):
+    """
+    Require a new pathway name and exactly one eligible control.
+    """
+
+    def __init__(self, state: _SegmentCommandState) -> None:
+        """
+        Retain the eligible command controls.
+        """
+        super().__init__()
+        self._state = state
+
+    def notify(self, args: adsk.core.ValidateInputsEventArgs) -> None:
+        """
+        Enable execution only for a complete segmentation request.
+        """
+        try:
+            _read_segment_pathway_name(args.inputs)
+            _read_segment_control_id(args.inputs, self._state)
+        except (AttributeError, TypeError, ValueError):
+            args.areInputsValid = False
+            return
+        args.areInputsValid = True
+
+
+class _SegmentExecuteHandler(adsk.core.CommandEventHandler):
+    """
+    Persist one pathway split inside Fusion's command transaction.
+    """
+
+    def __init__(self, state: _SegmentCommandState) -> None:
+        """
+        Retain the selected harness and pathway identities.
+        """
+        super().__init__()
+        self._state = state
+
+    def notify(self, args: adsk.core.CommandEventArgs) -> None:
+        """
+        Segment the pathway and refresh logical and graphical projections.
+        """
+        application = adsk.core.Application.get()
+        try:
+            result = segment_pathway(
+                self._state.harness_id,
+                self._state.pathway_id,
+                _read_segment_control_id(args.command.commandInputs, self._state),
+                _read_segment_pathway_name(args.command.commandInputs),
+                _create_harness_gateway(application),
+            )
+            warning = _refresh_active_preview(application, self._state.harness_id)
+            _reconcile_active_refines(application)
+            application.activeViewport.refresh()
+            _send_palette_state(
+                application,
+                f"Created {result.following_pathway.name} and {result.junction.name}. "
+                f"{warning}".strip(),
+            )
+        except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+            args.executeFailed = True
+            args.executeFailedMessage = str(error)
+            _log_to_fusion(f"Segment pathway failed: {error}\n{traceback.format_exc()}")
+
+
+class _SegmentCreatedHandler(adsk.core.CommandCreatedEventHandler):
+    """
+    Build the native name-and-member pathway-segmentation command.
+    """
+
+    def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
+        """
+        Resolve eligible interior controls and attach command handlers.
+        """
+        global _pending_segment_ids
+        pending_ids = _pending_segment_ids
+        _pending_segment_ids = None
+        try:
+            if pending_ids is None:
+                raise RuntimeError("No pathway was selected for segmentation.")
+            harness_id, pathway_id = pending_ids
+            application = adsk.core.Application.get()
+            design = _require_active_design(application)
+            gateway = _create_harness_gateway(application)
+            definition = loads(gateway.read_harness_definition(harness_id))
+            pathway = next(
+                (item for item in definition.pathways if item.pathway_id == pathway_id),
+                None,
+            )
+            if pathway is None:
+                raise ValueError("Selected pathway no longer exists.")
+            controls = {control.control_id: control for control in definition.controls}
+            profile_controls: list[tuple[UUID, object]] = []
+            refine_control_ids: set[UUID] = set()
+            for control_id in pathway.ordered_control_ids[1:-1]:
+                control = controls.get(control_id)
+                if control is None:
+                    continue
+                if control.kind is ControlKind.REFINE:
+                    refine_control_ids.add(control_id)
+                elif control.kind is ControlKind.ROUTING_GATE:
+                    entities = design.findEntityByToken(control.entity_token)
+                    profile = adsk.fusion.Profile.cast(entities[0] if entities else None)
+                    if profile is not None:
+                        profile_controls.append((control_id, profile))
+            if not profile_controls and not refine_control_ids:
+                raise ValueError("This pathway has no supported interior control to segment.")
+
+            command_inputs = args.command.commandInputs
+            name_input = command_inputs.addStringValueInput(
+                SEGMENT_PATHWAY_NAME_INPUT_ID,
+                "New Pathway Name",
+                suggest_pathway_extension_name(harness_id, pathway_id, gateway),
+            )
+            if name_input is None:
+                raise RuntimeError("Fusion could not create the extension-name input.")
+            selection_input = command_inputs.addSelectionInput(
+                SEGMENT_CONTROL_INPUT_ID,
+                "Junction Control",
+                "Select an interior routing gate or refine point",
+            )
+            if selection_input is None:
+                raise RuntimeError("Fusion could not create the junction-control input.")
+            if not selection_input.addSelectionFilter("Profiles"):
+                raise RuntimeError("Fusion could not allow routing-gate selection.")
+            if not selection_input.addSelectionFilter("CustomGraphics"):
+                raise RuntimeError("Fusion could not allow refine-point selection.")
+            if not selection_input.setSelectionLimits(1, 1):
+                raise RuntimeError("Fusion could not limit junction-control selection.")
+            state = _SegmentCommandState(
+                harness_id,
+                pathway_id,
+                tuple(profile_controls),
+                frozenset(refine_control_ids),
+            )
+            preselect_handler = _SegmentPreSelectHandler(state)
+            validate_handler = _SegmentValidateInputsHandler(state)
+            execute_handler = _SegmentExecuteHandler(state)
+            if not args.command.preSelect.add(preselect_handler):
+                raise RuntimeError("Fusion could not filter pathway segmentation selection.")
+            if not args.command.validateInputs.add(validate_handler):
+                raise RuntimeError("Fusion could not validate pathway segmentation.")
+            if not args.command.execute.add(execute_handler):
+                raise RuntimeError("Fusion could not save pathway segmentation.")
+            _handlers.extend((preselect_handler, validate_handler, execute_handler))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            _report_failure("open Segment Pathway")
+            raise
 
 
 @dataclass
@@ -1619,6 +1808,10 @@ class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
                 _open_refine_command(application, html_args.data)
                 html_args.returnData = json.dumps({"ok": True})
                 return
+            if html_args.action == "segment_pathway":
+                _open_segment_command(application, html_args.data)
+                html_args.returnData = json.dumps({"ok": True})
+                return
             if html_args.action == "edit_pathway_refine":
                 payload = _read_palette_payload(html_args.data)
                 _open_refine_edit_command(
@@ -1823,6 +2016,19 @@ def start(_context: object) -> None:
             raise RuntimeError("Fusion did not register the Add Refine Point command handler.")
         _handlers.append(refine_handler)
 
+        segment_definition = user_interface.commandDefinitions.addButtonDefinition(
+            SEGMENT_PATHWAY_COMMAND_ID,
+            SEGMENT_PATHWAY_COMMAND_NAME,
+            "Split a pathway at an interior routing control.",
+            ADD_PATHWAY_RESOURCE_FOLDER,
+        )
+        if segment_definition is None:
+            raise RuntimeError("Fusion did not create the Segment Pathway command definition.")
+        segment_handler = _SegmentCreatedHandler()
+        if not segment_definition.commandCreated.add(segment_handler):
+            raise RuntimeError("Fusion did not register the Segment Pathway command handler.")
+        _handlers.append(segment_handler)
+
         edit_refine_definition = user_interface.commandDefinitions.addButtonDefinition(
             EDIT_REFINE_COMMAND_ID,
             EDIT_REFINE_COMMAND_NAME,
@@ -1888,6 +2094,7 @@ def stop(_context: object) -> None:
     Remove the command and release retained Fusion event handlers.
     """
     global _pending_append_gate_ids, _pending_refine_ids, _pending_pathway_harness_id
+    global _pending_segment_ids
     global _pending_refine_edit_ids
     global _pending_end_edit
     global _pending_wire_harness_id, _pending_wire_pathway_id, _pending_palette_edit
@@ -1906,6 +2113,7 @@ def stop(_context: object) -> None:
         _pending_palette_edit = None
         _pending_append_gate_ids = None
         _pending_refine_ids = None
+        _pending_segment_ids = None
         _pending_refine_edit_ids = None
         _pending_end_edit = None
         _pending_pathway_harness_id = None
@@ -1944,6 +2152,7 @@ def _remove_user_interface(user_interface: adsk.core.UserInterface) -> None:
         ADD_PATHWAY_COMMAND_ID,
         APPEND_GATES_COMMAND_ID,
         ADD_REFINE_COMMAND_ID,
+        SEGMENT_PATHWAY_COMMAND_ID,
         EDIT_REFINE_COMMAND_ID,
         EDIT_END_COMMAND_ID,
         ADD_WIRES_COMMAND_ID,
@@ -2031,6 +2240,73 @@ def _read_refine_placement(
         point.z * 10.0,
     )
     return place_refine(spine, selected_point, radius_input.value * 10.0)
+
+
+def _native_fusion_entity(entity: object) -> object:
+    """
+    Normalize an assembly-context proxy to its native Fusion entity.
+    """
+    native = getattr(entity, "nativeObject", None)
+    return native if native is not None else entity
+
+
+def _segment_entity_control_id(
+    entity: object,
+    state: _SegmentCommandState,
+) -> Optional[UUID]:
+    """
+    Resolve an eligible selected profile or refine marker to its control identity.
+    """
+    marker_id = getattr(entity, "id", None)
+    if isinstance(marker_id, str):
+        try:
+            marker_control_id = UUID(marker_id)
+        except ValueError:
+            marker_control_id = None
+        if marker_control_id in state.refine_control_ids:
+            return marker_control_id
+    profile = adsk.fusion.Profile.cast(entity)
+    if profile is None:
+        return None
+    selected_entity = _native_fusion_entity(profile)
+    for control_id, eligible_profile in state.profile_controls:
+        if selected_entity == _native_fusion_entity(eligible_profile):
+            return control_id
+    return None
+
+
+def _read_segment_control_id(
+    command_inputs: adsk.core.CommandInputs,
+    state: _SegmentCommandState,
+) -> UUID:
+    """
+    Return the single eligible pathway control selected for segmentation.
+    """
+    selection_input = adsk.core.SelectionCommandInput.cast(
+        command_inputs.itemById(SEGMENT_CONTROL_INPUT_ID)
+    )
+    if selection_input is None or selection_input.selectionCount != 1:
+        raise ValueError("Select one interior routing gate or refine point.")
+    selection = selection_input.selection(0)
+    control_id = _segment_entity_control_id(
+        selection.entity if selection is not None else None,
+        state,
+    )
+    if control_id is None:
+        raise ValueError("Selected geometry is not a supported interior pathway control.")
+    return control_id
+
+
+def _read_segment_pathway_name(command_inputs: adsk.core.CommandInputs) -> str:
+    """
+    Read the required friendly name for the new pathway half.
+    """
+    name_input = adsk.core.StringValueCommandInput.cast(
+        command_inputs.itemById(SEGMENT_PATHWAY_NAME_INPUT_ID)
+    )
+    if name_input is None or not name_input.value.strip():
+        raise ValueError("New pathway name must not be empty.")
+    return name_input.value.strip()
 
 
 def _refine_geometry_transform(geometry: RefineGeometry) -> adsk.core.Matrix3D:
@@ -2260,6 +2536,16 @@ def _serialize_palette_state(
                     }
                     for pathway in definition.pathways
                 ],
+                "junctions": [
+                    {
+                        "junctionId": str(junction.junction_id),
+                        "name": junction.name,
+                        "controlId": str(junction.control_id),
+                        "precedingPathwayId": str(junction.preceding_pathway_id),
+                        "followingPathwayId": str(junction.following_pathway_id),
+                    }
+                    for junction in definition.junctions
+                ],
                 "wires": [
                     {
                         "wireId": str(wire.wire_id),
@@ -2351,6 +2637,14 @@ def _relationship_map_payload(relationship_map: RelationshipMap) -> dict[str, ob
                 "missing": node.missing,
             }
             for node in relationship_map.nodes
+        ],
+        "structuralEdges": [
+            {
+                "edgeId": edge.edge_id,
+                "sourceNodeId": edge.source_node_id,
+                "targetNodeId": edge.target_node_id,
+            }
+            for edge in relationship_map.structural_edges
         ],
         "edges": [
             {
@@ -2675,6 +2969,28 @@ def _open_refine_command(application: adsk.core.Application, serialized_data: st
         raise
 
 
+def _open_segment_command(application: adsk.core.Application, serialized_data: str) -> None:
+    """
+    Open interactive segmentation for the palette-selected pathway.
+    """
+    global _pending_segment_ids
+    payload = _read_palette_payload(serialized_data)
+    harness_id = _read_payload_uuid(payload, "harnessId", "harness")
+    pathway_id = _read_payload_uuid(payload, "pathwayId", "pathway")
+    command_definition = application.userInterface.commandDefinitions.itemById(
+        SEGMENT_PATHWAY_COMMAND_ID
+    )
+    if command_definition is None:
+        raise RuntimeError("Fusion Segment Pathway command is unavailable.")
+    _pending_segment_ids = (harness_id, pathway_id)
+    try:
+        if not command_definition.execute():
+            raise RuntimeError("Fusion did not open the Segment Pathway command.")
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        _pending_segment_ids = None
+        raise
+
+
 def _open_refine_edit_command(
     application: adsk.core.Application,
     harness_id: UUID,
@@ -2890,7 +3206,22 @@ def _highlight_member(application: adsk.core.Application, serialized_data: str) 
     definition = loads(gateway.read_harness_definition(harness_id))
     wire_ids: tuple[UUID, ...] = ()
     refine_ids: tuple[UUID, ...] = ()
-    if member_type in {"pathway", "pathway_gates", "pathway_wires"}:
+    if member_type == "junction":
+        junction = next(
+            (item for item in definition.junctions if item.junction_id == member_id),
+            None,
+        )
+        if junction is None:
+            raise ValueError("Selected junction no longer exists.")
+        control = next(
+            (item for item in definition.controls if item.control_id == junction.control_id),
+            None,
+        )
+        if control is None:
+            raise ValueError("Selected junction has a missing routing control.")
+        refine_ids = (control.control_id,) if control.kind is ControlKind.REFINE else ()
+        tokens = (control.entity_token,) if control.entity_token else ()
+    elif member_type in {"pathway", "pathway_gates", "pathway_wires"}:
         pathway = next((item for item in definition.pathways if item.pathway_id == member_id), None)
         if pathway is None:
             raise ValueError("Selected pathway no longer exists.")

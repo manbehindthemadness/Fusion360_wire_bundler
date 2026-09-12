@@ -19,6 +19,7 @@ class RelationshipNodeKind(str, Enum):
 
     CONNECTION = "connection"
     PATHWAY = "pathway"
+    JUNCTION = "junction"
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,17 @@ class RelationshipEdge:
     source_node_id: str
     target_node_id: str
     sequence: int
+
+
+@dataclass(frozen=True)
+class RelationshipStructuralEdge:
+    """
+    Describe one persistent pathway-to-junction relationship.
+    """
+
+    edge_id: str
+    source_node_id: str
+    target_node_id: str
 
 
 @dataclass(frozen=True)
@@ -100,6 +112,7 @@ class RelationshipMap:
     """
 
     nodes: tuple[RelationshipNode, ...]
+    structural_edges: tuple[RelationshipStructuralEdge, ...]
     edges: tuple[RelationshipEdge, ...]
     routes: tuple[RelationshipRoute, ...]
     pathway_occupancy: tuple[RelationshipOccupancy, ...]
@@ -115,7 +128,7 @@ def build_relationship_map(definition: HarnessDefinition) -> RelationshipMap:
     routes: list[RelationshipRoute] = []
     edges: list[RelationshipEdge] = []
     for wire in definition.wires:
-        node_ids = _wire_node_ids(wire)
+        node_ids = _wire_node_ids(definition, wire)
         wire_edges = tuple(
             RelationshipEdge(
                 edge_id=f"wire:{wire.wire_id}:segment:{index}",
@@ -140,6 +153,7 @@ def build_relationship_map(definition: HarnessDefinition) -> RelationshipMap:
 
     relationship_map = RelationshipMap(
         nodes=nodes,
+        structural_edges=_structural_edges(definition),
         edges=tuple(edges),
         routes=tuple(routes),
         pathway_occupancy=tuple(
@@ -184,6 +198,15 @@ def audit_relationship_map(
             )
         )
 
+    expected_structural_edges = _structural_edges(definition)
+    if relationship_map.structural_edges != expected_structural_edges:
+        issues.append(
+            RelationshipAuditIssue(
+                "relationship_structure_mismatch",
+                "Master graphic junction structure does not match the harness definition.",
+            )
+        )
+
     if len(relationship_map.routes) != len(definition.wires):
         issues.append(
             RelationshipAuditIssue(
@@ -195,7 +218,7 @@ def audit_relationship_map(
         if index >= len(relationship_map.routes):
             break
         route = relationship_map.routes[index]
-        expected_node_ids = _wire_node_ids(wire)
+        expected_node_ids = _wire_node_ids(definition, wire)
         expected_edge_ids = tuple(
             f"wire:{wire.wire_id}:segment:{sequence}"
             for sequence in range(len(expected_node_ids) - 1)
@@ -223,7 +246,9 @@ def audit_relationship_map(
             sequence,
         )
         for wire in definition.wires
-        for sequence, (source, target) in enumerate(_adjacent_pairs(_wire_node_ids(wire)))
+        for sequence, (source, target) in enumerate(
+            _adjacent_pairs(_wire_node_ids(definition, wire))
+        )
     )
     actual_edges = tuple(
         (
@@ -311,6 +336,15 @@ def _relationship_nodes(definition: HarnessDefinition) -> tuple[RelationshipNode
             )
             for pathway in definition.pathways
         ),
+        *(
+            RelationshipNode(
+                _node_id(RelationshipNodeKind.JUNCTION, junction.junction_id),
+                RelationshipNodeKind.JUNCTION,
+                junction.junction_id,
+                junction.name,
+            )
+            for junction in definition.junctions
+        ),
     ]
     existing = {node.node_id for node in nodes}
     missing = [
@@ -370,17 +404,50 @@ def _node_id(kind: RelationshipNodeKind, member_id: UUID) -> str:
     return f"{kind.value}:{member_id}"
 
 
-def _wire_node_ids(wire: WireDefinition) -> tuple[str, ...]:
+def _wire_node_ids(
+    definition: HarnessDefinition,
+    wire: WireDefinition,
+) -> tuple[str, ...]:
     """
     Return the typed node sequence for a wire-like domain object.
     """
-    return (
-        _node_id(RelationshipNodeKind.CONNECTION, wire.start_connection_id),
-        *(
-            _node_id(RelationshipNodeKind.PATHWAY, pathway_id)
-            for pathway_id in wire.ordered_pathway_ids
-        ),
-        _node_id(RelationshipNodeKind.CONNECTION, wire.end_connection_id),
+    junctions = {
+        (junction.preceding_pathway_id, junction.following_pathway_id): junction
+        for junction in definition.junctions
+    }
+    nodes = [_node_id(RelationshipNodeKind.CONNECTION, wire.start_connection_id)]
+    for index, pathway_id in enumerate(wire.ordered_pathway_ids):
+        nodes.append(_node_id(RelationshipNodeKind.PATHWAY, pathway_id))
+        if index + 1 >= len(wire.ordered_pathway_ids):
+            continue
+        junction = junctions.get((pathway_id, wire.ordered_pathway_ids[index + 1]))
+        if junction is not None:
+            nodes.append(_node_id(RelationshipNodeKind.JUNCTION, junction.junction_id))
+    nodes.append(_node_id(RelationshipNodeKind.CONNECTION, wire.end_connection_id))
+    return tuple(nodes)
+
+
+def _structural_edges(
+    definition: HarnessDefinition,
+) -> tuple[RelationshipStructuralEdge, ...]:
+    """
+    Project junction relationships even when no wire occupies the pathway chain.
+    """
+    return tuple(
+        edge
+        for junction in definition.junctions
+        for edge in (
+            RelationshipStructuralEdge(
+                f"junction:{junction.junction_id}:preceding",
+                _node_id(RelationshipNodeKind.PATHWAY, junction.preceding_pathway_id),
+                _node_id(RelationshipNodeKind.JUNCTION, junction.junction_id),
+            ),
+            RelationshipStructuralEdge(
+                f"junction:{junction.junction_id}:following",
+                _node_id(RelationshipNodeKind.JUNCTION, junction.junction_id),
+                _node_id(RelationshipNodeKind.PATHWAY, junction.following_pathway_id),
+            ),
+        )
     )
 
 

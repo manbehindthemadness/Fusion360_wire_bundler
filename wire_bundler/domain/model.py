@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Optional
 from uuid import UUID, uuid5
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 class RoutingMode(str, Enum):
@@ -409,6 +409,19 @@ class PathwayDefinition:
 
 
 @dataclass(frozen=True)
+class JunctionDefinition:
+    """
+    Join two ordered pathway spans at one standalone routing control.
+    """
+
+    junction_id: UUID
+    name: str
+    control_id: UUID
+    preceding_pathway_id: UUID
+    following_pathway_id: UUID
+
+
+@dataclass(frozen=True)
 class WireDefinition:
     """
     Map one persistent conductor from a start to a destination.
@@ -444,6 +457,7 @@ class HarnessDefinition:
     controls: tuple[ControlStructure, ...]
     pathways: tuple[PathwayDefinition, ...]
     wires: tuple[WireDefinition, ...]
+    junctions: tuple[JunctionDefinition, ...] = ()
     gate_defaults: InterpolationSettings = InterpolationSettings()
     end_defaults: InterpolationSettings = InterpolationSettings()
     material_defaults: WireMaterialSettings = WireMaterialSettings()
@@ -453,3 +467,34 @@ class HarnessDefinition:
         Resolve one wire's effective material settings from parent defaults.
         """
         return wire.material_overrides.resolve(self.material_defaults)
+
+
+def route_control_ids(
+    definition: HarnessDefinition,
+    pathway_ids: tuple[UUID, ...],
+) -> tuple[UUID, ...]:
+    """
+    Expand ordered pathways and their intervening junctions into routing controls.
+
+    Raises:
+        ValueError: If a pathway is missing or an adjacency has multiple junctions.
+    """
+    pathways = {pathway.pathway_id: pathway for pathway in definition.pathways}
+    junctions: dict[tuple[UUID, UUID], UUID] = {}
+    for junction in definition.junctions:
+        key = (junction.preceding_pathway_id, junction.following_pathway_id)
+        if key in junctions:
+            raise ValueError("A pathway adjacency has more than one junction.")
+        junctions[key] = junction.control_id
+
+    controls: list[UUID] = []
+    for index, pathway_id in enumerate(pathway_ids):
+        pathway = pathways.get(pathway_id)
+        if pathway is None:
+            raise ValueError("A wire references a missing pathway.")
+        controls.extend(pathway.ordered_control_ids)
+        if index + 1 < len(pathway_ids):
+            junction_control_id = junctions.get((pathway_id, pathway_ids[index + 1]))
+            if junction_control_id is not None:
+                controls.append(junction_control_id)
+    return tuple(controls)

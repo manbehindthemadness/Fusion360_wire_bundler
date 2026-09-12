@@ -382,6 +382,21 @@ async function addPathwayRefine(harness, pathway) {
   }
 }
 
+async function segmentPathway(harness, pathway) {
+  appendNotice(`Select an interior control on ${pathway.name}…`);
+  try {
+    const response = await send("segment_pathway", {
+      harnessId: harness.harnessId,
+      pathwayId: pathway.pathwayId,
+    });
+    if (!response.ok) {
+      appendNotice(response.error || "Segment Pathway could not be opened.", true);
+    }
+  } catch (error) {
+    appendNotice(error.message, true);
+  }
+}
+
 async function editPathwayRefine(harness, control) {
   appendNotice(`Editing ${control.name || "refine point"}…`);
   try {

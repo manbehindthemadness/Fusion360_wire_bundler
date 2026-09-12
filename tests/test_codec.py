@@ -139,6 +139,19 @@ def test_reads_version_three_with_default_materials(valid_harness: HarnessDefini
     assert migrated.wires[0].material_overrides == WireMaterialOverrides()
 
 
+def test_reads_version_five_without_junctions(valid_harness: HarnessDefinition) -> None:
+    """
+    Migrate saved linear routes to schema six without inventing junctions.
+    """
+    payload = json.loads(dumps(valid_harness))
+    payload["schema_version"] = 5
+    payload.pop("junctions")
+
+    migrated = loads(json.dumps(payload))
+
+    assert migrated.junctions == ()
+
+
 def test_rejects_stripe_without_required_repeat(valid_harness: HarnessDefinition) -> None:
     """
     Reject a dashed stripe that cannot define a procedural repetition.

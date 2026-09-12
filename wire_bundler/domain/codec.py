@@ -18,6 +18,7 @@ from .model import (
     ControlStructure,
     HarnessDefinition,
     InterpolationSettings,
+    JunctionDefinition,
     PathwayDefinition,
     RefineGeometry,
     RoutingMode,
@@ -100,6 +101,14 @@ def loads(serialized: str) -> HarnessDefinition:
         if schema_version >= 2
         else ()
     )
+    junctions = (
+        tuple(
+            _parse_junction(item, f"$.junctions[{index}]")
+            for index, item in enumerate(_require_list(payload, "junctions", "$.junctions"))
+        )
+        if schema_version >= 6
+        else ()
+    )
     wires = tuple(
         _parse_wire(item, f"$.wires[{index}]", schema_version, pathways)
         for index, item in enumerate(_require_list(payload, "wires", "$.wires"))
@@ -114,6 +123,7 @@ def loads(serialized: str) -> HarnessDefinition:
         controls=controls,
         pathways=pathways,
         wires=wires,
+        junctions=junctions,
         gate_defaults=parse_interpolation(payload.get("gate_defaults", {}), "$.gate_defaults"),
         end_defaults=parse_interpolation(payload.get("end_defaults", {}), "$.end_defaults"),
         material_defaults=(
@@ -196,6 +206,16 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
                 ],
             }
             for pathway in definition.pathways
+        ],
+        "junctions": [
+            {
+                "junction_id": str(junction.junction_id),
+                "name": junction.name,
+                "control_id": str(junction.control_id),
+                "preceding_pathway_id": str(junction.preceding_pathway_id),
+                "following_pathway_id": str(junction.following_pathway_id),
+            }
+            for junction in definition.junctions
         ],
         "wires": [
             {
@@ -571,6 +591,24 @@ def _parse_pathway(raw_value: object, path: str) -> PathwayDefinition:
         ordered_control_ids=control_ids,
     )
     return pathway
+
+
+def _parse_junction(raw_value: object, path: str) -> JunctionDefinition:
+    """
+    Parse one standalone pathway junction.
+    """
+    value = _require_mapping(raw_value, path)
+    return JunctionDefinition(
+        junction_id=_require_uuid(value, "junction_id", f"{path}.junction_id"),
+        name=_require_str(value, "name", f"{path}.name"),
+        control_id=_require_uuid(value, "control_id", f"{path}.control_id"),
+        preceding_pathway_id=_require_uuid(
+            value, "preceding_pathway_id", f"{path}.preceding_pathway_id"
+        ),
+        following_pathway_id=_require_uuid(
+            value, "following_pathway_id", f"{path}.following_pathway_id"
+        ),
+    )
 
 
 def _parse_wire(

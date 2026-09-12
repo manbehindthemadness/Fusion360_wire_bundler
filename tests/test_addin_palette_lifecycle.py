@@ -284,6 +284,46 @@ def test_refine_selection_accepts_only_command_spine(
     assert not profile.isSelectable
 
 
+def test_segment_selection_normalizes_profiles_and_accepts_refine_marker(
+    addin_module: _PaletteLifecycleModule,
+) -> None:
+    """
+    Match eligible native geometry without relying on unstable entity-token strings.
+    """
+    fusion_module = sys.modules["adsk.fusion"]
+    native_profile = object()
+    eligible_profile = SimpleNamespace(nativeObject=native_profile, is_profile=True)
+    selected_proxy = SimpleNamespace(nativeObject=native_profile, is_profile=True)
+    unrelated = SimpleNamespace(nativeObject=object(), is_profile=True)
+    fusion_module.Profile = SimpleNamespace(  # type: ignore[attr-defined]
+        cast=lambda entity: entity if getattr(entity, "is_profile", False) else None
+    )
+    refine_id = UUID(int=22)
+    state = addin_module._SegmentCommandState(
+        UUID(int=1),
+        UUID(int=2),
+        ((UUID(int=21), eligible_profile),),
+        frozenset((refine_id,)),
+    )
+    handler = addin_module._SegmentPreSelectHandler(state)
+    profile_args = SimpleNamespace(
+        selection=SimpleNamespace(entity=selected_proxy), isSelectable=False
+    )
+    refine_args = SimpleNamespace(
+        selection=SimpleNamespace(entity=SimpleNamespace(id=str(refine_id))),
+        isSelectable=False,
+    )
+    unrelated_args = SimpleNamespace(selection=SimpleNamespace(entity=unrelated), isSelectable=True)
+
+    handler.notify(profile_args)
+    handler.notify(refine_args)
+    handler.notify(unrelated_args)
+
+    assert profile_args.isSelectable
+    assert refine_args.isSelectable
+    assert not unrelated_args.isSelectable
+
+
 def test_refine_selection_uses_click_point_and_centimeter_radius(
     addin_module: _PaletteLifecycleModule,
 ) -> None:

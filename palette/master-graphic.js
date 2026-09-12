@@ -1,12 +1,12 @@
 const RELATIONSHIP_DIAGRAM_CONTRACT_VERSION = "1";
 const RELATIONSHIP_DIAGRAM_LAYOUT = "measured-pathway-stack";
 
-function relationshipEndGroups(harness, pathway, endpoint, connections) {
+function relationshipEndGroups(harness, pathwayIds, endpoint, connections) {
   const connectionField = endpoint === "start" ? "startConnectionId" : "endConnectionId";
   const endpointNameField = endpoint === "start" ? "startEndName" : "endEndName";
   const groups = new Map();
   harness.wires
-    .filter((wire) => wire.orderedPathwayIds.includes(pathway.pathwayId))
+    .filter((wire) => wire.orderedPathwayIds.some((pathwayId) => pathwayIds.includes(pathwayId)))
     .forEach((wire) => {
       const connectionId = wire[connectionField] || "";
       const groupKey = connectionId || `missing:${wire.wireId}`;
@@ -37,6 +37,38 @@ function relationshipEndGroups(harness, pathway, endpoint, connections) {
         .toLocaleLowerCase(),
     };
   });
+}
+
+function relationshipPathwayChains(harness) {
+  const pathways = new Map(harness.pathways.map((pathway) => [pathway.pathwayId, pathway]));
+  const outgoing = new Map();
+  const incoming = new Set();
+  (harness.junctions || []).forEach((junction) => {
+    if (!outgoing.has(junction.precedingPathwayId)) {
+      outgoing.set(junction.precedingPathwayId, junction);
+    }
+    incoming.add(junction.followingPathwayId);
+  });
+  const visited = new Set();
+  const walk = (root) => {
+    const nodes = [];
+    let pathway = root;
+    while (pathway && !visited.has(pathway.pathwayId)) {
+      visited.add(pathway.pathwayId);
+      nodes.push({ kind: "pathway", item: pathway });
+      const junction = outgoing.get(pathway.pathwayId);
+      if (!junction || !pathways.has(junction.followingPathwayId)) break;
+      nodes.push({ kind: "junction", item: junction });
+      pathway = pathways.get(junction.followingPathwayId);
+    }
+    return nodes;
+  };
+  const roots = harness.pathways.filter((pathway) => !incoming.has(pathway.pathwayId));
+  const chains = roots.map(walk).filter((nodes) => nodes.length);
+  harness.pathways.forEach((pathway) => {
+    if (!visited.has(pathway.pathwayId)) chains.push(walk(pathway));
+  });
+  return chains;
 }
 
 function renderRelationshipConnector(groups, fromEndList, expanded, showPlaceholder = false) {
@@ -184,27 +216,16 @@ function layoutRelationshipGraph(stack, pathwayGroups) {
 
 function addRelationshipMapContextMenu(workspace) {
   const menu = document.createElement("div");
-  const add = document.createElement("button");
-  let activate = () => {};
   menu.className = "relationship-map-context-menu";
   menu.hidden = true;
   menu.setAttribute("role", "menu");
-  add.type = "button";
-  add.setAttribute("role", "menuitem");
-  add.addEventListener("click", () => {
-    menu.hidden = true;
-    void activate();
-  });
-  add.addEventListener("blur", () => {
-    menu.hidden = true;
-  });
   menu.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       menu.hidden = true;
       workspace.viewport.focus();
     }
   });
-  const show = (event, label, action) => {
+  const show = (event, items) => {
     event.preventDefault();
     const bounds = workspace.root.getBoundingClientRect();
     const left = Math.min(
@@ -213,19 +234,31 @@ function addRelationshipMapContextMenu(workspace) {
     );
     const top = Math.min(
       Math.max(4, event.clientY - bounds.top),
-      Math.max(4, workspace.root.clientHeight - 44),
+      Math.max(4, workspace.root.clientHeight - 44 * items.length),
     );
     menu.style.left = `${left}px`;
     menu.style.top = `${top}px`;
-    add.textContent = label;
-    activate = action;
+    menu.replaceChildren();
+    items.forEach(({ label, action, disabled = false, title = "" }) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.setAttribute("role", "menuitem");
+      button.textContent = label;
+      button.disabled = disabled;
+      button.title = title;
+      button.addEventListener("click", () => {
+        menu.hidden = true;
+        void action();
+      });
+      menu.append(button);
+    });
     menu.hidden = false;
-    add.focus();
+    const firstEnabled = Array.from(menu.children).find((button) => !button.disabled);
+    if (firstEnabled) firstEnabled.focus();
   };
   workspace.viewport.addEventListener("contextmenu", (event) => {
-    show(event, "Add pathway", addPathway);
+    show(event, [{ label: "Add pathway", action: addPathway }]);
   });
-  menu.append(add);
   workspace.root.append(menu);
   return show;
 }
@@ -276,10 +309,17 @@ function renderRelationshipMap(harness, auditIssues) {
     stack.className = "relationship-pathway-stack";
     stack.dataset.diagramContractVersion = RELATIONSHIP_DIAGRAM_CONTRACT_VERSION;
     stack.dataset.diagramLayout = RELATIONSHIP_DIAGRAM_LAYOUT;
-    harness.pathways.forEach((pathway) => {
-      const startGroups = relationshipEndGroups(harness, pathway, "start", connections);
-      const endGroups = relationshipEndGroups(harness, pathway, "end", connections);
-      const pathwayMatches = `${pathway.name} ${pathway.startName || ""} ${pathway.endName || ""}`
+    relationshipPathwayChains(harness).forEach((chain, chainIndex) => {
+      const pathwayNodes = chain.filter((node) => node.kind === "pathway");
+      const pathway = pathwayNodes[0].item;
+      const pathwayIds = pathwayNodes.map((node) => node.item.pathwayId);
+      const startGroups = relationshipEndGroups(harness, pathwayIds, "start", connections);
+      const endGroups = relationshipEndGroups(harness, pathwayIds, "end", connections);
+      const pathwayMatches = chain.map((node) => (
+        node.kind === "pathway"
+          ? `${node.item.name} ${node.item.startName || ""} ${node.item.endName || ""}`
+          : node.item.name
+      )).join(" ")
         .toLocaleLowerCase().includes(query);
       const visibleStart = !query || pathwayMatches
         ? startGroups : startGroups.filter((group) => group.searchable.includes(query));
@@ -287,9 +327,7 @@ function renderRelationshipMap(harness, auditIssues) {
         ? endGroups : endGroups.filter((group) => group.searchable.includes(query));
       if (query && !pathwayMatches && !visibleStart.length && !visibleEnd.length) return;
       const pathwayGroup = document.createElement("div");
-      const hub = document.createElement("button");
-      const hubName = document.createElement("strong");
-      const hubDirection = document.createElement("small");
+      const hubChain = document.createElement("div");
       const startList = renderRelationshipEndList(
         harness, pathway, "start", startGroups, visibleStart, query, collapseLimit,
       );
@@ -304,27 +342,58 @@ function renderRelationshipMap(harness, auditIssues) {
       );
       pathwayGroup.className = "relationship-pathway-group";
       pathwayGroup.dataset.pathwayId = pathway.pathwayId;
-      pathwayGroup.style.gridTemplateColumns = "minmax(210px, 1fr) 54px 170px 54px minmax(210px, 1fr)";
-      pathwayGroups.set(pathway.pathwayId, pathwayGroup);
-      hub.type = "button";
-      hub.className = "relationship-pathway-hub";
-      hub.title = "Open pathway configuration";
-      hubName.textContent = pathway.name || "Unnamed pathway";
-      hubDirection.textContent = pathwayDirection(pathway);
-      hub.append(hubName, hubDirection);
-      hoverHighlight(hub, () => highlightMember(harness, "pathway_gates", pathway.pathwayId));
-      hub.addEventListener("click", () => openPathwayPopup(harness, pathway.pathwayId));
-      hub.addEventListener("contextmenu", (event) => {
-        event.stopPropagation();
-        showContextMenu(
-          event,
-          "Add refine point",
-          () => addPathwayRefine(harness, pathway),
-        );
+      const chainWidth = Math.max(170, chain.length * 154 + Math.max(0, chain.length - 1) * 22);
+      pathwayGroup.style.gridTemplateColumns = `minmax(210px, 1fr) 54px ${chainWidth}px 54px minmax(210px, 1fr)`;
+      pathwayGroups.set(`chain-${chainIndex}`, pathwayGroup);
+      hubChain.className = "relationship-pathway-chain";
+      chain.forEach((node, nodeIndex) => {
+        if (nodeIndex) {
+          const link = document.createElement("span");
+          link.className = "relationship-chain-link";
+          link.setAttribute("aria-hidden", "true");
+          hubChain.append(link);
+        }
+        const hub = document.createElement("button");
+        const hubName = document.createElement("strong");
+        const hubDirection = document.createElement("small");
+        hub.type = "button";
+        hubName.textContent = node.item.name || `Unnamed ${node.kind}`;
+        if (node.kind === "junction") {
+          hub.className = "relationship-junction-hub";
+          hub.title = "Junction routing control";
+          hubDirection.textContent = "Junction";
+          hoverHighlight(hub, () => highlightMember(harness, "junction", node.item.junctionId));
+        } else {
+          const candidate = node.item;
+          const controls = new Map(harness.controls.map((control) => [control.controlId, control]));
+          const canSegment = candidate.orderedControlIds.slice(1, -1).some((controlId) => {
+            const control = controls.get(controlId);
+            return control && ["routing_gate", "refine"].includes(control.kind);
+          });
+          hub.className = "relationship-pathway-hub";
+          hub.title = "Open pathway configuration";
+          hubDirection.textContent = pathwayDirection(candidate);
+          hoverHighlight(hub, () => highlightMember(harness, "pathway_gates", candidate.pathwayId));
+          hub.addEventListener("click", () => openPathwayPopup(harness, candidate.pathwayId));
+          hub.addEventListener("contextmenu", (event) => {
+            event.stopPropagation();
+            showContextMenu(event, [
+              { label: "Add refine point", action: () => addPathwayRefine(harness, candidate) },
+              {
+                label: "Segment",
+                action: () => segmentPathway(harness, candidate),
+                disabled: !canSegment,
+                title: canSegment ? "" : "Requires an interior routing gate or refine point",
+              },
+            ]);
+          });
+        }
+        hub.append(hubName, hubDirection);
+        hubChain.append(hub);
       });
       startList.redrawConnector = startConnector.redraw;
       endList.redrawConnector = endConnector.redraw;
-      pathwayGroup.append(startList, startConnector, hub, endConnector, endList);
+      pathwayGroup.append(startList, startConnector, hubChain, endConnector, endList);
       stack.append(pathwayGroup);
       visiblePathways += 1;
     });
