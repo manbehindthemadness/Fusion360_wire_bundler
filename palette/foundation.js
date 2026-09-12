@@ -440,7 +440,7 @@ function renderPathways(harness, selectedPathwayId = null) {
     );
     occupancyContent.append(occupancy, addWiresButton);
     pathwayContent.append(
-      nameField("Pathway Name", pathway.name, "rename_pathway", {
+      nameField("", pathway.name, "rename_pathway", {
         ...namePayload, field: "name",
       }),
       nestedSection(
