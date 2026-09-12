@@ -16,7 +16,9 @@ from ..domain import (
     ControlStructure,
     HarnessDefinition,
     JunctionDefinition,
+    JunctionPathwayRelationship,
     PathwayDefinition,
+    PathwayEndpoint,
     RefineGeometry,
     RoutingMode,
     WireDefinition,
@@ -26,6 +28,7 @@ from ..domain import (
     loads,
     next_available_name,
     route_control_ids,
+    validate_harness,
 )
 from ..domain.model import InterpolationSettings
 
@@ -63,6 +66,205 @@ class PathwaySegmentResult:
     junction: JunctionDefinition
 
 
+def add_junction(
+    harness_id: UUID,
+    entity_token: str,
+    gateway: HarnessEditGateway,
+    id_factory: Callable[[], UUID] = uuid4,
+) -> JunctionDefinition:
+    """
+    Persist one unconnected routing-gate junction from unused Fusion geometry.
+    """
+    normalized_token = entity_token.strip()
+    if not normalized_token:
+        raise ValueError("A junction must reference Fusion geometry.")
+    original, definition = _read_definition(harness_id, gateway)
+    registered_tokens = {
+        token.strip() for connection in definition.connections for token in connection.member_tokens
+    } | {control.entity_token.strip() for control in definition.controls if control.entity_token}
+    if normalized_token in registered_tokens:
+        raise ValueError("Selected geometry is already registered in this harness.")
+
+    control_id = id_factory()
+    junction_id = id_factory()
+    existing_ids = {
+        definition.harness_id,
+        *(profile.profile_id for profile in definition.profiles),
+        *(connection.connection_id for connection in definition.connections),
+        *(
+            member_id
+            for connection in definition.connections
+            for member_id in connection.member_identities
+        ),
+        *(control.control_id for control in definition.controls),
+        *(pathway.pathway_id for pathway in definition.pathways),
+        *(junction.junction_id for junction in definition.junctions),
+        *(wire.wire_id for wire in definition.wires),
+    }
+    if control_id in existing_ids or junction_id in existing_ids | {control_id}:
+        raise ValueError("Generated control or junction identity is already in use.")
+    control = ControlStructure(
+        control_id=control_id,
+        name=next_available_name(
+            "Routing Gate 01", (candidate.name for candidate in definition.controls)
+        ),
+        kind=ControlKind.ROUTING_GATE,
+        entity_token=normalized_token,
+        interpolation=definition.gate_defaults,
+    )
+    junction = JunctionDefinition(
+        junction_id=junction_id,
+        name=next_available_name(
+            "Junction 01", (candidate.name for candidate in definition.junctions)
+        ),
+        control_id=control.control_id,
+    )
+    updated = replace(
+        definition,
+        controls=(*definition.controls, control),
+        junctions=(*definition.junctions, junction),
+    )
+    _persist(harness_id, original, updated, gateway)
+    return junction
+
+
+def update_junction_relationships(
+    harness_id: UUID,
+    junction_id: UUID,
+    pathway_relationships: tuple[JunctionPathwayRelationship, ...],
+    gateway: HarnessEditGateway,
+) -> JunctionDefinition:
+    """
+    Replace one junction's endpoint relationships and preserve wire control order.
+    """
+    if any(
+        not isinstance(relationship, JunctionPathwayRelationship)
+        for relationship in pathway_relationships
+    ):
+        raise ValueError("Every junction relationship must identify a pathway endpoint.")
+    original, definition = _read_definition(harness_id, gateway)
+    updated_junction, updated = _replace_junction_relationships(
+        definition,
+        junction_id,
+        pathway_relationships,
+    )
+    _persist(harness_id, original, updated, gateway)
+    return updated_junction
+
+
+def add_junction_relationship(
+    harness_id: UUID,
+    junction_id: UUID,
+    pathway_relationship: JunctionPathwayRelationship,
+    gateway: HarnessEditGateway,
+) -> JunctionDefinition:
+    """
+    Attach one available pathway endpoint to a junction atomically.
+    """
+    if not isinstance(pathway_relationship, JunctionPathwayRelationship):
+        raise ValueError("A junction relationship must identify a pathway endpoint.")
+    original, definition = _read_definition(harness_id, gateway)
+    junction = next(
+        (candidate for candidate in definition.junctions if candidate.junction_id == junction_id),
+        None,
+    )
+    if junction is None:
+        raise ValueError("Selected junction does not exist in this harness.")
+    if pathway_relationship in junction.pathway_relationships:
+        raise ValueError("Selected pathway endpoint is already related to this junction.")
+    updated_junction, updated = _replace_junction_relationships(
+        definition,
+        junction_id,
+        (*junction.pathway_relationships, pathway_relationship),
+    )
+    _persist(harness_id, original, updated, gateway)
+    return updated_junction
+
+
+def remove_junction_relationship(
+    harness_id: UUID,
+    junction_id: UUID,
+    pathway_relationship: JunctionPathwayRelationship,
+    gateway: HarnessEditGateway,
+) -> JunctionDefinition:
+    """
+    Detach one exact pathway endpoint from a junction atomically.
+    """
+    if not isinstance(pathway_relationship, JunctionPathwayRelationship):
+        raise ValueError("A junction relationship must identify a pathway endpoint.")
+    original, definition = _read_definition(harness_id, gateway)
+    junction = next(
+        (candidate for candidate in definition.junctions if candidate.junction_id == junction_id),
+        None,
+    )
+    if junction is None:
+        raise ValueError("Selected junction does not exist in this harness.")
+    if pathway_relationship not in junction.pathway_relationships:
+        raise ValueError("Selected junction relationship no longer exists.")
+    updated_junction, updated = _replace_junction_relationships(
+        definition,
+        junction_id,
+        tuple(
+            relationship
+            for relationship in junction.pathway_relationships
+            if relationship != pathway_relationship
+        ),
+    )
+    _persist(harness_id, original, updated, gateway)
+    return updated_junction
+
+
+def _replace_junction_relationships(
+    definition: HarnessDefinition,
+    junction_id: UUID,
+    pathway_relationships: tuple[JunctionPathwayRelationship, ...],
+) -> tuple[JunctionDefinition, HarnessDefinition]:
+    """
+    Build and validate one deterministic junction-relationship replacement.
+
+    This deliberately validates junction topology rather than whole-harness
+    generation readiness, so a wire-free draft remains editable.
+    """
+    junction = next(
+        (candidate for candidate in definition.junctions if candidate.junction_id == junction_id),
+        None,
+    )
+    if junction is None:
+        raise ValueError("Selected junction does not exist in this harness.")
+    pathway_order = {pathway.pathway_id: index for index, pathway in enumerate(definition.pathways)}
+    if any(relationship.pathway_id not in pathway_order for relationship in pathway_relationships):
+        raise ValueError("A selected junction pathway no longer exists.")
+    relationship_keys = {
+        (relationship.pathway_id, relationship.endpoint) for relationship in pathway_relationships
+    }
+    if len(relationship_keys) != len(pathway_relationships):
+        raise ValueError("A pathway endpoint may be selected only once per junction.")
+    ordered_relationships = tuple(
+        sorted(
+            pathway_relationships,
+            key=lambda relationship: (
+                pathway_order[relationship.pathway_id],
+                0 if relationship.endpoint is PathwayEndpoint.START else 1,
+            ),
+        )
+    )
+    updated_junction = replace(junction, pathway_relationships=ordered_relationships)
+    updated = replace(
+        definition,
+        junctions=tuple(
+            updated_junction if candidate.junction_id == junction_id else candidate
+            for candidate in definition.junctions
+        ),
+    )
+    updated = _synchronize_wire_controls(updated)
+    issues = tuple(
+        issue for issue in validate_harness(updated) if issue.path.startswith("junctions[")
+    )
+    if issues:
+        raise ValueError(issues[0].message)
+    return updated_junction, updated
+
+
 def suggest_pathway_extension_name(
     harness_id: UUID,
     pathway_id: UUID,
@@ -73,18 +275,23 @@ def suggest_pathway_extension_name(
     """
     _original, definition = _read_definition(harness_id, gateway)
     pathway = _require_pathway(definition, pathway_id)
-    predecessors: dict[UUID, UUID] = {}
+    predecessors: dict[UUID, set[UUID]] = {}
     for junction in definition.junctions:
-        if junction.following_pathway_id in predecessors:
-            raise ValueError("The pathway has an ambiguous junction predecessor.")
-        predecessors[junction.following_pathway_id] = junction.preceding_pathway_id
+        preceding_ids = {
+            relationship.pathway_id
+            for relationship in junction.pathway_relationships
+            if relationship.endpoint is PathwayEndpoint.END
+        }
+        for relationship in junction.pathway_relationships:
+            if relationship.endpoint is PathwayEndpoint.START:
+                predecessors.setdefault(relationship.pathway_id, set()).update(preceding_ids)
     root_id = pathway.pathway_id
     visited: set[UUID] = set()
-    while root_id in predecessors:
+    while len(predecessors.get(root_id, ())) == 1:
         if root_id in visited:
             raise ValueError("The pathway junction chain contains a cycle.")
         visited.add(root_id)
-        root_id = predecessors[root_id]
+        root_id = next(iter(predecessors[root_id]))
     root = _require_pathway(definition, root_id)
     return next_available_name(
         f"{root.name} ext 1",
@@ -158,8 +365,10 @@ def segment_pathway(
             "Junction 01", (candidate.name for candidate in definition.junctions)
         ),
         control_id=control_id,
-        preceding_pathway_id=pathway.pathway_id,
-        following_pathway_id=following_pathway.pathway_id,
+        pathway_relationships=(
+            JunctionPathwayRelationship(pathway.pathway_id, PathwayEndpoint.END),
+            JunctionPathwayRelationship(following_pathway.pathway_id, PathwayEndpoint.START),
+        ),
     )
 
     pathways: list[PathwayDefinition] = []
@@ -168,9 +377,16 @@ def segment_pathway(
         if candidate.pathway_id == pathway_id:
             pathways.append(following_pathway)
     prior_junctions = tuple(
-        replace(candidate, preceding_pathway_id=following_pathway.pathway_id)
-        if candidate.preceding_pathway_id == pathway_id
-        else candidate
+        replace(
+            candidate,
+            pathway_relationships=tuple(
+                JunctionPathwayRelationship(following_pathway.pathway_id, relationship.endpoint)
+                if relationship.pathway_id == pathway_id
+                and relationship.endpoint is PathwayEndpoint.END
+                else relationship
+                for relationship in candidate.pathway_relationships
+            ),
+        )
         for candidate in definition.junctions
     )
     wires = tuple(
@@ -218,6 +434,11 @@ def add_pathway_refine(
     pathway = _require_pathway(definition, pathway_id)
     if not 0 <= insertion_index <= len(pathway.ordered_control_ids):
         raise ValueError("Refine insertion position is outside the pathway.")
+    insertion_index = _clamp_pathway_insertion_index(
+        definition,
+        pathway,
+        insertion_index,
+    )
     control = ControlStructure(
         control_id=id_factory(),
         name=next_available_name("Refine Point 01", (item.name for item in definition.controls)),
@@ -299,13 +520,16 @@ def append_pathway_gates(
         name = next_available_name(f"{label} 01", (*existing_names, *(c.name for c in controls)))
         controls.append(ControlStructure(id_factory(), name, kind, token, definition.gate_defaults))
 
-    updated_pathway = replace(
+    insertion_index = _clamp_pathway_insertion_index(
+        definition,
         pathway,
-        ordered_control_ids=(
-            *pathway.ordered_control_ids,
-            *(control.control_id for control in controls),
-        ),
+        len(pathway.ordered_control_ids),
     )
+    ordered_control_ids = list(pathway.ordered_control_ids)
+    ordered_control_ids[insertion_index:insertion_index] = [
+        control.control_id for control in controls
+    ]
+    updated_pathway = replace(pathway, ordered_control_ids=tuple(ordered_control_ids))
     updated = replace(
         definition,
         controls=(*definition.controls, *controls),
@@ -338,6 +562,9 @@ def move_pathway_gate(
     target_index = current_index + offset
     if target_index < 0 or target_index >= len(ordered_ids):
         raise ValueError("Selected gate is already at that end of the pathway.")
+    locked_indexes = _locked_pathway_control_indexes(definition, pathway)
+    if current_index in locked_indexes or target_index in locked_indexes:
+        raise ValueError("A junction-related pathway endpoint cannot be reordered.")
     ordered_ids.insert(target_index, ordered_ids.pop(current_index))
     updated_pathway = replace(pathway, ordered_control_ids=tuple(ordered_ids))
     updated = replace(definition, pathways=_replace_pathway(definition, updated_pathway))
@@ -361,6 +588,9 @@ def remove_pathway_gate(
         raise ValueError("Selected gate does not belong to this pathway.")
     if len(pathway.ordered_control_ids) == 1:
         raise ValueError("A pathway must retain at least one gate.")
+    control_index = pathway.ordered_control_ids.index(control_id)
+    if control_index in _locked_pathway_control_indexes(definition, pathway):
+        raise ValueError("A junction-related pathway endpoint cannot be removed.")
     updated_pathway = replace(
         pathway,
         ordered_control_ids=tuple(
@@ -789,6 +1019,61 @@ def _replace_pathway(
         updated_pathway if item.pathway_id == updated_pathway.pathway_id else item
         for item in definition.pathways
     )
+
+
+def _related_pathway_endpoints(
+    definition: HarnessDefinition,
+    pathway_id: UUID,
+) -> set[PathwayEndpoint]:
+    """
+    Return endpoint boundaries claimed by any junction for one pathway.
+    """
+    return {
+        relationship.endpoint
+        for junction in definition.junctions
+        for relationship in junction.pathway_relationships
+        if relationship.pathway_id == pathway_id
+    }
+
+
+def _locked_pathway_control_indexes(
+    definition: HarnessDefinition,
+    pathway: PathwayDefinition,
+) -> set[int]:
+    """
+    Return control positions that define junction-related pathway boundaries.
+    """
+    if not pathway.ordered_control_ids:
+        return set()
+    endpoints = _related_pathway_endpoints(definition, pathway.pathway_id)
+    locked: set[int] = set()
+    if PathwayEndpoint.START in endpoints:
+        locked.add(0)
+    if PathwayEndpoint.END in endpoints:
+        locked.add(len(pathway.ordered_control_ids) - 1)
+    return locked
+
+
+def _clamp_pathway_insertion_index(
+    definition: HarnessDefinition,
+    pathway: PathwayDefinition,
+    requested_index: int,
+) -> int:
+    """
+    Clamp new controls inside endpoint boundaries reserved by junctions.
+    """
+    endpoints = _related_pathway_endpoints(definition, pathway.pathway_id)
+    minimum = 1 if PathwayEndpoint.START in endpoints else 0
+    maximum = (
+        len(pathway.ordered_control_ids) - 1
+        if PathwayEndpoint.END in endpoints
+        else len(pathway.ordered_control_ids)
+    )
+    if maximum < minimum:
+        raise ValueError(
+            "A one-control pathway related at both ends has no interior insertion position."
+        )
+    return min(max(requested_index, minimum), maximum)
 
 
 def _synchronize_wire_controls(definition: HarnessDefinition) -> HarnessDefinition:

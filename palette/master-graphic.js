@@ -1,5 +1,5 @@
-const RELATIONSHIP_DIAGRAM_CONTRACT_VERSION = "1";
-const RELATIONSHIP_DIAGRAM_LAYOUT = "measured-pathway-stack";
+const RELATIONSHIP_DIAGRAM_CONTRACT_VERSION = "2";
+const RELATIONSHIP_DIAGRAM_LAYOUT = "endpoint-junction-forest";
 
 function relationshipEndGroups(harness, pathwayId, endpoint, connections) {
   const connectionField = endpoint === "start" ? "startConnectionId" : "endConnectionId";
@@ -47,42 +47,196 @@ function relationshipPathwayWires(harness, pathwayId) {
 }
 
 function relationshipJunctionWires(harness, junction) {
+  const relationships = junction.pathwayRelationships || [];
+  const preceding = new Set(
+    relationships.filter((item) => item.endpoint === "end").map((item) => item.pathwayId),
+  );
+  const following = new Set(
+    relationships.filter((item) => item.endpoint === "start").map((item) => item.pathwayId),
+  );
   return harness.wires.filter((wire) => wire.orderedPathwayIds.some((pathwayId, index) => (
-    pathwayId === junction.precedingPathwayId
-      && wire.orderedPathwayIds[index + 1] === junction.followingPathwayId
+    preceding.has(pathwayId) && following.has(wire.orderedPathwayIds[index + 1])
   )));
 }
 
-function relationshipPathwayChains(harness) {
-  const pathways = new Map(harness.pathways.map((pathway) => [pathway.pathwayId, pathway]));
-  const outgoing = new Map();
-  const incoming = new Set();
-  (harness.junctions || []).forEach((junction) => {
-    if (!outgoing.has(junction.precedingPathwayId)) {
-      outgoing.set(junction.precedingPathwayId, junction);
-    }
-    incoming.add(junction.followingPathwayId);
-  });
-  const visited = new Set();
-  const walk = (root) => {
-    const nodes = [];
-    let pathway = root;
-    while (pathway && !visited.has(pathway.pathwayId)) {
-      visited.add(pathway.pathwayId);
-      nodes.push({ kind: "pathway", item: pathway });
-      const junction = outgoing.get(pathway.pathwayId);
-      if (!junction || !pathways.has(junction.followingPathwayId)) break;
-      nodes.push({ kind: "junction", item: junction });
-      pathway = pathways.get(junction.followingPathwayId);
-    }
-    return nodes;
+function relationshipTopology(harness) {
+  const nodes = new Map();
+  const edges = [];
+  const addNode = (kind, item, index) => {
+    const id = `${kind}:${kind === "pathway" ? item.pathwayId : item.junctionId}`;
+    nodes.set(id, { id, kind, item, index, incoming: [], outgoing: [], neighbors: [] });
   };
-  const roots = harness.pathways.filter((pathway) => !incoming.has(pathway.pathwayId));
-  const chains = roots.map(walk).filter((nodes) => nodes.length);
-  harness.pathways.forEach((pathway) => {
-    if (!visited.has(pathway.pathwayId)) chains.push(walk(pathway));
+  harness.pathways.forEach((pathway, index) => addNode("pathway", pathway, index));
+  (harness.junctions || []).forEach((junction, index) => (
+    addNode("junction", junction, harness.pathways.length + index)
+  ));
+  (harness.junctions || []).forEach((junction) => {
+    const junctionId = `junction:${junction.junctionId}`;
+    (junction.pathwayRelationships || []).forEach((relationship) => {
+      const pathwayId = `pathway:${relationship.pathwayId}`;
+      if (!nodes.has(junctionId) || !nodes.has(pathwayId)) return;
+      const sourceId = relationship.endpoint === "end" ? pathwayId : junctionId;
+      const targetId = relationship.endpoint === "end" ? junctionId : pathwayId;
+      const edge = { junction, relationship, sourceId, targetId };
+      edges.push(edge);
+      nodes.get(sourceId).outgoing.push(targetId);
+      nodes.get(targetId).incoming.push(sourceId);
+      nodes.get(junctionId).neighbors.push(pathwayId);
+      nodes.get(pathwayId).neighbors.push(junctionId);
+    });
   });
-  return chains;
+  const indegrees = new Map([...nodes].map(([id, node]) => [id, node.incoming.length]));
+  const ready = [...nodes.values()].filter((node) => !indegrees.get(node.id))
+    .sort((left, right) => left.index - right.index);
+  const depths = new Map([...nodes.keys()].map((id) => [id, 0]));
+  while (ready.length) {
+    const node = ready.shift();
+    node.outgoing.forEach((targetId) => {
+      depths.set(targetId, Math.max(depths.get(targetId), depths.get(node.id) + 1));
+      indegrees.set(targetId, indegrees.get(targetId) - 1);
+      if (!indegrees.get(targetId)) {
+        ready.push(nodes.get(targetId));
+        ready.sort((left, right) => left.index - right.index);
+      }
+    });
+  }
+  const visited = new Set();
+  const components = [];
+  [...nodes.values()].sort((left, right) => left.index - right.index).forEach((root) => {
+    if (visited.has(root.id)) return;
+    const queue = [root];
+    const componentNodes = [];
+    visited.add(root.id);
+    while (queue.length) {
+      const node = queue.shift();
+      componentNodes.push({ ...node, depth: depths.get(node.id) || 0 });
+      node.neighbors.forEach((neighborId) => {
+        if (!visited.has(neighborId)) {
+          visited.add(neighborId);
+          queue.push(nodes.get(neighborId));
+        }
+      });
+    }
+    componentNodes.sort((left, right) => left.depth - right.depth || left.index - right.index);
+    const nodeIds = new Set(componentNodes.map((node) => node.id));
+    components.push({
+      nodes: componentNodes,
+      edges: edges.filter((edge) => nodeIds.has(edge.sourceId) && nodeIds.has(edge.targetId)),
+    });
+  });
+  return components;
+}
+
+function openJunctionRelationships(harness, junction) {
+  closePathwayPopup();
+  const prior = document.body.querySelector(".junction-relationships-popup");
+  if (prior) {
+    prior.remove();
+    if (prior.open) prior.close();
+  }
+  openJunctionPopupId = junction.junctionId;
+  const dialog = document.createElement("dialog");
+  const content = document.createElement("div");
+  const heading = document.createElement("h2");
+  const relationships = document.createElement("details");
+  const relationshipSummary = document.createElement("summary");
+  const relationshipTitle = document.createElement("strong");
+  const relationshipCount = document.createElement("span");
+  const sequence = document.createElement("div");
+  const add = document.createElement("button");
+  const actions = document.createElement("div");
+  const close = document.createElement("button");
+  const pathways = new Map(
+    harness.pathways.map((pathway) => [pathway.pathwayId, pathway]),
+  );
+  const existingRelationships = junction.pathwayRelationships || [];
+  dialog.className = "junction-relationships-popup";
+  heading.textContent = `Pathway relationships · ${junction.name || "Unnamed junction"}`;
+  content.className = "junction-relationships-content";
+  relationships.className = "junction-relationship-stack";
+  relationshipTitle.textContent = "Pathway Relationships";
+  relationshipCount.className = "item-meta";
+  relationshipCount.textContent = `${existingRelationships.length}`;
+  relationshipSummary.append(relationshipTitle, relationshipCount);
+  sequence.className = "sequence";
+  existingRelationships.forEach((relationship) => {
+    const pathway = pathways.get(relationship.pathwayId);
+    const endpointLabel = relationship.endpoint === "start" ? "End A" : "End B";
+    const childWires = relationshipEndpointWires(harness, junction, relationship);
+    const row = memberRow(
+      `${pathway?.name || "Missing pathway"} · ${endpointLabel}`,
+      () => highlightMember(harness, "pathway_gates", relationship.pathwayId),
+      [actionButton("×", `Remove ${endpointLabel} relationship`, () => {
+        if (childWires.length && !window.confirm(
+          `${childWires.length} ${childWires.length === 1 ? "wire pathway traverses" : "wire pathways traverse"} this relationship. Remove it?`,
+        )) return;
+        void mutate("remove_junction_relationship", {
+          harnessId: harness.harnessId,
+          junctionId: junction.junctionId,
+          pathwayId: relationship.pathwayId,
+          endpoint: relationship.endpoint,
+        }, "Removing junction relationship…");
+      }, false, true)],
+      !pathway,
+    );
+    row.dataset.pathwayId = relationship.pathwayId;
+    row.dataset.endpoint = relationship.endpoint;
+    sequence.append(row);
+  });
+  if (!existingRelationships.length) {
+    sequence.append(emptyMessage("No pathway relationships."));
+  }
+  relationships.append(relationshipSummary, sequence);
+  add.type = "button";
+  add.className = "button compact";
+  add.textContent = "+ Add Relationship";
+  add.addEventListener("click", () => addJunctionRelationship(junction.junctionId));
+  close.type = "button";
+  close.className = "button";
+  close.textContent = "Close";
+  close.addEventListener("click", () => dialog.close());
+  actions.className = "dialog-actions";
+  actions.append(close);
+  dialog.addEventListener("close", () => {
+    if (document.body.querySelector(".junction-relationships-popup") === dialog) {
+      openJunctionPopupId = "";
+    }
+    dialog.remove();
+  });
+  content.append(heading, relationships, add, actions);
+  dialog.append(content);
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
+function closeJunctionRelationships() {
+  const dialog = document.body.querySelector(".junction-relationships-popup");
+  openJunctionPopupId = "";
+  if (dialog?.open) dialog.close();
+  else dialog?.remove();
+}
+
+function renderRelationshipJunctionHub(harness, junction) {
+  const hub = document.createElement("button");
+  const name = document.createElement("strong");
+  const kind = document.createElement("small");
+  hub.type = "button";
+  hub.className = "relationship-junction-hub";
+  hub.title = "Junction routing control";
+  name.textContent = junction.name || "Unnamed junction";
+  const relationshipCount = (junction.pathwayRelationships || []).length;
+  kind.textContent = relationshipCount
+    ? `${relationshipCount} pathway ${relationshipCount === 1 ? "endpoint" : "endpoints"}`
+    : "Unconnected junction";
+  hoverHighlight(hub, () => highlightMember(harness, "junction", junction.junctionId));
+  hub.addEventListener("click", () => openJunctionRelationships(harness, junction));
+  hub.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openJunctionRelationships(harness, junction);
+  });
+  hub.append(name, kind);
+  return hub;
 }
 
 function renderRelationshipConnector(
@@ -252,26 +406,122 @@ function renderRelationshipEndList(
   return details;
 }
 
-/**
- * Position pathway groups on a measured vertical diagram canvas.
- */
-function layoutRelationshipGraph(stack, pathwayGroups) {
-  const padding = 30;
-  const verticalGap = 30;
-  const measured = [...pathwayGroups.values()].map((group) => ({
-    group,
-    width: Math.max(760, group.scrollWidth),
-    height: Math.max(92, group.scrollHeight),
+function relationshipEndpointWires(harness, junction, relationship) {
+  const relationships = junction.pathwayRelationships || [];
+  const preceding = new Set(
+    relationships.filter((item) => item.endpoint === "end").map((item) => item.pathwayId),
+  );
+  const following = new Set(
+    relationships.filter((item) => item.endpoint === "start").map((item) => item.pathwayId),
+  );
+  return harness.wires.filter((wire) => wire.orderedPathwayIds.some((pathwayId, index) => {
+    const nextPathwayId = wire.orderedPathwayIds[index + 1];
+    if (!preceding.has(pathwayId) || !following.has(nextPathwayId)) return false;
+    return relationship.endpoint === "end"
+      ? relationship.pathwayId === pathwayId
+      : relationship.pathwayId === nextPathwayId;
   }));
-  const canvasWidth = Math.max(760, ...measured.map((item) => item.width)) + padding * 2;
-  let nextY = padding;
-  measured.forEach((item) => {
-    item.group.style.left = `${(canvasWidth - item.width) / 2}px`;
-    item.group.style.top = `${nextY}px`;
-    nextY += item.height + verticalGap;
+}
+
+/**
+ * Position acyclic topology components in stable layers and draw their edges.
+ */
+function layoutRelationshipGraph(stack, components, harness) {
+  const padding = 30;
+  const layerGap = 54;
+  const rowGap = 40;
+  let componentTop = padding;
+  let maximumRight = 760 - padding;
+  components.forEach((component) => {
+    const rowsByDepth = new Map();
+    const nodesByDepth = new Map();
+    component.nodes.forEach((node) => {
+      const row = rowsByDepth.get(node.depth) || 0;
+      rowsByDepth.set(node.depth, row + 1);
+      if (!nodesByDepth.has(node.depth)) nodesByDepth.set(node.depth, []);
+      nodesByDepth.get(node.depth).push(node);
+      node.row = row;
+      node.width = node.element.scrollWidth || (node.kind === "pathway" ? 278 : 154);
+      node.height = node.element.scrollHeight || (node.kind === "pathway" ? 92 : 76);
+    });
+    const rowHeight = Math.max(
+      112,
+      ...component.nodes.map((node) => node.height),
+    );
+    const componentRows = Math.max(1, ...rowsByDepth.values());
+    const layerWidths = new Map(
+      [...nodesByDepth].map(([depth, nodes]) => [
+        depth,
+        Math.max(...nodes.map((node) => node.width)),
+      ]),
+    );
+    const layerLefts = new Map();
+    let nextLeft = padding;
+    [...layerWidths.keys()].sort((left, right) => left - right).forEach((depth) => {
+      layerLefts.set(depth, nextLeft);
+      nextLeft += layerWidths.get(depth) + layerGap;
+    });
+    component.nodes.forEach((node) => {
+      const nodesAtDepth = rowsByDepth.get(node.depth);
+      const centeredRow = node.row + (componentRows - nodesAtDepth) / 2;
+      node.left = layerLefts.get(node.depth)
+        + (layerWidths.get(node.depth) - node.width) / 2;
+      node.top = componentTop + centeredRow * (rowHeight + rowGap);
+      node.element.style.left = `${node.left}px`;
+      node.element.style.top = `${node.top}px`;
+    });
+    maximumRight = Math.max(maximumRight, nextLeft - layerGap);
+    componentTop += componentRows * (rowHeight + rowGap) + layerGap;
   });
+  const canvasWidth = Math.max(760, maximumRight + padding);
+  const canvasHeight = Math.max(componentTop - layerGap + padding, 260);
+  const overlay = svgElement("svg", {
+    class: "relationship-topology-edges",
+    viewBox: `0 0 ${canvasWidth} ${canvasHeight}`,
+    preserveAspectRatio: "none",
+    "aria-hidden": "true",
+  });
+  components.forEach((component) => {
+    const nodes = new Map(component.nodes.map((node) => [node.id, node]));
+    component.edges.forEach((edge) => {
+      const source = nodes.get(edge.sourceId);
+      const target = nodes.get(edge.targetId);
+      if (!source || !target) return;
+      const sourceX = source.left + source.width;
+      const targetX = target.left;
+      const sourceY = source.top + source.height / 2;
+      const targetY = target.top + target.height / 2;
+      const middleX = (sourceX + targetX) / 2;
+      const curve = `M ${sourceX} ${sourceY} C ${middleX} ${sourceY}, ${middleX} ${targetY}, ${targetX} ${targetY}`;
+      overlay.append(svgElement("path", {
+        class: "structural-trace",
+        d: curve,
+        "data-junction-id": edge.junction.junctionId,
+        "data-pathway-id": edge.relationship.pathwayId,
+        "data-endpoint": edge.relationship.endpoint,
+        "data-source-x": `${sourceX}`,
+        "data-source-y": `${sourceY}`,
+        "data-target-x": `${targetX}`,
+        "data-target-y": `${targetY}`,
+      }));
+      const wires = relationshipEndpointWires(
+        harness,
+        edge.junction,
+        edge.relationship,
+      );
+      wires.forEach((wire) => {
+        overlay.append(svgElement("path", {
+          class: "wire-trace",
+          d: curve,
+          stroke: wire.materials?.mainColor?.hex || "#1777c8",
+          "data-wire-id": wire.wireId,
+        }));
+      });
+    });
+  });
+  stack.insertBefore(overlay, stack.children[0] || null);
   stack.style.width = `${canvasWidth}px`;
-  stack.style.height = `${Math.max(nextY - verticalGap + padding, 260)}px`;
+  stack.style.height = `${canvasHeight}px`;
 }
 
 function addRelationshipMapContextMenu(workspace) {
@@ -325,10 +575,89 @@ function addRelationshipMapContextMenu(workspace) {
     if (firstEnabled) firstEnabled.focus();
   };
   workspace.viewport.addEventListener("contextmenu", (event) => {
-    show(event, [{ label: "Add pathway", action: addPathway }]);
+    show(event, [
+      { label: "Add pathway", action: addPathway },
+      { label: "Add junction", action: addJunction },
+    ]);
   });
   workspace.root.append(menu);
   return show;
+}
+
+function renderRelationshipPathwayNode(
+  harness, candidate, connections, query, collapseLimit, showContextMenu,
+) {
+  const groups = {
+    start: relationshipEndGroups(harness, candidate.pathwayId, "start", connections),
+    end: relationshipEndGroups(harness, candidate.pathwayId, "end", connections),
+  };
+  const pathwayMatches = !query || (
+    `${candidate.name} ${candidate.startName || ""} ${candidate.endName || ""}`
+      .toLocaleLowerCase().includes(query)
+  );
+  const visibleStart = pathwayMatches
+    ? groups.start : groups.start.filter((group) => group.searchable.includes(query));
+  const visibleEnd = pathwayMatches
+    ? groups.end : groups.end.filter((group) => group.searchable.includes(query));
+  const matchingWireIds = new Set(
+    [...visibleStart, ...visibleEnd].flatMap((group) => group.wires.map((wire) => wire.wireId)),
+  );
+  const pathwayWires = relationshipPathwayWires(harness, candidate.pathwayId)
+    .filter((wire) => pathwayMatches || matchingWireIds.has(wire.wireId));
+  const pathwayGroup = document.createElement("div");
+  const startList = renderRelationshipEndList(
+    harness, candidate, "start", groups.start, visibleStart, query, collapseLimit,
+  );
+  const endList = renderRelationshipEndList(
+    harness, candidate, "end", groups.end, visibleEnd, query, collapseLimit,
+  );
+  const startConnector = renderRelationshipConnector(
+    visibleStart, pathwayWires, true, startList.open, pathwayWires.length === 0,
+  );
+  const endConnector = renderRelationshipConnector(
+    visibleEnd, pathwayWires, false, endList.open, pathwayWires.length === 0,
+  );
+  const hub = document.createElement("button");
+  const hubName = document.createElement("strong");
+  const hubDirection = document.createElement("small");
+  const controls = new Map(harness.controls.map((control) => [control.controlId, control]));
+  const canSegment = candidate.orderedControlIds.slice(1, -1).some((controlId) => {
+    const control = controls.get(controlId);
+    return control && ["routing_gate", "refine"].includes(control.kind);
+  });
+  pathwayGroup.className = "relationship-pathway-group";
+  pathwayGroup.dataset.pathwayId = candidate.pathwayId;
+  pathwayGroup.style.gridTemplateColumns = [
+    groups.start.length ? "210px" : "max-content",
+    "32px",
+    "154px",
+    "32px",
+    groups.end.length ? "210px" : "max-content",
+  ].join(" ");
+  hub.type = "button";
+  hub.className = "relationship-pathway-hub";
+  hub.title = "Open pathway configuration";
+  hubName.textContent = candidate.name || "Unnamed pathway";
+  hubDirection.textContent = pathwayDirection(candidate);
+  hoverHighlight(hub, () => highlightMember(harness, "pathway_gates", candidate.pathwayId));
+  hub.addEventListener("click", () => openPathwayPopup(harness, candidate.pathwayId));
+  hub.addEventListener("contextmenu", (event) => {
+    event.stopPropagation();
+    showContextMenu(event, [
+      { label: "Add refine point", action: () => addPathwayRefine(harness, candidate) },
+      {
+        label: "Segment",
+        action: () => segmentPathway(harness, candidate),
+        disabled: !canSegment,
+        title: canSegment ? "" : "Requires an interior routing gate or refine point",
+      },
+    ]);
+  });
+  hub.append(hubName, hubDirection);
+  startList.redrawConnector = startConnector.redraw;
+  endList.redrawConnector = endConnector.redraw;
+  pathwayGroup.append(startList, startConnector, hub, endConnector, endList);
+  return pathwayGroup;
 }
 
 function renderRelationshipMap(harness, auditIssues) {
@@ -372,133 +701,50 @@ function renderRelationshipMap(harness, auditIssues) {
     relationshipFilters.set(harnessKey(harness), query);
     workspace.stage.replaceChildren();
     const stack = document.createElement("div");
-    const pathwayGroups = new Map();
-    let visiblePathways = 0;
+    const renderedComponents = [];
     stack.className = "relationship-pathway-stack";
     stack.dataset.diagramContractVersion = RELATIONSHIP_DIAGRAM_CONTRACT_VERSION;
     stack.dataset.diagramLayout = RELATIONSHIP_DIAGRAM_LAYOUT;
-    relationshipPathwayChains(harness).forEach((chain, chainIndex) => {
-      const pathwayNodes = chain.filter((node) => node.kind === "pathway");
-      const pathway = pathwayNodes[0].item;
-      const endpointGroups = new Map();
-      pathwayNodes.forEach((node) => {
-        endpointGroups.set(node.item.pathwayId, {
-          start: relationshipEndGroups(harness, node.item.pathwayId, "start", connections),
-          end: relationshipEndGroups(harness, node.item.pathwayId, "end", connections),
-        });
-      });
-      const pathwayMatches = chain.map((node) => (
-        node.kind === "pathway"
-          ? `${node.item.name} ${node.item.startName || ""} ${node.item.endName || ""}`
-          : node.item.name
-      )).join(" ")
-        .toLocaleLowerCase().includes(query);
-      const matchingWireIds = new Set();
-      endpointGroups.forEach((groups) => {
-        [...groups.start, ...groups.end]
-          .filter((group) => group.searchable.includes(query))
-          .forEach((group) => group.wires.forEach((wire) => matchingWireIds.add(wire.wireId)));
-      });
-      if (query && !pathwayMatches && !matchingWireIds.size) return;
-      const pathwayGroup = document.createElement("div");
-      const columns = [];
-      pathwayGroup.className = "relationship-pathway-group";
-      pathwayGroup.dataset.pathwayId = pathway.pathwayId;
-      pathwayGroups.set(`chain-${chainIndex}`, pathwayGroup);
-      chain.forEach((node) => {
+    relationshipTopology(harness).forEach((component) => {
+      const searchable = component.nodes.map((node) => {
+        if (node.kind === "junction") return node.item.name || "";
+        const wires = relationshipPathwayWires(harness, node.item.pathwayId);
+        const endpointSearch = ["start", "end"].flatMap((endpoint) => (
+          relationshipEndGroups(harness, node.item.pathwayId, endpoint, connections)
+            .map((group) => group.searchable)
+        )).join(" ");
+        const wireSearch = wires.reduce((search, wire) => `${search} ${wireLabel(wire)}`, "");
+        return `${node.item.name} ${node.item.startName || ""} ${node.item.endName || ""} ${wireSearch} ${endpointSearch}`;
+      }).join(" ").toLocaleLowerCase();
+      if (query && !searchable.includes(query)) return;
+      component.nodes.forEach((node) => {
+        const wrapper = document.createElement("div");
+        wrapper.className = `relationship-topology-node relationship-topology-${node.kind}`;
+        wrapper.dataset.nodeId = node.id;
         if (node.kind === "junction") {
-          const junctionWires = relationshipJunctionWires(harness, node.item)
-            .filter((wire) => !query || pathwayMatches || matchingWireIds.has(wire.wireId));
-          const junction = document.createElement("button");
-          const junctionName = document.createElement("strong");
-          const junctionKind = document.createElement("small");
-          junction.type = "button";
-          junction.className = "relationship-junction-hub";
-          junction.title = "Junction routing control";
-          junctionName.textContent = node.item.name || "Unnamed junction";
-          junctionKind.textContent = "Junction";
-          hoverHighlight(
-            junction,
-            () => highlightMember(harness, "junction", node.item.junctionId),
-          );
-          junction.append(junctionName, junctionKind);
-          pathwayGroup.append(
-            renderRelationshipBridge(junctionWires),
-            junction,
-            renderRelationshipBridge(junctionWires),
-          );
-          columns.push("14px", "154px", "14px");
-          return;
+          wrapper.dataset.junctionId = node.item.junctionId;
+          wrapper.append(renderRelationshipJunctionHub(harness, node.item));
+        } else {
+          wrapper.dataset.pathwayId = node.item.pathwayId;
+          wrapper.append(renderRelationshipPathwayNode(
+            harness,
+            node.item,
+            connections,
+            query,
+            collapseLimit,
+            showContextMenu,
+          ));
         }
-
-        const candidate = node.item;
-        const groups = endpointGroups.get(candidate.pathwayId);
-        const visibleStart = !query || pathwayMatches
-          ? groups.start : groups.start.filter((group) => group.searchable.includes(query));
-        const visibleEnd = !query || pathwayMatches
-          ? groups.end : groups.end.filter((group) => group.searchable.includes(query));
-        const pathwayWires = relationshipPathwayWires(harness, candidate.pathwayId)
-          .filter((wire) => !query || pathwayMatches || matchingWireIds.has(wire.wireId));
-        const startList = renderRelationshipEndList(
-          harness, candidate, "start", groups.start, visibleStart, query, collapseLimit,
-        );
-        const endList = renderRelationshipEndList(
-          harness, candidate, "end", groups.end, visibleEnd, query, collapseLimit,
-        );
-        const startConnector = renderRelationshipConnector(
-          visibleStart, pathwayWires, true, startList.open, pathwayWires.length === 0,
-        );
-        const endConnector = renderRelationshipConnector(
-          visibleEnd, pathwayWires, false, endList.open, pathwayWires.length === 0,
-        );
-        const hub = document.createElement("button");
-        const hubName = document.createElement("strong");
-        const hubDirection = document.createElement("small");
-        const controls = new Map(harness.controls.map((control) => [control.controlId, control]));
-        const canSegment = candidate.orderedControlIds.slice(1, -1).some((controlId) => {
-          const control = controls.get(controlId);
-          return control && ["routing_gate", "refine"].includes(control.kind);
-        });
-        hub.type = "button";
-        hub.className = "relationship-pathway-hub";
-        hub.title = "Open pathway configuration";
-        hubName.textContent = candidate.name || "Unnamed pathway";
-        hubDirection.textContent = pathwayDirection(candidate);
-        hoverHighlight(hub, () => highlightMember(harness, "pathway_gates", candidate.pathwayId));
-        hub.addEventListener("click", () => openPathwayPopup(harness, candidate.pathwayId));
-        hub.addEventListener("contextmenu", (event) => {
-          event.stopPropagation();
-          showContextMenu(event, [
-            { label: "Add refine point", action: () => addPathwayRefine(harness, candidate) },
-            {
-              label: "Segment",
-              action: () => segmentPathway(harness, candidate),
-              disabled: !canSegment,
-              title: canSegment ? "" : "Requires an interior routing gate or refine point",
-            },
-          ]);
-        });
-        hub.append(hubName, hubDirection);
-        startList.redrawConnector = startConnector.redraw;
-        endList.redrawConnector = endConnector.redraw;
-        pathwayGroup.append(startList, startConnector, hub, endConnector, endList);
-        columns.push(
-          groups.start.length ? "210px" : "max-content",
-          "32px",
-          "154px",
-          "32px",
-          groups.end.length ? "210px" : "max-content",
-        );
+        node.element = wrapper;
+        stack.append(wrapper);
       });
-      pathwayGroup.style.gridTemplateColumns = columns.join(" ");
-      stack.append(pathwayGroup);
-      visiblePathways += 1;
+      renderedComponents.push(component);
     });
-    if (!visiblePathways) {
+    if (!renderedComponents.length) {
       const message = emptyMessage(
-        harness.pathways.length
+        harness.pathways.length || (harness.junctions || []).length
           ? "No relationships match this filter."
-          : "No pathways to display yet.",
+          : "No pathways or junctions to display yet.",
       );
       message.className = "empty relationship-map-empty";
       workspace.stage.append(message);
@@ -507,7 +753,7 @@ function renderRelationshipMap(harness, auditIssues) {
     }
     workspace.stage.append(stack);
     window.requestAnimationFrame(() => {
-      layoutRelationshipGraph(stack, pathwayGroups);
+      layoutRelationshipGraph(stack, renderedComponents, harness);
       workspace.fit();
     });
   };

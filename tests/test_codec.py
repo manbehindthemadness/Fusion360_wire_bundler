@@ -4,13 +4,18 @@ Tests for harness definition JSON serialization.
 
 import json
 from dataclasses import replace
+from uuid import UUID
 
 import pytest
 
 from wire_bundler.domain import (
     ControlKind,
+    ControlStructure,
     DefinitionParseError,
     HarnessDefinition,
+    JunctionDefinition,
+    JunctionPathwayRelationship,
+    PathwayEndpoint,
     RefineGeometry,
     StripePattern,
     WireAppearanceReference,
@@ -57,6 +62,36 @@ def test_round_trip_preserves_refine_geometry(valid_harness: HarnessDefinition) 
     parsed = loads(dumps(definition))
 
     assert parsed == definition
+
+
+def test_round_trip_preserves_isolated_junction_relationships(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Encode an unconnected schema-v8 junction with an empty relationship list.
+    """
+    control = ControlStructure(
+        UUID("37000000-0000-0000-0000-000000000001"),
+        "Routing Gate 02",
+        ControlKind.ROUTING_GATE,
+        "isolated-profile-token",
+    )
+    junction = JunctionDefinition(
+        UUID("37000000-0000-0000-0000-000000000002"),
+        "Junction 01",
+        control.control_id,
+    )
+    definition = replace(
+        valid_harness,
+        controls=(*valid_harness.controls, control),
+        junctions=(junction,),
+    )
+
+    serialized = dumps(definition)
+    parsed = loads(serialized)
+
+    assert parsed == definition
+    assert json.loads(serialized)["junctions"][0]["pathway_relationships"] == []
 
 
 def test_serialization_is_deterministic(valid_harness: HarnessDefinition) -> None:
@@ -150,6 +185,59 @@ def test_reads_version_five_without_junctions(valid_harness: HarnessDefinition) 
     migrated = loads(json.dumps(payload))
 
     assert migrated.junctions == ()
+
+
+def test_reads_version_six_with_required_junction_relationships(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Migrate connected schema-v6 junction fields without changing their identities.
+    """
+    payload = json.loads(dumps(valid_harness))
+    pathway_id = str(valid_harness.pathways[0].pathway_id)
+    payload["schema_version"] = 6
+    payload["junctions"] = [
+        {
+            "junction_id": "37000000-0000-0000-0000-000000000002",
+            "name": "Junction 01",
+            "control_id": str(valid_harness.controls[0].control_id),
+            "preceding_pathway_id": pathway_id,
+            "following_pathway_id": pathway_id,
+        }
+    ]
+
+    migrated = loads(json.dumps(payload))
+
+    assert migrated.junctions[0].pathway_relationships == (
+        JunctionPathwayRelationship(valid_harness.pathways[0].pathway_id, PathwayEndpoint.END),
+        JunctionPathwayRelationship(valid_harness.pathways[0].pathway_id, PathwayEndpoint.START),
+    )
+
+
+def test_reads_version_seven_with_optional_pair_relationships(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Migrate both connected and isolated draft schema-v7 junctions.
+    """
+    payload = json.loads(dumps(valid_harness))
+    pathway_id = str(valid_harness.pathways[0].pathway_id)
+    payload["schema_version"] = 7
+    payload["junctions"] = [
+        {
+            "junction_id": "37000000-0000-0000-0000-000000000002",
+            "name": "Junction 01",
+            "control_id": str(valid_harness.controls[0].control_id),
+            "preceding_pathway_id": pathway_id,
+            "following_pathway_id": None,
+        }
+    ]
+
+    migrated = loads(json.dumps(payload))
+
+    assert migrated.junctions[0].pathway_relationships == (
+        JunctionPathwayRelationship(valid_harness.pathways[0].pathway_id, PathwayEndpoint.END),
+    )
 
 
 def test_rejects_stripe_without_required_repeat(valid_harness: HarnessDefinition) -> None:

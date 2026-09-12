@@ -19,6 +19,7 @@ function renderEditor(harness) {
 
   if (harness.status === "damaged") {
     closePathwayPopup();
+    closeJunctionRelationships();
     const error = document.createElement("div");
     const actions = document.createElement("div");
     const remove = document.createElement("button");
@@ -128,4 +129,11 @@ function renderEditor(harness) {
     ),
   );
   if (openPathwayPopupId) openPathwayPopup(harness, openPathwayPopupId);
+  if (openJunctionPopupId) {
+    const junction = (harness.junctions || []).find(
+      (candidate) => candidate.junctionId === openJunctionPopupId,
+    );
+    if (junction) openJunctionRelationships(harness, junction);
+    else closeJunctionRelationships();
+  }
 }

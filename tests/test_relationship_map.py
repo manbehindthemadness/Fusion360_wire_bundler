@@ -13,7 +13,9 @@ from wire_bundler.domain import (
     ControlStructure,
     HarnessDefinition,
     JunctionDefinition,
+    JunctionPathwayRelationship,
     PathwayDefinition,
+    PathwayEndpoint,
     validate_harness,
 )
 
@@ -39,7 +41,13 @@ def test_relationship_map_inserts_junction_between_segmented_pathways(
         following_id, "Main Pathway ext 1", original.routing_mode, (final_id,)
     )
     junction = JunctionDefinition(
-        junction_id, "Junction 01", middle_id, original.pathway_id, following_id
+        junction_id,
+        "Junction 01",
+        middle_id,
+        (
+            JunctionPathwayRelationship(original.pathway_id, PathwayEndpoint.END),
+            JunctionPathwayRelationship(following_id, PathwayEndpoint.START),
+        ),
     )
     wire = replace(
         valid_harness.wires[0],
@@ -69,6 +77,107 @@ def test_relationship_map_inserts_junction_between_segmented_pathways(
     )
     assert relationship_map.audit_issues == ()
     assert validate_harness(definition) == ()
+
+
+def test_relationship_map_projects_isolated_junction_without_edges(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Keep an unconnected junction visible without inserting it into wire routes.
+    """
+    control_id = UUID("37000000-0000-0000-0000-000000000001")
+    junction_id = UUID("37000000-0000-0000-0000-000000000002")
+    control = ControlStructure(
+        control_id, "Routing Gate 02", ControlKind.ROUTING_GATE, "isolated-profile-token"
+    )
+    junction = JunctionDefinition(junction_id, "Junction 01", control_id)
+    definition = replace(
+        valid_harness,
+        controls=(*valid_harness.controls, control),
+        junctions=(junction,),
+    )
+
+    relationship_map = build_relationship_map(definition)
+
+    assert f"junction:{junction_id}" in {node.node_id for node in relationship_map.nodes}
+    assert relationship_map.structural_edges == ()
+    assert all(f"junction:{junction_id}" not in route.node_ids for route in relationship_map.routes)
+    assert relationship_map.audit_issues == ()
+
+
+def test_relationship_map_projects_multi_pathway_junction_branch(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Project every incident endpoint while routing through only the selected branch.
+    """
+    original = valid_harness.pathways[0]
+    branch_ids = (
+        UUID("35000000-0000-0000-0000-000000000002"),
+        UUID("35000000-0000-0000-0000-000000000003"),
+    )
+    branch_control_ids = (
+        UUID("30000000-0000-0000-0000-000000000002"),
+        UUID("30000000-0000-0000-0000-000000000003"),
+    )
+    junction_control_id = UUID("37000000-0000-0000-0000-000000000001")
+    controls = (
+        *valid_harness.controls,
+        ControlStructure(
+            branch_control_ids[0], "Branch Gate 01", ControlKind.ROUTING_GATE, "branch-a"
+        ),
+        ControlStructure(
+            branch_control_ids[1], "Branch Gate 02", ControlKind.ROUTING_GATE, "branch-b"
+        ),
+        ControlStructure(
+            junction_control_id, "Junction Gate", ControlKind.ROUTING_GATE, "junction"
+        ),
+    )
+    branches = tuple(
+        PathwayDefinition(
+            pathway_id,
+            f"Branch {index + 1}",
+            original.routing_mode,
+            (branch_control_ids[index],),
+        )
+        for index, pathway_id in enumerate(branch_ids)
+    )
+    junction = JunctionDefinition(
+        UUID("38000000-0000-0000-0000-000000000001"),
+        "Junction 01",
+        junction_control_id,
+        (
+            JunctionPathwayRelationship(original.pathway_id, PathwayEndpoint.END),
+            JunctionPathwayRelationship(branch_ids[0], PathwayEndpoint.START),
+            JunctionPathwayRelationship(branch_ids[1], PathwayEndpoint.START),
+        ),
+    )
+    wire = replace(
+        valid_harness.wires[0],
+        ordered_pathway_ids=(original.pathway_id, branch_ids[1]),
+        ordered_control_ids=(
+            original.ordered_control_ids[0],
+            junction_control_id,
+            branch_control_ids[1],
+        ),
+    )
+    definition = replace(
+        valid_harness,
+        controls=controls,
+        pathways=(original, *branches),
+        junctions=(junction,),
+        wires=(wire,),
+    )
+
+    relationship_map = build_relationship_map(definition)
+
+    assert len(relationship_map.structural_edges) == 3
+    assert relationship_map.routes[0].node_ids[1:-1] == (
+        f"pathway:{original.pathway_id}",
+        f"junction:{junction.junction_id}",
+        f"pathway:{branch_ids[1]}",
+    )
+    assert relationship_map.audit_issues == ()
 
 
 def test_relationship_map_projects_current_wire_route(

@@ -10,7 +10,7 @@ from enum import Enum
 from typing import Optional
 from uuid import UUID, uuid5
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 8
 
 
 class RoutingMode(str, Enum):
@@ -30,6 +30,15 @@ class ControlKind(str, Enum):
     ROUTING_GATE = "routing_gate"
     PROFILE_GATE = "profile_gate"
     REFINE = "refine"
+
+
+class PathwayEndpoint(str, Enum):
+    """
+    Identify one ordered boundary of a reusable pathway.
+    """
+
+    START = "start"
+    END = "end"
 
 
 class StripePattern(str, Enum):
@@ -409,16 +418,25 @@ class PathwayDefinition:
 
 
 @dataclass(frozen=True)
+class JunctionPathwayRelationship:
+    """
+    Attach one pathway endpoint to a junction.
+    """
+
+    pathway_id: UUID
+    endpoint: PathwayEndpoint
+
+
+@dataclass(frozen=True)
 class JunctionDefinition:
     """
-    Join two ordered pathway spans at one standalone routing control.
+    Represent a routing control shared by zero or more pathway endpoints.
     """
 
     junction_id: UUID
     name: str
     control_id: UUID
-    preceding_pathway_id: UUID
-    following_pathway_id: UUID
+    pathway_relationships: tuple[JunctionPathwayRelationship, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -482,10 +500,22 @@ def route_control_ids(
     pathways = {pathway.pathway_id: pathway for pathway in definition.pathways}
     junctions: dict[tuple[UUID, UUID], UUID] = {}
     for junction in definition.junctions:
-        key = (junction.preceding_pathway_id, junction.following_pathway_id)
-        if key in junctions:
-            raise ValueError("A pathway adjacency has more than one junction.")
-        junctions[key] = junction.control_id
+        preceding_ids = tuple(
+            relationship.pathway_id
+            for relationship in junction.pathway_relationships
+            if relationship.endpoint is PathwayEndpoint.END
+        )
+        following_ids = tuple(
+            relationship.pathway_id
+            for relationship in junction.pathway_relationships
+            if relationship.endpoint is PathwayEndpoint.START
+        )
+        for preceding_id in preceding_ids:
+            for following_id in following_ids:
+                key = (preceding_id, following_id)
+                if key in junctions:
+                    raise ValueError("A pathway adjacency has more than one junction.")
+                junctions[key] = junction.control_id
 
     controls: list[UUID] = []
     for index, pathway_id in enumerate(pathway_ids):

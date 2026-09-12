@@ -53,6 +53,7 @@ function writePreference(key, value) {
 let currentState = { harnesses: [], notice: "" };
 let selectedHarnessKey = readSession("wireBundler.selectedHarness") || "";
 let openPathwayPopupId = "";
+let openJunctionPopupId = "";
 const routeFilters = new Map();
 const relationshipFilters = new Map();
 const relationshipEndListOverrides = new Map();
@@ -321,10 +322,21 @@ function renderPathways(harness, selectedPathwayId = null) {
     pathwayContent.className = "section-content";
     gateContent.className = "section-content";
     sequence.className = "sequence";
+    const relatedEndpoints = new Set(
+      (harness.junctions || []).flatMap((junction) => junction.pathwayRelationships || [])
+        .filter((relationship) => relationship.pathwayId === pathway.pathwayId)
+        .map((relationship) => relationship.endpoint),
+    );
+    const lockedIndexes = new Set();
+    if (pathway.orderedControlIds.length && relatedEndpoints.has("start")) lockedIndexes.add(0);
+    if (pathway.orderedControlIds.length && relatedEndpoints.has("end")) {
+      lockedIndexes.add(pathway.orderedControlIds.length - 1);
+    }
     const gateRows = [];
     pathway.orderedControlIds.forEach((controlId, index) => {
       const control = controls.get(controlId);
       const isRefine = control?.kind === "refine";
+      const isLocked = lockedIndexes.has(index);
       const openOptions = () => openInterpolationOptions(
         harness, "gate", controlId, control?.name || "Gate", control?.interpolation, null, control?.usesDefaults ?? true,
       );
@@ -343,18 +355,22 @@ function renderPathways(harness, selectedPathwayId = null) {
           ),
           actionButton("×", "Remove gate", () => removeGate(
             harness, pathway, controlId, control?.name || "this gate",
-          ), pathway.orderedControlIds.length === 1, true),
+          ), pathway.orderedControlIds.length === 1 || isLocked, true),
         ],
         !control || !control.hasLinkedGeometry,
       );
-      row.children[0].title = `Click for ${control?.kind === "refine" ? "refine" : "gate"} options; drag to reorder`;
+      row.children[0].title = isLocked
+        ? `Click for ${control?.kind === "refine" ? "refine" : "gate"} options; junction endpoint is locked`
+        : `Click for ${control?.kind === "refine" ? "refine" : "gate"} options; drag to reorder`;
       row.children[0].addEventListener("click", (event) => {
         if (event.detail === 0 && control) void editControl();
       });
-      row.title = `Drag to reorder ${control?.name || "gate"} (${controlId})`;
+      row.title = isLocked
+        ? `${control?.name || "Gate"} is preserved by a junction relationship`
+        : `Drag to reorder ${control?.name || "gate"} (${controlId})`;
       enableSequenceDrag(sequence, gateRows, row, index, (target) => mutate(
         "move_pathway_gate", { ...movePayload, offset: target - index }, "Reordering gate…",
-      ), control ? editControl : null);
+      ), control ? editControl : null, isLocked, lockedIndexes);
       sequence.append(row);
     });
     occupancyContent.className = "section-content";
@@ -387,10 +403,21 @@ function renderPathways(harness, selectedPathwayId = null) {
     addGates.type = "button";
     addGates.className = "button compact";
     addGates.textContent = "+ Add Gates";
+    const hasInteriorInsertion = !(
+      pathway.orderedControlIds.length === 1
+      && relatedEndpoints.has("start")
+      && relatedEndpoints.has("end")
+    );
+    addGates.disabled = !hasInteriorInsertion;
+    addGates.title = hasInteriorInsertion
+      ? ""
+      : "Detach one junction endpoint before adding controls";
     addGates.addEventListener("click", () => appendPathwayGates(harness, pathway));
     addRefine.type = "button";
     addRefine.className = "button compact";
     addRefine.textContent = "+ Add Refine Point";
+    addRefine.disabled = !hasInteriorInsertion;
+    addRefine.title = addGates.title;
     addRefine.addEventListener("click", () => addPathwayRefine(harness, pathway));
     addWiresButton.type = "button";
     addWiresButton.className = "button compact";
@@ -447,6 +474,7 @@ function closePathwayPopup() {
 }
 
 function openPathwayPopup(harness, pathwayId) {
+  closeJunctionRelationships();
   const pathway = harness.pathways.find((candidate) => candidate.pathwayId === pathwayId);
   const existing = document.body.querySelector(".pathway-popup");
   if (existing) {

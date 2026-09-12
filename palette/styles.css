@@ -517,6 +517,27 @@ button.route-node:hover { border-color: var(--accent); color: var(--accent); }
   position: relative;
   min-width: 760px;
 }
+.relationship-topology-node {
+  position: absolute;
+  z-index: 2;
+}
+.relationship-topology-pathway .relationship-pathway-group { position: relative; }
+.relationship-topology-edges {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.relationship-topology-edges path {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+}
+.relationship-topology-edges .structural-trace { stroke: #7b9ab2; stroke-width: 2; }
+.relationship-topology-edges .wire-trace { stroke-width: 7; }
 .relationship-pathway-group {
   position: absolute;
   z-index: 1;
@@ -620,7 +641,7 @@ button.route-node:hover { border-color: var(--accent); color: var(--accent); }
   background: #eef5fa;
   color: var(--text);
   text-align: center;
-  cursor: default;
+  cursor: pointer;
 }
 .relationship-junction-hub strong { font-size: 12px; }
 .relationship-junction-hub small { color: var(--muted); }
@@ -649,6 +670,39 @@ button.route-node:hover { border-color: var(--accent); color: var(--accent); }
 .relationship-chain-link .wire-trace { stroke-width: 7; }
 .relationship-connector .stripe-trace,
 .relationship-chain-link .stripe-trace { stroke-width: 1.4; }
+.junction-relationships-popup {
+  width: min(560px, 92vw);
+  max-height: 82vh;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 18px;
+  background: var(--surface);
+  color: var(--text);
+}
+.junction-relationships-popup::backdrop { background: #0007; }
+.junction-relationships-content { display: grid; gap: 12px; }
+.junction-relationships-popup h2,
+.junction-relationships-popup p { margin: 0; }
+.junction-relationship-stack {
+  margin: 0;
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+.junction-relationship-stack > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  background: var(--surface-subtle);
+}
+.junction-relationship-stack > .sequence {
+  max-height: 52vh;
+  overflow-y: auto;
+  padding: 8px;
+}
 .wire-relationship-graphic {
   border: 1px solid #d9e1e7;
   border-radius: 5px;

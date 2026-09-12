@@ -8,10 +8,16 @@ function relationshipAuditIssues(harness) {
   const usage = new Map(
     (projection.connectionUsage || []).map((item) => [item.connectionId, item.endpoints || []]),
   );
-  const junctions = new Map((harness.junctions || []).map((junction) => [
-    `${junction.precedingPathwayId}:${junction.followingPathwayId}`,
-    junction,
-  ]));
+  const junctions = new Map();
+  (harness.junctions || []).forEach((junction) => {
+    const preceding = (junction.pathwayRelationships || [])
+      .filter((relationship) => relationship.endpoint === "end");
+    const following = (junction.pathwayRelationships || [])
+      .filter((relationship) => relationship.endpoint === "start");
+    preceding.forEach((left) => following.forEach((right) => {
+      junctions.set(`${left.pathwayId}:${right.pathwayId}`, junction);
+    }));
+  });
   const addIssue = (code, message, memberType = "", memberId = "") => {
     if (!issues.some((issue) => issue.code === code && issue.memberId === memberId)) {
       issues.push({ code, message, memberType, memberId });

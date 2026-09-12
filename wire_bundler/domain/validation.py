@@ -14,6 +14,7 @@ from .model import (
     HarnessDefinition,
     JunctionDefinition,
     PathwayDefinition,
+    PathwayEndpoint,
     RoutingMode,
     route_control_ids,
 )
@@ -269,7 +270,7 @@ def _validate_junctions(
     issues: list[ValidationIssue],
 ) -> None:
     """
-    Validate standalone controls and unambiguous directed pathway chains.
+    Validate junction controls and endpoint-qualified acyclic relationships.
     """
     controls = {control.control_id: control for control in definition.controls}
     pathway_ids = {pathway.pathway_id for pathway in definition.pathways}
@@ -278,9 +279,7 @@ def _validate_junctions(
     }
     names: dict[str, str] = {}
     controls_in_use: dict[UUID, str] = {}
-    adjacencies: dict[tuple[UUID, UUID], str] = {}
-    outgoing: dict[UUID, str] = {}
-    incoming: dict[UUID, str] = {}
+    endpoint_owners: dict[tuple[UUID, PathwayEndpoint], str] = {}
     for index, junction in enumerate(definition.junctions):
         path = f"junctions[{index}]"
         normalized_name = junction.name.strip()
@@ -332,57 +331,39 @@ def _validate_junctions(
         else:
             controls_in_use[junction.control_id] = f"{path}.control_id"
 
-        for field, pathway_id in (
-            ("preceding_pathway_id", junction.preceding_pathway_id),
-            ("following_pathway_id", junction.following_pathway_id),
-        ):
-            if pathway_id not in pathway_ids:
+        seen_relationships: set[tuple[UUID, PathwayEndpoint]] = set()
+        for relationship_index, relationship in enumerate(junction.pathway_relationships):
+            relationship_path = f"{path}.pathway_relationships[{relationship_index}]"
+            key = (relationship.pathway_id, relationship.endpoint)
+            if relationship.pathway_id not in pathway_ids:
                 issues.append(
                     ValidationIssue(
                         "missing_junction_pathway_reference",
-                        f"{path}.{field}",
+                        f"{relationship_path}.pathway_id",
                         "Referenced junction pathway does not exist.",
                     )
                 )
-        if junction.preceding_pathway_id == junction.following_pathway_id:
-            issues.append(
-                ValidationIssue(
-                    "identical_junction_pathways",
-                    f"{path}.following_pathway_id",
-                    "A junction must connect two different pathways.",
+            if key in seen_relationships:
+                issues.append(
+                    ValidationIssue(
+                        "duplicate_junction_pathway_relationship",
+                        relationship_path,
+                        "A junction may reference a pathway endpoint only once.",
+                    )
                 )
-            )
-        adjacency = (junction.preceding_pathway_id, junction.following_pathway_id)
-        if adjacency in adjacencies:
-            issues.append(
-                ValidationIssue(
-                    "duplicate_junction_adjacency",
-                    f"{path}.following_pathway_id",
-                    f"Junction adjacency duplicates {adjacencies[adjacency]}.",
+                continue
+            seen_relationships.add(key)
+            previous_owner = endpoint_owners.get(key)
+            if previous_owner is not None:
+                issues.append(
+                    ValidationIssue(
+                        "claimed_pathway_endpoint",
+                        relationship_path,
+                        f"Pathway endpoint is already related by {previous_owner}.",
+                    )
                 )
-            )
-        else:
-            adjacencies[adjacency] = path
-        if junction.preceding_pathway_id in outgoing:
-            issues.append(
-                ValidationIssue(
-                    "ambiguous_junction_successor",
-                    f"{path}.preceding_pathway_id",
-                    "A segmented pathway may have only one following pathway.",
-                )
-            )
-        else:
-            outgoing[junction.preceding_pathway_id] = path
-        if junction.following_pathway_id in incoming:
-            issues.append(
-                ValidationIssue(
-                    "ambiguous_junction_predecessor",
-                    f"{path}.following_pathway_id",
-                    "A segmented pathway may have only one preceding pathway.",
-                )
-            )
-        else:
-            incoming[junction.following_pathway_id] = path
+            else:
+                endpoint_owners[key] = path
 
     _validate_junction_cycles(definition.junctions, issues)
 
@@ -392,26 +373,33 @@ def _validate_junction_cycles(
     issues: list[ValidationIssue],
 ) -> None:
     """
-    Reject segmentation chains that loop back to an earlier pathway.
+    Reject closed loops in the bipartite pathway/junction topology.
     """
-    successors = {
-        junction.preceding_pathway_id: junction.following_pathway_id for junction in junctions
-    }
-    for start in successors:
-        seen: set[UUID] = set()
-        current = start
-        while current in successors:
-            if current in seen:
+    parents: dict[tuple[str, UUID], tuple[str, UUID]] = {}
+
+    def root(node: tuple[str, UUID]) -> tuple[str, UUID]:
+        parents.setdefault(node, node)
+        while parents[node] != node:
+            parents[node] = parents[parents[node]]
+            node = parents[node]
+        return node
+
+    for junction in junctions:
+        junction_node = ("junction", junction.junction_id)
+        for relationship in junction.pathway_relationships:
+            pathway_node = ("pathway", relationship.pathway_id)
+            junction_root = root(junction_node)
+            pathway_root = root(pathway_node)
+            if junction_root == pathway_root:
                 issues.append(
                     ValidationIssue(
-                        "cyclic_junction_chain",
+                        "cyclic_junction_topology",
                         "junctions",
-                        "Junction pathway relationships must not form a cycle.",
+                        "Junction pathway relationships must form an acyclic forest.",
                     )
                 )
                 return
-            seen.add(current)
-            current = successors[current]
+            parents[pathway_root] = junction_root
 
 
 def _validate_wires(

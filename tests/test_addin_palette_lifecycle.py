@@ -22,6 +22,9 @@ from wire_bundler.domain import (
     ControlKind,
     ControlStructure,
     HarnessDefinition,
+    JunctionDefinition,
+    JunctionPathwayRelationship,
+    PathwayEndpoint,
     RefineGeometry,
     WireColor,
     WireStripe,
@@ -49,6 +52,7 @@ class _PaletteLifecycleModule(Protocol):
 
     _handlers: list[object]
     PALETTE_RESOURCE_FILES: tuple[Path, ...]
+    JUNCTION_RELATIONSHIP_GEOMETRY_INPUT_ID: str
     _PaletteIncomingHandler: type
     _PaletteEditExecuteHandler: type
     _PaletteEditDestroyedHandler: type
@@ -70,6 +74,12 @@ class _PaletteLifecycleModule(Protocol):
     reconcile_preview_history: Callable[[object, tuple[HarnessDefinition, ...]], None]
     _ShowPaletteCreatedHandler: type
     _RefineCommandState: type
+    _AddJunctionCommandState: type
+    _AddJunctionPreSelectHandler: type
+    _AddJunctionRelationshipCommandState: type
+    _JunctionRelationshipCandidate: type
+    _SegmentCommandState: type
+    _SegmentPreSelectHandler: type
     _RefinePreSelectHandler: type
     _RefineMouseDragHandler: type
     _RefineActiveSelectionHandler: type
@@ -77,6 +87,10 @@ class _PaletteLifecycleModule(Protocol):
     _EditRefineInputChangedHandler: type
     _EditRefineExecutePreviewHandler: type
     _read_refine_placement: Callable[[object, object], _RefinePlacementResult]
+    _junction_profile_token: Callable[[object, object], str]
+    _read_junction_relationship_candidate: Callable[[object, object], object]
+    _open_add_junction_command: Callable[[object, str], None]
+    _open_add_junction_relationship_command: Callable[[object, str], None]
     _update_refine_placement: Callable[..., None]
     _refine_geometry_transform: Callable[[RefineGeometry], object]
     _add_refine_transform_input: Callable[[object, RefineGeometry], object]
@@ -253,6 +267,98 @@ def test_palette_is_shown_during_command_creation(
     created_handler.notify(SimpleNamespace(command=object()))
 
     assert shown_applications == [application]
+
+
+def test_junction_selector_rejects_registered_profiles(
+    addin_module: _PaletteLifecycleModule,
+) -> None:
+    """
+    Filter registered native geometry and read one unused profile token.
+    """
+    registered = SimpleNamespace(entityToken="registered", nativeObject=None)
+    unused = SimpleNamespace(entityToken="unused", nativeObject=None)
+    selection_input = SimpleNamespace(
+        selectionCount=1,
+        selection=lambda _index: SimpleNamespace(entity=unused),
+    )
+    inputs = SimpleNamespace(itemById=lambda _identity: selection_input)
+    core_module = sys.modules["adsk.core"]
+    fusion_module = sys.modules["adsk.fusion"]
+    core_module.SelectionCommandInput = SimpleNamespace(  # type: ignore[attr-defined]
+        cast=lambda value: value
+    )
+    fusion_module.Profile = SimpleNamespace(cast=lambda value: value)  # type: ignore[attr-defined]
+    state = addin_module._AddJunctionCommandState(UUID(int=1), (registered,))
+
+    assert addin_module._junction_profile_token(inputs, state) == "unused"
+    unused_args = SimpleNamespace(selection=SimpleNamespace(entity=unused), isSelectable=False)
+    registered_args = SimpleNamespace(
+        selection=SimpleNamespace(entity=registered), isSelectable=True
+    )
+    handler = addin_module._AddJunctionPreSelectHandler(state)
+    handler.notify(unused_args)
+    handler.notify(registered_args)
+    assert unused_args.isSelectable is True
+    assert registered_args.isSelectable is False
+
+    selection_input.selection = lambda _index: SimpleNamespace(entity=registered)
+    with pytest.raises(ValueError, match="already registered"):
+        addin_module._junction_profile_token(inputs, state)
+
+
+def test_relationship_selector_narrows_ambiguous_geometry_to_endpoint_choice(
+    addin_module: _PaletteLifecycleModule,
+) -> None:
+    """
+    Require an explicit End A/End B choice when one profile represents both.
+    """
+    profile = SimpleNamespace(nativeObject=None)
+    first = JunctionPathwayRelationship(UUID(int=10), PathwayEndpoint.START)
+    second = JunctionPathwayRelationship(UUID(int=10), PathwayEndpoint.END)
+    candidates = (
+        addin_module._JunctionRelationshipCandidate(
+            first,
+            "Pathway_001 · End A",
+            UUID(int=20),
+            profile,
+        ),
+        addin_module._JunctionRelationshipCandidate(
+            second,
+            "Pathway_001 · End B",
+            UUID(int=20),
+            profile,
+        ),
+    )
+    state = addin_module._AddJunctionRelationshipCommandState(
+        UUID(int=1),
+        UUID(int=2),
+        candidates,
+    )
+    selection_input = SimpleNamespace(
+        selectionCount=1,
+        selection=lambda _index: SimpleNamespace(entity=profile),
+    )
+    choice_input = SimpleNamespace(selectedItem=SimpleNamespace(name="Pathway_001 · End B"))
+    inputs = SimpleNamespace(
+        itemById=lambda identity: (
+            selection_input
+            if identity == addin_module.JUNCTION_RELATIONSHIP_GEOMETRY_INPUT_ID
+            else choice_input
+        )
+    )
+    core_module = sys.modules["adsk.core"]
+    fusion_module = sys.modules["adsk.fusion"]
+    core_module.SelectionCommandInput = SimpleNamespace(  # type: ignore[attr-defined]
+        cast=lambda value: value
+    )
+    core_module.DropDownCommandInput = SimpleNamespace(  # type: ignore[attr-defined]
+        cast=lambda value: value
+    )
+    fusion_module.Profile = SimpleNamespace(cast=lambda value: value)  # type: ignore[attr-defined]
+
+    selected = addin_module._read_junction_relationship_candidate(inputs, state)
+
+    assert selected.relationship == second
 
 
 def test_refine_selection_accepts_only_command_spine(
@@ -1400,6 +1506,103 @@ def test_interpolation_bridge_persists_selected_target(
         assert saved.controls == valid_harness.controls
 
 
+def test_junction_relationship_bridge_persists_endpoint_list(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Translate palette endpoint selections into the typed application edit.
+    """
+    control = ControlStructure(
+        UUID("37000000-0000-0000-0000-000000000001"),
+        "Junction Gate",
+        ControlKind.ROUTING_GATE,
+        "junction-token",
+    )
+    junction = JunctionDefinition(
+        UUID("38000000-0000-0000-0000-000000000001"),
+        "Junction 01",
+        control.control_id,
+    )
+    definition = replace(
+        valid_harness,
+        controls=(*valid_harness.controls, control),
+        junctions=(junction,),
+    )
+    gateway = Mock(read_harness_definition=Mock(return_value=dumps(definition)))
+    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
+    request = {
+        "harnessId": str(definition.harness_id),
+        "junctionId": str(junction.junction_id),
+        "pathwayRelationships": [
+            {
+                "pathwayId": str(definition.pathways[0].pathway_id),
+                "endpoint": "end",
+            }
+        ],
+    }
+
+    notice = addin_module._apply_palette_edit(
+        object(),
+        "update_junction_relationships",
+        json.dumps(request),
+    )
+
+    saved = loads(gateway.replace_harness_definition.call_args.args[1])
+    assert notice == "Saved junction relationships."
+    assert saved.junctions[0].pathway_relationships[0].endpoint is PathwayEndpoint.END
+
+
+def test_junction_relationship_bridge_removes_one_endpoint(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Translate one palette row removal into the atomic application edit.
+    """
+    control = ControlStructure(
+        UUID("37000000-0000-0000-0000-000000000001"),
+        "Junction Gate",
+        ControlKind.ROUTING_GATE,
+        "junction-token",
+    )
+    relationship = JunctionPathwayRelationship(
+        valid_harness.pathways[0].pathway_id,
+        PathwayEndpoint.END,
+    )
+    junction = JunctionDefinition(
+        UUID("38000000-0000-0000-0000-000000000001"),
+        "Junction 01",
+        control.control_id,
+        (relationship,),
+    )
+    definition = replace(
+        valid_harness,
+        controls=(*valid_harness.controls, control),
+        junctions=(junction,),
+    )
+    gateway = Mock(read_harness_definition=Mock(return_value=dumps(definition)))
+    monkeypatch.setattr(addin_module, "_create_harness_gateway", lambda _application: gateway)
+    request = {
+        "harnessId": str(definition.harness_id),
+        "junctionId": str(junction.junction_id),
+        "pathwayId": str(relationship.pathway_id),
+        "endpoint": relationship.endpoint.value,
+    }
+
+    notice = addin_module._apply_palette_edit(
+        object(),
+        "remove_junction_relationship",
+        json.dumps(request),
+    )
+
+    saved = loads(gateway.replace_harness_definition.call_args.args[1])
+    assert notice == "Removed junction relationship."
+    assert saved.junctions[0].pathway_relationships == ()
+
+
 def test_solid_generation_fails_native_transaction_on_kernel_error(
     addin_module: _PaletteLifecycleModule,
     monkeypatch: pytest.MonkeyPatch,
@@ -1498,6 +1701,54 @@ def test_clear_preview_palette_event_bypasses_model_edit_command(
     }
 
 
+def test_add_junction_palette_event_opens_native_selector(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Route the background-menu action through the dedicated Fusion command.
+    """
+    application = object()
+    core_module = sys.modules["adsk.core"]
+    vars(core_module)["Application"] = SimpleNamespace(get=lambda: application)
+    vars(core_module)["HTMLEventArgs"] = SimpleNamespace(cast=lambda value: value)
+    opened = Mock()
+    monkeypatch.setattr(addin_module, "_open_add_junction_command", opened)
+    data = json.dumps({"harnessId": str(UUID(int=1))})
+    args = SimpleNamespace(action="add_junction", data=data, returnData="")
+
+    addin_module._PaletteIncomingHandler().notify(args)
+
+    opened.assert_called_once_with(application, data)
+    assert json.loads(args.returnData) == {"ok": True}
+
+
+def test_add_junction_relationship_palette_event_opens_native_selector(
+    addin_module: _PaletteLifecycleModule,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Route the popup action through the pathway-ending geometry command.
+    """
+    application = object()
+    core_module = sys.modules["adsk.core"]
+    vars(core_module)["Application"] = SimpleNamespace(get=lambda: application)
+    vars(core_module)["HTMLEventArgs"] = SimpleNamespace(cast=lambda value: value)
+    opened = Mock()
+    monkeypatch.setattr(
+        addin_module,
+        "_open_add_junction_relationship_command",
+        opened,
+    )
+    data = json.dumps({"harnessId": str(UUID(int=1)), "junctionId": str(UUID(int=2))})
+    args = SimpleNamespace(action="add_junction_relationship", data=data, returnData="")
+
+    addin_module._PaletteIncomingHandler().notify(args)
+
+    opened.assert_called_once_with(application, data)
+    assert json.loads(args.returnData) == {"ok": True}
+
+
 def test_palette_records_bounded_relationship_diagram_observation(
     addin_module: _PaletteLifecycleModule,
 ) -> None:
@@ -1515,8 +1766,8 @@ def test_palette_records_bounded_relationship_diagram_observation(
                 "status": "passed",
                 "connectorCount": 4,
                 "maximumEndpointGap": 0.0,
-                "contractVersion": "1",
-                "layout": "measured-pathway-stack",
+                "contractVersion": "2",
+                "layout": "endpoint-junction-forest",
             }
         ),
         returnData="",
@@ -1528,8 +1779,8 @@ def test_palette_records_bounded_relationship_diagram_observation(
         "status": "passed",
         "connectorCount": 4,
         "maximumEndpointGap": 0.0,
-        "contractVersion": "1",
-        "layout": "measured-pathway-stack",
+        "contractVersion": "2",
+        "layout": "endpoint-junction-forest",
     }
     assert json.loads(args.returnData) == {"ok": True}
 

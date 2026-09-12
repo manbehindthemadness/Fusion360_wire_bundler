@@ -1,10 +1,15 @@
-function enableSequenceDrag(sequence, memberRows, row, memberIndex, onMove, onActivate = null) {
+function enableSequenceDrag(
+  sequence, memberRows, row, memberIndex, onMove, onActivate = null,
+  locked = false, lockedIndexes = new Set(),
+) {
   const position = document.createElement("span");
   position.className = "sequence-position";
   position.textContent = `${memberIndex + 1}`;
   position.setAttribute("aria-label", `Position ${memberIndex + 1}`);
   row.insertBefore(position, row.children[0]);
-  row.dataset.reorder = "true";
+  row.dataset.reorder = locked ? "locked" : "true";
+  memberRows.push(row);
+  if (locked) return;
   let drag = null;
   const clearDrag = () => {
     drag = null;
@@ -36,9 +41,13 @@ function enableSequenceDrag(sequence, memberRows, row, memberIndex, onMove, onAc
       return event.clientY < rect.top + rect.height / 2;
     });
     drag.target = next < 0 ? others.length : next;
+    if (lockedIndexes.has(0)) drag.target = Math.max(1, drag.target);
+    if (lockedIndexes.has(memberRows.length - 1)) {
+      drag.target = Math.min(memberRows.length - 2, drag.target);
+    }
     if (others.length) {
-      const marker = next < 0 ? others[others.length - 1] : others[next];
-      marker.dataset.drop = next < 0 ? "after" : "before";
+      const marker = memberRows[drag.target] || memberRows[memberRows.length - 1];
+      marker.dataset.drop = drag.target >= memberRows.length - 1 ? "after" : "before";
     }
   });
   row.addEventListener("pointerup", (event) => {
@@ -53,7 +62,6 @@ function enableSequenceDrag(sequence, memberRows, row, memberIndex, onMove, onAc
   });
   row.addEventListener("pointercancel", clearDrag);
   row.addEventListener("lostpointercapture", clearDrag);
-  memberRows.push(row);
 }
 
 function renderEndpointSequence(harness, wires, connections, endpoint) {

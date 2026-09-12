@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from uuid import UUID
 
-from ..domain import HarnessDefinition, WireDefinition
+from ..domain import HarnessDefinition, JunctionDefinition, PathwayEndpoint, WireDefinition
 
 
 class RelationshipNodeKind(str, Enum):
@@ -411,18 +411,30 @@ def _wire_node_ids(
     """
     Return the typed node sequence for a wire-like domain object.
     """
-    junctions = {
-        (junction.preceding_pathway_id, junction.following_pathway_id): junction
-        for junction in definition.junctions
-    }
+    junctions: dict[tuple[UUID, UUID], JunctionDefinition] = {}
+    for junction in definition.junctions:
+        preceding_ids = {
+            relationship.pathway_id
+            for relationship in junction.pathway_relationships
+            if relationship.endpoint is PathwayEndpoint.END
+        }
+        following_ids = {
+            relationship.pathway_id
+            for relationship in junction.pathway_relationships
+            if relationship.endpoint is PathwayEndpoint.START
+        }
+        for preceding_id in preceding_ids:
+            for following_id in following_ids:
+                junctions[(preceding_id, following_id)] = junction
     nodes = [_node_id(RelationshipNodeKind.CONNECTION, wire.start_connection_id)]
     for index, pathway_id in enumerate(wire.ordered_pathway_ids):
         nodes.append(_node_id(RelationshipNodeKind.PATHWAY, pathway_id))
         if index + 1 >= len(wire.ordered_pathway_ids):
             continue
         junction = junctions.get((pathway_id, wire.ordered_pathway_ids[index + 1]))
-        if junction is not None:
-            nodes.append(_node_id(RelationshipNodeKind.JUNCTION, junction.junction_id))
+        if junction is None:
+            continue
+        nodes.append(_node_id(RelationshipNodeKind.JUNCTION, junction.junction_id))
     nodes.append(_node_id(RelationshipNodeKind.CONNECTION, wire.end_connection_id))
     return tuple(nodes)
 
@@ -433,22 +445,32 @@ def _structural_edges(
     """
     Project junction relationships even when no wire occupies the pathway chain.
     """
-    return tuple(
-        edge
-        for junction in definition.junctions
-        for edge in (
-            RelationshipStructuralEdge(
-                f"junction:{junction.junction_id}:preceding",
-                _node_id(RelationshipNodeKind.PATHWAY, junction.preceding_pathway_id),
-                _node_id(RelationshipNodeKind.JUNCTION, junction.junction_id),
-            ),
-            RelationshipStructuralEdge(
-                f"junction:{junction.junction_id}:following",
-                _node_id(RelationshipNodeKind.JUNCTION, junction.junction_id),
-                _node_id(RelationshipNodeKind.PATHWAY, junction.following_pathway_id),
-            ),
-        )
-    )
+    edges: list[RelationshipStructuralEdge] = []
+    for junction in definition.junctions:
+        for relationship in junction.pathway_relationships:
+            pathway_node_id = _node_id(
+                RelationshipNodeKind.PATHWAY,
+                relationship.pathway_id,
+            )
+            junction_node_id = _node_id(
+                RelationshipNodeKind.JUNCTION,
+                junction.junction_id,
+            )
+            if relationship.endpoint is PathwayEndpoint.END:
+                source_id, target_id = pathway_node_id, junction_node_id
+                endpoint_label = "end"
+            else:
+                source_id, target_id = junction_node_id, pathway_node_id
+                endpoint_label = "start"
+            edge_id = f"junction:{junction.junction_id}:{relationship.pathway_id}:{endpoint_label}"
+            edges.append(
+                RelationshipStructuralEdge(
+                    edge_id,
+                    source_id,
+                    target_id,
+                )
+            )
+    return tuple(edges)
 
 
 def _wire_label(wire: WireDefinition) -> str:

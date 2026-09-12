@@ -14,12 +14,15 @@ import pytest
 from wire_bundler.application import (
     HarnessEditError,
     HarnessEditGateway,
+    add_junction,
+    add_junction_relationship,
     add_pathway,
     add_pathway_refine,
     add_wire_batch,
     append_pathway_gates,
     move_pathway_gate,
     move_wire_endpoint,
+    remove_junction_relationship,
     remove_pathway_gate,
     remove_wire,
     rename_pathway,
@@ -30,6 +33,7 @@ from wire_bundler.application import (
     set_wire_diameter,
     set_wire_material_overrides,
     suggest_pathway_extension_name,
+    update_junction_relationships,
     update_pathway_refine,
 )
 from wire_bundler.application.edit_harness import edit_end_members, set_interpolation
@@ -38,6 +42,10 @@ from wire_bundler.domain import (
     ControlKind,
     ControlStructure,
     HarnessDefinition,
+    JunctionDefinition,
+    JunctionPathwayRelationship,
+    PathwayDefinition,
+    PathwayEndpoint,
     RefineGeometry,
     WireColor,
     WireDefinition,
@@ -55,6 +63,408 @@ SOURCE_2_ID = UUID("20000000-0000-0000-0000-000000000003")
 END_2_ID = UUID("20000000-0000-0000-0000-000000000004")
 EXTENSION_ID = UUID("35000000-0000-0000-0000-000000000002")
 JUNCTION_ID = UUID("36000000-0000-0000-0000-000000000001")
+ISOLATED_CONTROL_ID = UUID("37000000-0000-0000-0000-000000000001")
+ISOLATED_JUNCTION_ID = UUID("37000000-0000-0000-0000-000000000002")
+
+
+def test_adds_isolated_junction_from_unused_geometry(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Persist an unused profile as a named routing control with no pathway links.
+    """
+    gateway = _recording_gateway(valid_harness)
+    identifiers = iter((ISOLATED_CONTROL_ID, ISOLATED_JUNCTION_ID))
+
+    junction = add_junction(
+        valid_harness.harness_id,
+        " isolated-profile-token ",
+        gateway,
+        id_factory=lambda: next(identifiers),
+    )
+
+    stored = loads(gateway.serialized_definition)
+    control = stored.controls[-1]
+    assert control.control_id == ISOLATED_CONTROL_ID
+    assert control.name == "Routing Gate 02"
+    assert control.kind is ControlKind.ROUTING_GATE
+    assert control.entity_token == "isolated-profile-token"
+    assert control.interpolation == valid_harness.gate_defaults
+    assert junction == stored.junctions[-1]
+    assert junction.junction_id == ISOLATED_JUNCTION_ID
+    assert junction.name == "Junction 01"
+    assert junction.pathway_relationships == ()
+    assert stored.wires == valid_harness.wires
+
+
+@pytest.mark.parametrize("entity_token", ["fusion-start-token", "fusion-gate-token"])
+def test_rejects_junction_geometry_registered_by_any_harness_member(
+    valid_harness: HarnessDefinition,
+    entity_token: str,
+) -> None:
+    """
+    Keep connection members and routing controls exclusive from new junctions.
+    """
+    gateway = _recording_gateway(valid_harness)
+
+    with pytest.raises(ValueError, match="already registered"):
+        add_junction(valid_harness.harness_id, entity_token, gateway)
+
+    assert gateway.writes == []
+
+
+def test_rejects_junction_geometry_registered_as_additional_connection_member(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Include every profile in an endpoint stack in the registration boundary.
+    """
+    first_connection = replace(
+        valid_harness.connections[0],
+        additional_entity_tokens=("additional-end-token",),
+    )
+    definition = replace(
+        valid_harness,
+        connections=(first_connection, *valid_harness.connections[1:]),
+    )
+    gateway = _recording_gateway(definition)
+
+    with pytest.raises(ValueError, match="already registered"):
+        add_junction(definition.harness_id, "additional-end-token", gateway)
+
+    assert gateway.writes == []
+
+
+def test_add_junction_rejects_invalid_identity_and_restores_failed_write(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Reject invalid drafts and preserve exact metadata after persistence failure.
+    """
+    gateway = _recording_gateway(valid_harness)
+    with pytest.raises(ValueError, match="reference Fusion geometry"):
+        add_junction(valid_harness.harness_id, " ", gateway)
+    with pytest.raises(ValueError, match="identity is already in use"):
+        add_junction(
+            valid_harness.harness_id,
+            "unused-token",
+            gateway,
+            id_factory=lambda: valid_harness.controls[0].control_id,
+        )
+    assert gateway.writes == []
+
+    failed_gateway = _recording_gateway(valid_harness, (RuntimeError("write failed"), None))
+    with pytest.raises(RuntimeError, match="write failed"):
+        add_junction(
+            valid_harness.harness_id,
+            "unused-token",
+            failed_gateway,
+            id_factory=iter((ISOLATED_CONTROL_ID, ISOLATED_JUNCTION_ID)).__next__,
+        )
+    assert failed_gateway.serialized_definition == dumps(valid_harness)
+
+
+def test_updates_branch_relationships_and_refreshes_wire_controls(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Replace an existing junction's complete endpoint set without changing wire paths.
+    """
+    first_pathway = valid_harness.pathways[0]
+    second_control = ControlStructure(
+        GATE_2_ID, "Routing Gate 02", ControlKind.ROUTING_GATE, "second-gate"
+    )
+    third_control = ControlStructure(
+        GATE_3_ID, "Routing Gate 03", ControlKind.ROUTING_GATE, "third-gate"
+    )
+    junction_control = ControlStructure(
+        ISOLATED_CONTROL_ID,
+        "Routing Gate 04",
+        ControlKind.ROUTING_GATE,
+        "junction-gate",
+    )
+    second_pathway = PathwayDefinition(
+        EXTENSION_ID,
+        "Branch A",
+        first_pathway.routing_mode,
+        (GATE_2_ID,),
+    )
+    third_pathway_id = UUID("35000000-0000-0000-0000-000000000003")
+    third_pathway = PathwayDefinition(
+        third_pathway_id,
+        "Branch B",
+        first_pathway.routing_mode,
+        (GATE_3_ID,),
+    )
+    junction = JunctionDefinition(
+        ISOLATED_JUNCTION_ID,
+        "Junction 01",
+        ISOLATED_CONTROL_ID,
+        (
+            JunctionPathwayRelationship(first_pathway.pathway_id, PathwayEndpoint.END),
+            JunctionPathwayRelationship(EXTENSION_ID, PathwayEndpoint.START),
+        ),
+    )
+    wire = replace(
+        valid_harness.wires[0],
+        ordered_pathway_ids=(first_pathway.pathway_id, EXTENSION_ID),
+        ordered_control_ids=(
+            first_pathway.ordered_control_ids[0],
+            ISOLATED_CONTROL_ID,
+            GATE_2_ID,
+        ),
+    )
+    definition = replace(
+        valid_harness,
+        controls=(*valid_harness.controls, second_control, third_control, junction_control),
+        pathways=(first_pathway, second_pathway, third_pathway),
+        junctions=(junction,),
+        wires=(wire,),
+    )
+    gateway = _recording_gateway(definition)
+
+    updated = update_junction_relationships(
+        definition.harness_id,
+        junction.junction_id,
+        (
+            JunctionPathwayRelationship(third_pathway_id, PathwayEndpoint.START),
+            JunctionPathwayRelationship(first_pathway.pathway_id, PathwayEndpoint.END),
+        ),
+        gateway,
+    )
+
+    stored = loads(gateway.serialized_definition)
+    assert updated.pathway_relationships == (
+        JunctionPathwayRelationship(first_pathway.pathway_id, PathwayEndpoint.END),
+        JunctionPathwayRelationship(third_pathway_id, PathwayEndpoint.START),
+    )
+    assert stored.wires[0].ordered_pathway_ids == wire.ordered_pathway_ids
+    assert stored.wires[0].ordered_control_ids == (
+        first_pathway.ordered_control_ids[0],
+        GATE_2_ID,
+    )
+
+
+def test_atomic_junction_relationship_edits_allow_wire_free_drafts(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Keep pathway topology editable before any conductor membership exists.
+    """
+    pathway = valid_harness.pathways[0]
+    control = ControlStructure(
+        ISOLATED_CONTROL_ID,
+        "Junction Gate",
+        ControlKind.ROUTING_GATE,
+        "junction-gate",
+    )
+    junction = JunctionDefinition(
+        ISOLATED_JUNCTION_ID,
+        "Junction 01",
+        control.control_id,
+    )
+    definition = replace(
+        valid_harness,
+        controls=(*valid_harness.controls, control),
+        junctions=(junction,),
+        wires=(),
+    )
+    gateway = _recording_gateway(definition)
+    relationship = JunctionPathwayRelationship(pathway.pathway_id, PathwayEndpoint.END)
+
+    attached = add_junction_relationship(
+        definition.harness_id,
+        junction.junction_id,
+        relationship,
+        gateway,
+    )
+    detached = remove_junction_relationship(
+        definition.harness_id,
+        junction.junction_id,
+        relationship,
+        gateway,
+    )
+
+    assert attached.pathway_relationships == (relationship,)
+    assert detached.pathway_relationships == ()
+    assert loads(gateway.serialized_definition).wires == ()
+
+
+def test_related_pathway_boundary_controls_cannot_move_or_be_removed(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Preserve controls defining a junction-related pathway endpoint.
+    """
+    definition = _expanded_harness(valid_harness)
+    pathway = definition.pathways[0]
+    junction_control = ControlStructure(
+        ISOLATED_CONTROL_ID,
+        "Routing Gate 04",
+        ControlKind.ROUTING_GATE,
+        "junction-gate",
+    )
+    junction = JunctionDefinition(
+        ISOLATED_JUNCTION_ID,
+        "Junction 01",
+        ISOLATED_CONTROL_ID,
+        (JunctionPathwayRelationship(pathway.pathway_id, PathwayEndpoint.START),),
+    )
+    definition = replace(
+        definition,
+        controls=(*definition.controls, junction_control),
+        junctions=(junction,),
+    )
+    gateway = _recording_gateway(definition)
+
+    with pytest.raises(ValueError, match="junction-related"):
+        move_pathway_gate(
+            definition.harness_id,
+            pathway.pathway_id,
+            pathway.ordered_control_ids[0],
+            1,
+            gateway,
+        )
+    with pytest.raises(ValueError, match="junction-related"):
+        remove_pathway_gate(
+            definition.harness_id,
+            pathway.pathway_id,
+            pathway.ordered_control_ids[0],
+            gateway,
+        )
+    assert gateway.writes == []
+
+
+def test_new_controls_stay_inside_junction_related_pathway_boundaries(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Clamp appended gates and refines inside both endpoint boundary controls.
+    """
+    definition = _expanded_harness(valid_harness)
+    pathway = definition.pathways[0]
+    junction_controls = (
+        ControlStructure(
+            ISOLATED_CONTROL_ID,
+            "Routing Gate 04",
+            ControlKind.ROUTING_GATE,
+            "start-junction-gate",
+        ),
+        ControlStructure(
+            UUID("37000000-0000-0000-0000-000000000003"),
+            "Routing Gate 05",
+            ControlKind.ROUTING_GATE,
+            "end-junction-gate",
+        ),
+    )
+    junctions = (
+        JunctionDefinition(
+            ISOLATED_JUNCTION_ID,
+            "Junction 01",
+            junction_controls[0].control_id,
+            (JunctionPathwayRelationship(pathway.pathway_id, PathwayEndpoint.START),),
+        ),
+        JunctionDefinition(
+            UUID("37000000-0000-0000-0000-000000000004"),
+            "Junction 02",
+            junction_controls[1].control_id,
+            (JunctionPathwayRelationship(pathway.pathway_id, PathwayEndpoint.END),),
+        ),
+    )
+    definition = replace(
+        definition,
+        controls=(*definition.controls, *junction_controls),
+        junctions=junctions,
+    )
+    gateway = _recording_gateway(definition)
+    appended_id = UUID("37000000-0000-0000-0000-000000000005")
+    append_pathway_gates(
+        definition.harness_id,
+        pathway.pathway_id,
+        ("appended-gate",),
+        gateway,
+        id_factory=lambda: appended_id,
+    )
+    refine_id = UUID("37000000-0000-0000-0000-000000000006")
+    add_pathway_refine(
+        definition.harness_id,
+        pathway.pathway_id,
+        0,
+        RefineGeometry(
+            (4.0, 5.0, 6.0),
+            (1.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0),
+            10.0,
+        ),
+        gateway,
+        id_factory=lambda: refine_id,
+    )
+
+    stored_pathway = loads(gateway.serialized_definition).pathways[0]
+    first, second, third = pathway.ordered_control_ids
+    assert stored_pathway.ordered_control_ids == (
+        first,
+        refine_id,
+        second,
+        appended_id,
+        third,
+    )
+
+
+def test_rejects_insertion_when_one_control_defines_both_endpoint_boundaries(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Require an endpoint relationship to be detached before creating interior space.
+    """
+    pathway = valid_harness.pathways[0]
+    junction_control_ids = (
+        ISOLATED_CONTROL_ID,
+        UUID("37000000-0000-0000-0000-000000000003"),
+    )
+    controls = (
+        ControlStructure(
+            junction_control_ids[0],
+            "Routing Gate 02",
+            ControlKind.ROUTING_GATE,
+            "start-junction-gate",
+        ),
+        ControlStructure(
+            junction_control_ids[1],
+            "Routing Gate 03",
+            ControlKind.ROUTING_GATE,
+            "end-junction-gate",
+        ),
+    )
+    junctions = tuple(
+        JunctionDefinition(
+            UUID(f"37000000-0000-0000-0000-00000000000{index + 7}"),
+            f"Junction 0{index + 1}",
+            control.control_id,
+            (
+                JunctionPathwayRelationship(
+                    pathway.pathway_id,
+                    PathwayEndpoint.START if index == 0 else PathwayEndpoint.END,
+                ),
+            ),
+        )
+        for index, control in enumerate(controls)
+    )
+    definition = replace(
+        valid_harness,
+        controls=(*valid_harness.controls, *controls),
+        junctions=junctions,
+    )
+    gateway = _recording_gateway(definition)
+
+    with pytest.raises(ValueError, match="no interior insertion position"):
+        append_pathway_gates(
+            definition.harness_id,
+            pathway.pathway_id,
+            ("new-gate",),
+            gateway,
+        )
+    assert gateway.writes == []
 
 
 def test_segments_pathway_at_standalone_junction_and_preserves_wire_route(

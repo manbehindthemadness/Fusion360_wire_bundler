@@ -7,7 +7,12 @@ from uuid import UUID
 
 from wire_bundler.domain import (
     ControlKind,
+    ControlStructure,
     HarnessDefinition,
+    JunctionDefinition,
+    JunctionPathwayRelationship,
+    PathwayDefinition,
+    PathwayEndpoint,
     RoutingMode,
     WireDefinition,
     validate_harness,
@@ -21,6 +26,103 @@ def test_accepts_complete_harness(valid_harness: HarnessDefinition) -> None:
     issues = validate_harness(valid_harness)
 
     assert issues == ()
+
+
+def test_accepts_isolated_and_single_ended_junctions(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Allow zero or one endpoint relationship during incremental construction.
+    """
+    control = ControlStructure(
+        UUID("37000000-0000-0000-0000-000000000001"),
+        "Routing Gate 02",
+        ControlKind.ROUTING_GATE,
+        "isolated-profile-token",
+    )
+    junction = JunctionDefinition(
+        UUID("37000000-0000-0000-0000-000000000002"),
+        "Junction 01",
+        control.control_id,
+    )
+    isolated = replace(
+        valid_harness,
+        controls=(*valid_harness.controls, control),
+        junctions=(junction,),
+    )
+    assert validate_harness(isolated) == ()
+
+    partial = replace(
+        isolated,
+        junctions=(
+            replace(
+                junction,
+                pathway_relationships=(
+                    JunctionPathwayRelationship(
+                        valid_harness.pathways[0].pathway_id,
+                        PathwayEndpoint.END,
+                    ),
+                ),
+            ),
+        ),
+    )
+    assert validate_harness(partial) == ()
+
+
+def test_rejects_claimed_endpoints_and_closed_topology(
+    valid_harness: HarnessDefinition,
+) -> None:
+    """
+    Keep endpoint ownership exclusive and junction topology acyclic.
+    """
+    first = valid_harness.pathways[0]
+    second_id = UUID("35000000-0000-0000-0000-000000000002")
+    second = PathwayDefinition(
+        second_id,
+        "Branch",
+        first.routing_mode,
+        first.ordered_control_ids,
+    )
+    controls = tuple(
+        ControlStructure(
+            UUID(f"37000000-0000-0000-0000-00000000000{index}"),
+            f"Junction Gate {index}",
+            ControlKind.ROUTING_GATE,
+            f"junction-{index}",
+        )
+        for index in (1, 2)
+    )
+    first_junction = JunctionDefinition(
+        UUID("38000000-0000-0000-0000-000000000001"),
+        "Junction 01",
+        controls[0].control_id,
+        (
+            JunctionPathwayRelationship(first.pathway_id, PathwayEndpoint.END),
+            JunctionPathwayRelationship(second_id, PathwayEndpoint.START),
+        ),
+    )
+    second_junction = JunctionDefinition(
+        UUID("38000000-0000-0000-0000-000000000002"),
+        "Junction 02",
+        controls[1].control_id,
+        (
+            JunctionPathwayRelationship(first.pathway_id, PathwayEndpoint.END),
+            JunctionPathwayRelationship(second_id, PathwayEndpoint.END),
+            JunctionPathwayRelationship(first.pathway_id, PathwayEndpoint.START),
+        ),
+    )
+    definition = replace(
+        valid_harness,
+        controls=(*valid_harness.controls, *controls),
+        pathways=(first, second),
+        junctions=(first_junction, second_junction),
+        wires=(),
+    )
+
+    issue_codes = {issue.code for issue in validate_harness(definition)}
+
+    assert "claimed_pathway_endpoint" in issue_codes
+    assert "cyclic_junction_topology" in issue_codes
 
 
 def test_reports_missing_references(valid_harness: HarnessDefinition) -> None:

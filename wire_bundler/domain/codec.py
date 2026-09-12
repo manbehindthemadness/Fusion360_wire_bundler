@@ -19,7 +19,9 @@ from .model import (
     HarnessDefinition,
     InterpolationSettings,
     JunctionDefinition,
+    JunctionPathwayRelationship,
     PathwayDefinition,
+    PathwayEndpoint,
     RefineGeometry,
     RoutingMode,
     StripePattern,
@@ -32,7 +34,7 @@ from .model import (
     WireStripe,
 )
 
-EnumType = TypeVar("EnumType", RoutingMode, ControlKind, StripePattern)
+EnumType = TypeVar("EnumType", RoutingMode, ControlKind, PathwayEndpoint, StripePattern)
 
 
 class DefinitionParseError(ValueError):
@@ -103,7 +105,7 @@ def loads(serialized: str) -> HarnessDefinition:
     )
     junctions = (
         tuple(
-            _parse_junction(item, f"$.junctions[{index}]")
+            _parse_junction(item, f"$.junctions[{index}]", schema_version)
             for index, item in enumerate(_require_list(payload, "junctions", "$.junctions"))
         )
         if schema_version >= 6
@@ -212,8 +214,13 @@ def _definition_to_dict(definition: HarnessDefinition) -> dict[str, Any]:
                 "junction_id": str(junction.junction_id),
                 "name": junction.name,
                 "control_id": str(junction.control_id),
-                "preceding_pathway_id": str(junction.preceding_pathway_id),
-                "following_pathway_id": str(junction.following_pathway_id),
+                "pathway_relationships": [
+                    {
+                        "pathway_id": str(relationship.pathway_id),
+                        "endpoint": relationship.endpoint.value,
+                    }
+                    for relationship in junction.pathway_relationships
+                ],
             }
             for junction in definition.junctions
         ],
@@ -593,21 +600,72 @@ def _parse_pathway(raw_value: object, path: str) -> PathwayDefinition:
     return pathway
 
 
-def _parse_junction(raw_value: object, path: str) -> JunctionDefinition:
+def _parse_junction(
+    raw_value: object,
+    path: str,
+    schema_version: int,
+) -> JunctionDefinition:
     """
-    Parse one standalone pathway junction.
+    Parse one junction and migrate legacy directed pathway relationships.
     """
     value = _require_mapping(raw_value, path)
+    relationships: tuple[JunctionPathwayRelationship, ...]
+    if schema_version >= 8:
+        relationships = tuple(
+            _parse_junction_relationship(
+                item,
+                f"{path}.pathway_relationships[{index}]",
+            )
+            for index, item in enumerate(
+                _require_list(value, "pathway_relationships", f"{path}.pathway_relationships")
+            )
+        )
+    else:
+        if schema_version >= 7:
+            preceding_pathway_id = _require_optional_uuid(
+                value, "preceding_pathway_id", f"{path}.preceding_pathway_id"
+            )
+            following_pathway_id = _require_optional_uuid(
+                value, "following_pathway_id", f"{path}.following_pathway_id"
+            )
+        else:
+            preceding_pathway_id = _require_uuid(
+                value, "preceding_pathway_id", f"{path}.preceding_pathway_id"
+            )
+            following_pathway_id = _require_uuid(
+                value, "following_pathway_id", f"{path}.following_pathway_id"
+            )
+        relationships = tuple(
+            relationship
+            for relationship in (
+                JunctionPathwayRelationship(preceding_pathway_id, PathwayEndpoint.END)
+                if preceding_pathway_id is not None
+                else None,
+                JunctionPathwayRelationship(following_pathway_id, PathwayEndpoint.START)
+                if following_pathway_id is not None
+                else None,
+            )
+            if relationship is not None
+        )
     return JunctionDefinition(
         junction_id=_require_uuid(value, "junction_id", f"{path}.junction_id"),
         name=_require_str(value, "name", f"{path}.name"),
         control_id=_require_uuid(value, "control_id", f"{path}.control_id"),
-        preceding_pathway_id=_require_uuid(
-            value, "preceding_pathway_id", f"{path}.preceding_pathway_id"
-        ),
-        following_pathway_id=_require_uuid(
-            value, "following_pathway_id", f"{path}.following_pathway_id"
-        ),
+        pathway_relationships=relationships,
+    )
+
+
+def _parse_junction_relationship(
+    raw_value: object,
+    path: str,
+) -> JunctionPathwayRelationship:
+    """
+    Parse one endpoint-qualified junction relationship.
+    """
+    value = _require_mapping(raw_value, path)
+    return JunctionPathwayRelationship(
+        pathway_id=_require_uuid(value, "pathway_id", f"{path}.pathway_id"),
+        endpoint=_require_enum(PathwayEndpoint, value, "endpoint", f"{path}.endpoint"),
     )
 
 
@@ -707,6 +765,18 @@ def _require_str(value: Mapping[str, Any], key: str, path: str) -> str:
     if not isinstance(raw_value, str):
         raise DefinitionParseError(path, "expected a string")
     return raw_value
+
+
+def _require_optional_uuid(
+    value: Mapping[str, Any],
+    key: str,
+    path: str,
+) -> Optional[UUID]:
+    """
+    Require a UUID field whose explicit value may be null.
+    """
+    raw_value = _require_value(value, key, path)
+    return None if raw_value is None else _parse_uuid(raw_value, path)
 
 
 def _require_int(value: Mapping[str, Any], key: str, path: str) -> int:

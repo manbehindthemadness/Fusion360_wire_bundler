@@ -12,6 +12,7 @@ function openHarness(key) {
 function closeEditor() {
   send("clear_highlight").catch(() => {});
   closePathwayPopup();
+  closeJunctionRelationships();
   selectedHarnessKey = "";
   removeSession("wireBundler.selectedHarness");
   ui.editorView.hidden = true;
@@ -34,6 +35,7 @@ function render(state) {
     renderEditor(selected);
   } else {
     closePathwayPopup();
+    closeJunctionRelationships();
     selectedHarnessKey = "";
     removeSession("wireBundler.selectedHarness");
     ui.editorView.hidden = true;
@@ -171,12 +173,60 @@ function qaRelationshipEdgeGap(edge) {
   );
 }
 
+function qaTopologyEdgeGap(edge, diagram) {
+  if (typeof edge.getTotalLength !== "function"
+      || typeof edge.getPointAtLength !== "function"
+      || typeof edge.getScreenCTM !== "function") return Number.POSITIVE_INFINITY;
+  const endpoint = edge.dataset.endpoint;
+  const pathway = diagram.querySelector(
+    `.relationship-topology-pathway[data-pathway-id="${edge.dataset.pathwayId}"]`,
+  );
+  const junction = diagram.querySelector(
+    `.relationship-topology-junction[data-junction-id="${edge.dataset.junctionId}"]`,
+  );
+  if (!pathway || !junction) return Number.POSITIVE_INFINITY;
+  const source = endpoint === "end" ? pathway : junction;
+  const target = endpoint === "end" ? junction : pathway;
+  const matrix = edge.getScreenCTM();
+  if (!matrix) return Number.POSITIVE_INFINITY;
+  const project = (point) => ({
+    x: matrix.a * point.x + matrix.c * point.y + matrix.e,
+    y: matrix.b * point.x + matrix.d * point.y + matrix.f,
+  });
+  const start = project(edge.getPointAtLength(0));
+  const finish = project(edge.getPointAtLength(edge.getTotalLength()));
+  const sourceRect = source.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  return Math.max(
+    Math.abs(start.x - sourceRect.right),
+    Math.max(0, sourceRect.top - start.y, start.y - sourceRect.bottom),
+    Math.abs(finish.x - targetRect.left),
+    Math.max(0, targetRect.top - finish.y, finish.y - targetRect.bottom),
+  );
+}
+
+function qaRelationshipNodesOverlap(nodes) {
+  return nodes.some((node, index) => {
+    const rect = node.getBoundingClientRect();
+    return nodes.slice(index + 1).some((other) => {
+      const otherRect = other.getBoundingClientRect();
+      return rect.left < otherRect.right - 1
+        && rect.right > otherRect.left + 1
+        && rect.top < otherRect.bottom - 1
+        && rect.bottom > otherRect.top + 1;
+    });
+  });
+}
+
 function qaObserveRelationshipDiagram() {
   const selectedHarness = currentState.harnesses.find(
     (candidate) => harnessKey(candidate) === selectedHarnessKey,
   );
-  const harness = selectedHarness?.pathways?.length
-    ? selectedHarness : currentState.harnesses.find((candidate) => candidate.pathways?.length);
+  const hasDiagramNode = (candidate) => (
+    candidate?.pathways?.length || candidate?.junctions?.length
+  );
+  const harness = hasDiagramNode(selectedHarness)
+    ? selectedHarness : currentState.harnesses.find(hasDiagramNode);
   if (!harness) {
     void send("qa_diagram_observation", {
       status: "skipped",
@@ -214,19 +264,28 @@ function qaObserveRelationshipDiagram() {
       ...Array.from(diagram?.querySelectorAll?.(".relationship-connector") || []),
       ...Array.from(diagram?.querySelectorAll?.(".relationship-chain-link") || []),
     ];
+    const topologyEdges = Array.from(
+      diagram?.querySelectorAll?.(".relationship-topology-edges .structural-trace") || [],
+    );
+    const topologyNodes = Array.from(
+      diagram?.querySelectorAll?.(".relationship-topology-node") || [],
+    );
     const paths = Array.from(diagram?.querySelectorAll?.("path") || []);
     const connectorCount = paths.length;
-    const maximumEndpointGap = connectorEdges.length
-      ? Math.max(...connectorEdges.map(qaRelationshipEdgeGap))
-      : Number.POSITIVE_INFINITY;
+    const endpointGaps = [
+      ...connectorEdges.map(qaRelationshipEdgeGap),
+      ...topologyEdges.map((edge) => qaTopologyEdgeGap(edge, diagram)),
+    ];
+    const maximumEndpointGap = endpointGaps.length ? Math.max(...endpointGaps) : 0;
     const contractVersion = diagram?.dataset.diagramContractVersion || "";
     const layout = diagram?.dataset.diagramLayout || "";
     const passed = Boolean(workspace)
-      && pathwayGroups.length > 0
+      && pathwayGroups.length === harness.pathways.length
       && pathwayHubs.length === harness.pathways.length
       && junctionHubs.length === (harness.junctions || []).length
-      && connectorEdges.length > 0
+      && (harness.pathways.length === 0 || connectorEdges.length > 0)
       && maximumEndpointGap <= 1
+      && !qaRelationshipNodesOverlap(topologyNodes)
       && contractVersion === RELATIONSHIP_DIAGRAM_CONTRACT_VERSION
       && layout === RELATIONSHIP_DIAGRAM_LAYOUT
       && paths.every((path) => Boolean(path.getAttribute?.("d") || path.attributes?.d));
@@ -471,6 +530,41 @@ async function addPathway() {
     const response = await send("add_pathway", { harnessId: harness.harnessId });
     if (!response.ok) {
       appendNotice(response.error || "Add Pathway could not be opened.", true);
+    }
+  } catch (error) {
+    appendNotice(error.message, true);
+  }
+}
+
+async function addJunction() {
+  const harness = currentState.harnesses.find(
+    (candidate) => harnessKey(candidate) === selectedHarnessKey,
+  );
+  if (!harness || harness.status === "damaged") return;
+  appendNotice("Select an unused sketch profile for the junction…");
+  try {
+    const response = await send("add_junction", { harnessId: harness.harnessId });
+    if (!response.ok) {
+      appendNotice(response.error || "Add Junction could not be opened.", true);
+    }
+  } catch (error) {
+    appendNotice(error.message, true);
+  }
+}
+
+async function addJunctionRelationship(junctionId) {
+  const harness = currentState.harnesses.find(
+    (candidate) => harnessKey(candidate) === selectedHarnessKey,
+  );
+  if (!harness || harness.status === "damaged") return;
+  appendNotice("Select pathway-ending geometry…");
+  try {
+    const response = await send("add_junction_relationship", {
+      harnessId: harness.harnessId,
+      junctionId,
+    });
+    if (!response.ok) {
+      appendNotice(response.error || "Add Relationship could not be opened.", true);
     }
   } catch (error) {
     appendNotice(error.message, true);

@@ -21,6 +21,8 @@ import adsk.fusion
 from .application import (
     HarnessLoadResult,
     RelationshipMap,
+    add_junction,
+    add_junction_relationship,
     add_pathway,
     add_pathway_refine,
     add_wire_batch,
@@ -32,6 +34,7 @@ from .application import (
     load_wire_material_catalog,
     move_pathway_gate,
     move_wire_endpoint,
+    remove_junction_relationship,
     remove_pathway_gate,
     remove_wire,
     rename_pathway,
@@ -44,12 +47,15 @@ from .application import (
     suggest_harness_name,
     suggest_pathway_extension_name,
     suggest_pathway_name,
+    update_junction_relationships,
     update_pathway_refine,
 )
 from .application.edit_harness import edit_end_members, set_interpolation
 from .domain import (
     ControlKind,
     HarnessDefinition,
+    JunctionPathwayRelationship,
+    PathwayEndpoint,
     RefineGeometry,
     RoutingMode,
     StripePattern,
@@ -106,6 +112,8 @@ from .routing.geometry import cross, unit
 COMMAND_ID = "kev0_wire_bundler_harness_builder"
 CREATE_COMMAND_ID = "kev0_wire_bundler_create_harness"
 ADD_PATHWAY_COMMAND_ID = "kev0_wire_bundler_add_pathway"
+ADD_JUNCTION_COMMAND_ID = "kev0_wire_bundler_add_junction"
+ADD_JUNCTION_RELATIONSHIP_COMMAND_ID = "kev0_wire_bundler_add_junction_relationship"
 APPEND_GATES_COMMAND_ID = "kev0_wire_bundler_append_pathway_gates"
 ADD_REFINE_COMMAND_ID = "kev0_wire_bundler_add_pathway_refine"
 SEGMENT_PATHWAY_COMMAND_ID = "kev0_wire_bundler_segment_pathway"
@@ -116,6 +124,8 @@ COMMAND_NAME = "Harness Builder"
 COMMAND_DESCRIPTION = "Create and edit wire, ribbon, and harness assemblies."
 CREATE_COMMAND_NAME = "Create Harness"
 ADD_PATHWAY_COMMAND_NAME = "Add Pathway"
+ADD_JUNCTION_COMMAND_NAME = "Add Junction"
+ADD_JUNCTION_RELATIONSHIP_COMMAND_NAME = "Add Junction Relationship"
 APPEND_GATES_COMMAND_NAME = "Add Gates"
 ADD_REFINE_COMMAND_NAME = "Add Refine Point"
 SEGMENT_PATHWAY_COMMAND_NAME = "Segment Pathway"
@@ -130,6 +140,9 @@ PANEL_IDS = ("SolidScriptsAddinsPanel", "InsertAssemblePanel")
 HARNESS_NAME_INPUT_ID = "harness_name"
 PATHWAY_NAME_INPUT_ID = "pathway_name"
 PATHWAY_GATES_INPUT_ID = "pathway_gates"
+JUNCTION_PROFILE_INPUT_ID = "junction_profile"
+JUNCTION_RELATIONSHIP_GEOMETRY_INPUT_ID = "junction_relationship_geometry"
+JUNCTION_RELATIONSHIP_CHOICE_INPUT_ID = "junction_relationship_choice"
 REFINE_SPINE_INPUT_ID = "refine_spine"
 REFINE_RADIUS_INPUT_ID = "refine_radius"
 REFINE_TRANSFORM_INPUT_ID = "refine_transform"
@@ -166,6 +179,8 @@ _ROUTING_MODE_LABELS = {
 
 _handlers: list[object] = []
 _pending_pathway_harness_id: Optional[UUID] = None
+_pending_junction_harness_id: Optional[UUID] = None
+_pending_junction_relationship_ids: Optional[tuple[UUID, UUID]] = None
 _pending_append_gate_ids: Optional[tuple[UUID, UUID]] = None
 _pending_refine_ids: Optional[tuple[UUID, UUID]] = None
 _pending_segment_ids: Optional[tuple[UUID, UUID]] = None
@@ -186,6 +201,8 @@ _graphics_cache_save_document: Optional[object] = None
 _PALETTE_EDIT_NAMES = {
     "delete_damaged_harness": "Delete Damaged Harness",
     "move_pathway_gate": "Reorder Pathway Gates",
+    "update_junction_relationships": "Edit Junction Relationships",
+    "remove_junction_relationship": "Remove Junction Relationship",
     "remove_pathway_gate": "Remove Pathway Gate",
     "move_wire_endpoint": "Reorder Wire Ends",
     "remove_wire": "Delete Wire",
@@ -670,6 +687,509 @@ class _AddPathwayCreatedHandler(adsk.core.CommandCreatedEventHandler):
             raise
 
 
+@dataclass(frozen=True)
+class _AddJunctionCommandState:
+    """
+    Retain the selected harness and its already registered profile entities.
+    """
+
+    harness_id: UUID
+    registered_profiles: tuple[object, ...]
+
+
+def _junction_profile_token(
+    command_inputs: adsk.core.CommandInputs,
+    state: _AddJunctionCommandState,
+) -> str:
+    """
+    Return one unregistered selected sketch-profile token.
+    """
+    selection_input = adsk.core.SelectionCommandInput.cast(
+        command_inputs.itemById(JUNCTION_PROFILE_INPUT_ID)
+    )
+    if selection_input is None or selection_input.selectionCount != 1:
+        raise ValueError("Select one unused sketch profile for the junction.")
+    selection = selection_input.selection(0)
+    profile = adsk.fusion.Profile.cast(selection.entity if selection is not None else None)
+    if profile is None or not profile.entityToken.strip():
+        raise ValueError("Junction selection is not a valid sketch profile.")
+    selected = _native_fusion_entity(profile)
+    if any(selected == registered for registered in state.registered_profiles):
+        raise ValueError("Selected geometry is already registered in this harness.")
+    return profile.entityToken
+
+
+class _AddJunctionPreSelectHandler(adsk.core.SelectionEventHandler):
+    """
+    Prevent selection of profiles already registered in the owning harness.
+    """
+
+    def __init__(self, state: _AddJunctionCommandState) -> None:
+        """
+        Retain resolved registered profile entities.
+        """
+        super().__init__()
+        self._state = state
+
+    def notify(self, args: adsk.core.SelectionEventArgs) -> None:
+        """
+        Allow only an unused sketch profile.
+        """
+        selection = args.selection
+        profile = adsk.fusion.Profile.cast(selection.entity if selection is not None else None)
+        selected = _native_fusion_entity(profile) if profile is not None else None
+        args.isSelectable = profile is not None and all(
+            selected != registered for registered in self._state.registered_profiles
+        )
+
+
+class _AddJunctionValidateInputsHandler(adsk.core.ValidateInputsEventHandler):
+    """
+    Require exactly one currently unregistered sketch profile.
+    """
+
+    def __init__(self, state: _AddJunctionCommandState) -> None:
+        """
+        Retain the selection-validation state.
+        """
+        super().__init__()
+        self._state = state
+
+    def notify(self, args: adsk.core.ValidateInputsEventArgs) -> None:
+        """
+        Enable execution only for an eligible selection.
+        """
+        try:
+            _junction_profile_token(args.inputs, self._state)
+        except (AttributeError, TypeError, ValueError):
+            args.areInputsValid = False
+            return
+        args.areInputsValid = True
+
+
+class _AddJunctionExecuteHandler(adsk.core.CommandEventHandler):
+    """
+    Persist one isolated junction inside Fusion's command transaction.
+    """
+
+    def __init__(self, state: _AddJunctionCommandState) -> None:
+        """
+        Retain the selected harness and registered geometry state.
+        """
+        super().__init__()
+        self._state = state
+
+    def notify(self, args: adsk.core.CommandEventArgs) -> None:
+        """
+        Add the junction and refresh the palette projection.
+        """
+        application = adsk.core.Application.get()
+        try:
+            junction = add_junction(
+                self._state.harness_id,
+                _junction_profile_token(args.command.commandInputs, self._state),
+                _create_harness_gateway(application),
+            )
+            _send_palette_state(application, f"Created {junction.name}.")
+        except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+            args.executeFailed = True
+            args.executeFailedMessage = str(error)
+            _log_to_fusion(f"Add junction failed: {error}\n{traceback.format_exc()}")
+
+
+class _AddJunctionCreatedHandler(adsk.core.CommandCreatedEventHandler):
+    """
+    Build the unused-profile selector for isolated junction creation.
+    """
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
+        """
+        Resolve registered profiles and attach command-lifetime handlers.
+        """
+        global _pending_junction_harness_id
+
+        harness_id = _pending_junction_harness_id
+        _pending_junction_harness_id = None
+        try:
+            if harness_id is None:
+                raise RuntimeError("No harness was selected for junction creation.")
+            application = adsk.core.Application.get()
+            design = _require_active_design(application)
+            definition = loads(
+                _create_harness_gateway(application).read_harness_definition(harness_id)
+            )
+            registered_tokens = {
+                token for connection in definition.connections for token in connection.member_tokens
+            } | {control.entity_token for control in definition.controls if control.entity_token}
+            registered_profiles: list[object] = []
+            for token in registered_tokens:
+                for entity in design.findEntityByToken(token) or ():
+                    profile = adsk.fusion.Profile.cast(entity)
+                    if profile is not None:
+                        registered_profiles.append(_native_fusion_entity(profile))
+            state = _AddJunctionCommandState(harness_id, tuple(registered_profiles))
+            selection_input = args.command.commandInputs.addSelectionInput(
+                JUNCTION_PROFILE_INPUT_ID,
+                "Junction Profile",
+                "Select one sketch profile not already registered in this harness",
+            )
+            if selection_input is None or not selection_input.addSelectionFilter("Profiles"):
+                raise RuntimeError("Fusion could not configure junction-profile selection.")
+            if not selection_input.setSelectionLimits(1, 1):
+                raise RuntimeError("Fusion could not limit junction-profile selection.")
+            preselect_handler = _AddJunctionPreSelectHandler(state)
+            validate_handler = _AddJunctionValidateInputsHandler(state)
+            execute_handler = _AddJunctionExecuteHandler(state)
+            if not args.command.preSelect.add(preselect_handler):
+                raise RuntimeError("Fusion could not filter junction-profile selection.")
+            if not args.command.validateInputs.add(validate_handler):
+                raise RuntimeError("Fusion could not validate junction creation.")
+            if not args.command.execute.add(execute_handler):
+                raise RuntimeError("Fusion could not save the junction.")
+            _handlers.extend((preselect_handler, validate_handler, execute_handler))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            _report_failure("open Add Junction")
+            raise
+
+
+@dataclass(frozen=True)
+class _JunctionRelationshipCandidate:
+    """
+    Bind one available pathway endpoint to its selectable Fusion geometry.
+    """
+
+    relationship: JunctionPathwayRelationship
+    label: str
+    control_id: UUID
+    profile: Optional[object]
+
+
+@dataclass(frozen=True)
+class _AddJunctionRelationshipCommandState:
+    """
+    Retain one junction and its currently selectable pathway endpoints.
+    """
+
+    harness_id: UUID
+    junction_id: UUID
+    candidates: tuple[_JunctionRelationshipCandidate, ...]
+
+
+def _junction_relationship_candidates(
+    definition: HarnessDefinition,
+    junction_id: UUID,
+    design: adsk.fusion.Design,
+) -> tuple[_JunctionRelationshipCandidate, ...]:
+    """
+    Resolve unclaimed pathway boundaries to profiles or persistent refine markers.
+    """
+    if all(junction.junction_id != junction_id for junction in definition.junctions):
+        raise ValueError("Selected junction no longer exists.")
+    claimed = {
+        (relationship.pathway_id, relationship.endpoint)
+        for junction in definition.junctions
+        for relationship in junction.pathway_relationships
+    }
+    controls = {control.control_id: control for control in definition.controls}
+    candidates: list[_JunctionRelationshipCandidate] = []
+    for pathway in definition.pathways:
+        if not pathway.ordered_control_ids:
+            continue
+        for endpoint, control_id, label in (
+            (PathwayEndpoint.START, pathway.ordered_control_ids[0], "End A"),
+            (PathwayEndpoint.END, pathway.ordered_control_ids[-1], "End B"),
+        ):
+            relationship = JunctionPathwayRelationship(pathway.pathway_id, endpoint)
+            if (relationship.pathway_id, relationship.endpoint) in claimed:
+                continue
+            control = controls.get(control_id)
+            if control is None:
+                continue
+            profile: Optional[object] = None
+            if control.kind is not ControlKind.REFINE:
+                entities = design.findEntityByToken(control.entity_token) or ()
+                profile = next(
+                    (
+                        candidate
+                        for entity in entities
+                        if (candidate := adsk.fusion.Profile.cast(entity)) is not None
+                    ),
+                    None,
+                )
+                if profile is None:
+                    continue
+            candidates.append(
+                _JunctionRelationshipCandidate(
+                    relationship,
+                    f"{pathway.name} · {label}",
+                    control_id,
+                    profile,
+                )
+            )
+    return tuple(candidates)
+
+
+def _matching_junction_relationship_candidates(
+    entity: object,
+    state: _AddJunctionRelationshipCommandState,
+) -> tuple[_JunctionRelationshipCandidate, ...]:
+    """
+    Return available endpoint candidates represented by one selected entity.
+    """
+    marker_id = getattr(entity, "id", None)
+    marker_control_id: Optional[UUID] = None
+    if isinstance(marker_id, str):
+        try:
+            marker_control_id = UUID(marker_id)
+        except ValueError:
+            marker_control_id = None
+    profile = adsk.fusion.Profile.cast(entity)
+    selected_profile = _native_fusion_entity(profile) if profile is not None else None
+    return tuple(
+        candidate
+        for candidate in state.candidates
+        if (
+            marker_control_id == candidate.control_id
+            if candidate.profile is None
+            else selected_profile is not None
+            and selected_profile == _native_fusion_entity(candidate.profile)
+        )
+    )
+
+
+def _read_junction_relationship_candidate(
+    command_inputs: adsk.core.CommandInputs,
+    state: _AddJunctionRelationshipCommandState,
+) -> _JunctionRelationshipCandidate:
+    """
+    Resolve one selected boundary, requiring a choice only when geometry is ambiguous.
+    """
+    selection_input = adsk.core.SelectionCommandInput.cast(
+        command_inputs.itemById(JUNCTION_RELATIONSHIP_GEOMETRY_INPUT_ID)
+    )
+    if selection_input is None or selection_input.selectionCount != 1:
+        raise ValueError("Select one pathway-ending shape.")
+    selection = selection_input.selection(0)
+    entity = selection.entity if selection is not None else None
+    matches = _matching_junction_relationship_candidates(entity, state)
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise ValueError("Selected geometry is not an available pathway end.")
+    choice_input = adsk.core.DropDownCommandInput.cast(
+        command_inputs.itemById(JUNCTION_RELATIONSHIP_CHOICE_INPUT_ID)
+    )
+    selected_item = choice_input.selectedItem if choice_input is not None else None
+    for candidate in matches:
+        if selected_item is not None and selected_item.name == candidate.label:
+            return candidate
+    raise ValueError("Choose which matching pathway end to attach.")
+
+
+def _update_junction_relationship_choices(
+    command_inputs: adsk.core.CommandInputs,
+    state: _AddJunctionRelationshipCommandState,
+) -> None:
+    """
+    Show only endpoint choices represented by the currently selected geometry.
+    """
+    choice_input = adsk.core.DropDownCommandInput.cast(
+        command_inputs.itemById(JUNCTION_RELATIONSHIP_CHOICE_INPUT_ID)
+    )
+    selection_input = adsk.core.SelectionCommandInput.cast(
+        command_inputs.itemById(JUNCTION_RELATIONSHIP_GEOMETRY_INPUT_ID)
+    )
+    if choice_input is None or selection_input is None:
+        raise RuntimeError("Junction relationship inputs are unavailable.")
+    while choice_input.listItems.count:
+        item = choice_input.listItems.item(choice_input.listItems.count - 1)
+        if item is None or not item.deleteMe():
+            raise RuntimeError("Fusion could not refresh pathway-end choices.")
+    matches: tuple[_JunctionRelationshipCandidate, ...] = ()
+    if selection_input.selectionCount == 1:
+        selection = selection_input.selection(0)
+        entity = selection.entity if selection is not None else None
+        matches = _matching_junction_relationship_candidates(entity, state)
+    for index, candidate in enumerate(matches):
+        if choice_input.listItems.add(candidate.label, index == 0) is None:
+            raise RuntimeError("Fusion could not add a pathway-end choice.")
+    choice_input.isVisible = len(matches) > 1
+
+
+class _AddJunctionRelationshipPreSelectHandler(adsk.core.SelectionEventHandler):
+    """
+    Restrict relationship selection to unclaimed pathway-ending geometry.
+    """
+
+    def __init__(self, state: _AddJunctionRelationshipCommandState) -> None:
+        """
+        Retain eligible endpoint geometry for the command lifetime.
+        """
+        super().__init__()
+        self._state = state
+
+    def notify(self, args: adsk.core.SelectionEventArgs) -> None:
+        """
+        Mark only geometry representing at least one available endpoint selectable.
+        """
+        selection = args.selection
+        entity = selection.entity if selection is not None else None
+        args.isSelectable = bool(_matching_junction_relationship_candidates(entity, self._state))
+
+
+class _AddJunctionRelationshipInputChangedHandler(adsk.core.InputChangedEventHandler):
+    """
+    Narrow the endpoint choice after pathway-ending geometry is selected.
+    """
+
+    def __init__(self, state: _AddJunctionRelationshipCommandState) -> None:
+        """
+        Retain eligible endpoint geometry for the command lifetime.
+        """
+        super().__init__()
+        self._state = state
+
+    def notify(self, args: adsk.core.InputChangedEventArgs) -> None:
+        """
+        Refresh the ambiguity choice from the current selection.
+        """
+        try:
+            _update_junction_relationship_choices(args.inputs, self._state)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            _report_failure("choose junction pathway end")
+
+
+class _AddJunctionRelationshipValidateInputsHandler(adsk.core.ValidateInputsEventHandler):
+    """
+    Require one eligible geometry selection and resolved endpoint choice.
+    """
+
+    def __init__(self, state: _AddJunctionRelationshipCommandState) -> None:
+        """
+        Retain eligible endpoint geometry for validation.
+        """
+        super().__init__()
+        self._state = state
+
+    def notify(self, args: adsk.core.ValidateInputsEventArgs) -> None:
+        """
+        Enable execution only when the selection resolves unambiguously.
+        """
+        try:
+            _read_junction_relationship_candidate(args.inputs, self._state)
+        except (AttributeError, TypeError, ValueError):
+            args.areInputsValid = False
+            return
+        args.areInputsValid = True
+
+
+class _AddJunctionRelationshipExecuteHandler(adsk.core.CommandEventHandler):
+    """
+    Persist one geometry-selected junction relationship.
+    """
+
+    def __init__(self, state: _AddJunctionRelationshipCommandState) -> None:
+        """
+        Retain the target junction and eligible endpoint set.
+        """
+        super().__init__()
+        self._state = state
+
+    def notify(self, args: adsk.core.CommandEventArgs) -> None:
+        """
+        Revalidate and attach the selected endpoint in the native transaction.
+        """
+        application = adsk.core.Application.get()
+        try:
+            candidate = _read_junction_relationship_candidate(
+                args.command.commandInputs,
+                self._state,
+            )
+            add_junction_relationship(
+                self._state.harness_id,
+                self._state.junction_id,
+                candidate.relationship,
+                _create_harness_gateway(application),
+            )
+            _send_palette_state(application, f"Attached {candidate.label}.")
+        except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+            args.executeFailed = True
+            args.executeFailedMessage = str(error)
+            _log_to_fusion(f"Add junction relationship failed: {error}\n{traceback.format_exc()}")
+
+
+class _AddJunctionRelationshipCreatedHandler(adsk.core.CommandCreatedEventHandler):
+    """
+    Build the pathway-ending geometry selector for one junction.
+    """
+
+    # noinspection PyMethodMayBeStatic
+    def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
+        """
+        Resolve available boundaries and attach command-lifetime handlers.
+        """
+        global _pending_junction_relationship_ids
+
+        pending_ids = _pending_junction_relationship_ids
+        _pending_junction_relationship_ids = None
+        try:
+            if pending_ids is None:
+                raise RuntimeError("No junction was selected for relationship editing.")
+            harness_id, junction_id = pending_ids
+            application = adsk.core.Application.get()
+            design = _require_active_design(application)
+            definition = loads(
+                _create_harness_gateway(application).read_harness_definition(harness_id)
+            )
+            candidates = _junction_relationship_candidates(definition, junction_id, design)
+            if not candidates:
+                raise ValueError("No unclaimed pathway-ending geometry is available.")
+            state = _AddJunctionRelationshipCommandState(
+                harness_id,
+                junction_id,
+                candidates,
+            )
+            command_inputs = args.command.commandInputs
+            selection_input = command_inputs.addSelectionInput(
+                JUNCTION_RELATIONSHIP_GEOMETRY_INPUT_ID,
+                "Pathway End",
+                "Select pathway-ending shape geometry",
+            )
+            if selection_input is None:
+                raise RuntimeError("Fusion could not create pathway-end selection.")
+            if not selection_input.addSelectionFilter("Profiles"):
+                raise RuntimeError("Fusion could not allow pathway profile selection.")
+            if not selection_input.addSelectionFilter("CustomGraphics"):
+                raise RuntimeError("Fusion could not allow refine-marker selection.")
+            if not selection_input.setSelectionLimits(1, 1):
+                raise RuntimeError("Fusion could not limit pathway-end selection.")
+            choice_input = command_inputs.addDropDownCommandInput(
+                JUNCTION_RELATIONSHIP_CHOICE_INPUT_ID,
+                "Matching Pathway End",
+                adsk.core.DropDownStyles.TextListDropDownStyle,
+            )
+            if choice_input is None:
+                raise RuntimeError("Fusion could not create the pathway-end choice.")
+            choice_input.isVisible = False
+            preselect_handler = _AddJunctionRelationshipPreSelectHandler(state)
+            input_handler = _AddJunctionRelationshipInputChangedHandler(state)
+            validate_handler = _AddJunctionRelationshipValidateInputsHandler(state)
+            execute_handler = _AddJunctionRelationshipExecuteHandler(state)
+            if not args.command.preSelect.add(preselect_handler):
+                raise RuntimeError("Fusion could not filter pathway-end selection.")
+            if not args.command.inputChanged.add(input_handler):
+                raise RuntimeError("Fusion could not watch pathway-end selection.")
+            if not args.command.validateInputs.add(validate_handler):
+                raise RuntimeError("Fusion could not validate pathway-end selection.")
+            if not args.command.execute.add(execute_handler):
+                raise RuntimeError("Fusion could not save the junction relationship.")
+            _handlers.extend((preselect_handler, input_handler, validate_handler, execute_handler))
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            _report_failure("open Add Junction Relationship")
+            raise
+
+
 class _EditEndExecuteHandler(adsk.core.CommandEventHandler):
     """
     Persist profiles selected for a connection-member edit.
@@ -925,6 +1445,7 @@ class _SegmentCreatedHandler(adsk.core.CommandCreatedEventHandler):
     Build the native name-and-member pathway-segmentation command.
     """
 
+    # noinspection PyMethodMayBeStatic
     def notify(self, args: adsk.core.CommandCreatedEventArgs) -> None:
         """
         Resolve eligible interior controls and attach command handlers.
@@ -1796,6 +2317,14 @@ class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
                 _open_add_pathway_command(application, html_args.data)
                 html_args.returnData = json.dumps({"ok": True})
                 return
+            if html_args.action == "add_junction":
+                _open_add_junction_command(application, html_args.data)
+                html_args.returnData = json.dumps({"ok": True})
+                return
+            if html_args.action == "add_junction_relationship":
+                _open_add_junction_relationship_command(application, html_args.data)
+                html_args.returnData = json.dumps({"ok": True})
+                return
             if html_args.action == "edit_end_members":
                 _open_end_member_edit(application, html_args.data)
                 html_args.returnData = json.dumps({"ok": True})
@@ -1879,9 +2408,9 @@ class _PaletteIncomingHandler(adsk.core.HTMLEventHandler):
                     or float(maximum_gap) < 0
                 ):
                     raise ValueError("Diagram QA endpoint gap must be finite and nonnegative.")
-                if contract_version != "1":
+                if contract_version != "2":
                     raise ValueError("Diagram QA contract version is unsupported.")
-                if layout != "measured-pathway-stack":
+                if layout != "endpoint-junction-forest":
                     raise ValueError("Diagram QA layout is unsupported.")
                 _last_diagram_qa_observation = {
                     "status": status,
@@ -1990,6 +2519,32 @@ def start(_context: object) -> None:
             raise RuntimeError("Fusion did not register the pathway creation handler.")
         _handlers.append(pathway_handler)
 
+        junction_command_definition = user_interface.commandDefinitions.addButtonDefinition(
+            ADD_JUNCTION_COMMAND_ID,
+            ADD_JUNCTION_COMMAND_NAME,
+            "Create an unconnected junction from an unused sketch profile.",
+            ADD_PATHWAY_RESOURCE_FOLDER,
+        )
+        if junction_command_definition is None:
+            raise RuntimeError("Fusion did not create the Add Junction command definition.")
+        junction_handler = _AddJunctionCreatedHandler()
+        if not junction_command_definition.commandCreated.add(junction_handler):
+            raise RuntimeError("Fusion did not register the junction creation handler.")
+        _handlers.append(junction_handler)
+
+        relationship_command_definition = user_interface.commandDefinitions.addButtonDefinition(
+            ADD_JUNCTION_RELATIONSHIP_COMMAND_ID,
+            ADD_JUNCTION_RELATIONSHIP_COMMAND_NAME,
+            "Attach a junction to selected pathway-ending geometry.",
+            ADD_PATHWAY_RESOURCE_FOLDER,
+        )
+        if relationship_command_definition is None:
+            raise RuntimeError("Fusion did not create the relationship command definition.")
+        relationship_handler = _AddJunctionRelationshipCreatedHandler()
+        if not relationship_command_definition.commandCreated.add(relationship_handler):
+            raise RuntimeError("Fusion did not register the relationship creation handler.")
+        _handlers.append(relationship_handler)
+
         append_gates_definition = user_interface.commandDefinitions.addButtonDefinition(
             APPEND_GATES_COMMAND_ID,
             APPEND_GATES_COMMAND_NAME,
@@ -2094,6 +2649,7 @@ def stop(_context: object) -> None:
     Remove the command and release retained Fusion event handlers.
     """
     global _pending_append_gate_ids, _pending_refine_ids, _pending_pathway_harness_id
+    global _pending_junction_harness_id
     global _pending_segment_ids
     global _pending_refine_edit_ids
     global _pending_end_edit
@@ -2117,6 +2673,7 @@ def stop(_context: object) -> None:
         _pending_refine_edit_ids = None
         _pending_end_edit = None
         _pending_pathway_harness_id = None
+        _pending_junction_harness_id = None
         _pending_wire_harness_id = None
         _pending_wire_pathway_id = None
         _damaged_harness_results.clear()
@@ -2150,6 +2707,8 @@ def _remove_user_interface(user_interface: adsk.core.UserInterface) -> None:
         COMMAND_ID,
         CREATE_COMMAND_ID,
         ADD_PATHWAY_COMMAND_ID,
+        ADD_JUNCTION_COMMAND_ID,
+        ADD_JUNCTION_RELATIONSHIP_COMMAND_ID,
         APPEND_GATES_COMMAND_ID,
         ADD_REFINE_COMMAND_ID,
         SEGMENT_PATHWAY_COMMAND_ID,
@@ -2541,8 +3100,13 @@ def _serialize_palette_state(
                         "junctionId": str(junction.junction_id),
                         "name": junction.name,
                         "controlId": str(junction.control_id),
-                        "precedingPathwayId": str(junction.preceding_pathway_id),
-                        "followingPathwayId": str(junction.following_pathway_id),
+                        "pathwayRelationships": [
+                            {
+                                "pathwayId": str(relationship.pathway_id),
+                                "endpoint": relationship.endpoint.value,
+                            }
+                            for relationship in junction.pathway_relationships
+                        ],
                     }
                     for junction in definition.junctions
                 ],
@@ -2867,6 +3431,58 @@ def _open_add_pathway_command(application: adsk.core.Application, serialized_dat
         raise
 
 
+def _open_add_junction_command(application: adsk.core.Application, serialized_data: str) -> None:
+    """
+    Open the native isolated-junction command for the palette-selected harness.
+
+    Raises:
+        RuntimeError: If Fusion cannot open the command.
+        ValueError: If the palette payload is malformed.
+    """
+    global _pending_junction_harness_id
+
+    payload = _read_palette_payload(serialized_data)
+    harness_id = _read_payload_uuid(payload, "harnessId", "harness")
+    command_definition = application.userInterface.commandDefinitions.itemById(
+        ADD_JUNCTION_COMMAND_ID
+    )
+    if command_definition is None:
+        raise RuntimeError("Fusion Add Junction command is unavailable.")
+    _pending_junction_harness_id = harness_id
+    try:
+        if not command_definition.execute():
+            raise RuntimeError("Fusion did not open the Add Junction command.")
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        _pending_junction_harness_id = None
+        raise
+
+
+def _open_add_junction_relationship_command(
+    application: adsk.core.Application,
+    serialized_data: str,
+) -> None:
+    """
+    Open the native pathway-end selector for one palette-selected junction.
+    """
+    global _pending_junction_relationship_ids
+
+    payload = _read_palette_payload(serialized_data)
+    harness_id = _read_payload_uuid(payload, "harnessId", "harness")
+    junction_id = _read_payload_uuid(payload, "junctionId", "junction")
+    command_definition = application.userInterface.commandDefinitions.itemById(
+        ADD_JUNCTION_RELATIONSHIP_COMMAND_ID
+    )
+    if command_definition is None:
+        raise RuntimeError("Fusion Add Junction Relationship command is unavailable.")
+    _pending_junction_relationship_ids = (harness_id, junction_id)
+    try:
+        if not command_definition.execute():
+            raise RuntimeError("Fusion did not open the junction relationship command.")
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        _pending_junction_relationship_ids = None
+        raise
+
+
 def _open_end_member_edit(application: adsk.core.Application, serialized_data: str) -> None:
     """
     Open the native member picker for a validated palette request.
@@ -3076,6 +3692,44 @@ def _apply_palette_edit(
             gateway,
         )
         return "Reordered pathway gate."
+    if action == "remove_junction_relationship":
+        endpoint = payload.get("endpoint")
+        if endpoint not in {member.value for member in PathwayEndpoint}:
+            raise ValueError("Junction relationship has an invalid endpoint.")
+        remove_junction_relationship(
+            harness_id,
+            _read_payload_uuid(payload, "junctionId", "junction"),
+            JunctionPathwayRelationship(
+                _read_payload_uuid(payload, "pathwayId", "pathway"),
+                PathwayEndpoint(endpoint),
+            ),
+            gateway,
+        )
+        return "Removed junction relationship."
+    if action == "update_junction_relationships":
+        raw_relationships = payload.get("pathwayRelationships")
+        if not isinstance(raw_relationships, list):
+            raise ValueError("Junction relationships must be a list.")
+        relationships: list[JunctionPathwayRelationship] = []
+        for index, raw_relationship in enumerate(raw_relationships):
+            if not isinstance(raw_relationship, dict):
+                raise ValueError(f"Junction relationship {index + 1} must be an object.")
+            endpoint = raw_relationship.get("endpoint")
+            if endpoint not in {member.value for member in PathwayEndpoint}:
+                raise ValueError(f"Junction relationship {index + 1} has an invalid endpoint.")
+            relationships.append(
+                JunctionPathwayRelationship(
+                    _read_payload_uuid(raw_relationship, "pathwayId", "pathway"),
+                    PathwayEndpoint(endpoint),
+                )
+            )
+        update_junction_relationships(
+            harness_id,
+            _read_payload_uuid(payload, "junctionId", "junction"),
+            tuple(relationships),
+            gateway,
+        )
+        return "Saved junction relationships."
     if action == "remove_pathway_gate":
         remove_pathway_gate(
             harness_id,
