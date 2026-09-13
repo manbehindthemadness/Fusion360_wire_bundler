@@ -137,12 +137,10 @@ function openJunctionRelationships(harness, junction) {
   openJunctionPopupId = junction.junctionId;
   const dialog = document.createElement("dialog");
   const content = document.createElement("div");
-  const heading = document.createElement("h2");
-  const relationships = document.createElement("details");
-  const relationshipSummary = document.createElement("summary");
-  const relationshipTitle = document.createElement("strong");
-  const relationshipCount = document.createElement("span");
-  const sequence = document.createElement("div");
+  const relationshipContent = document.createElement("div");
+  const relationshipSequence = document.createElement("div");
+  const occupancyContent = document.createElement("div");
+  const occupancy = document.createElement("div");
   const add = document.createElement("button");
   const actions = document.createElement("div");
   const close = document.createElement("button");
@@ -150,15 +148,15 @@ function openJunctionRelationships(harness, junction) {
     harness.pathways.map((pathway) => [pathway.pathwayId, pathway]),
   );
   const existingRelationships = junction.pathwayRelationships || [];
+  const memberWires = relationshipJunctionWires(harness, junction);
+  const junctionName = junction.name || "Unnamed junction";
   dialog.className = "junction-relationships-popup";
-  heading.textContent = `Pathway relationships · ${junction.name || "Unnamed junction"}`;
-  content.className = "junction-relationships-content";
-  relationships.className = "junction-relationship-stack";
-  relationshipTitle.textContent = "Pathway Relationships";
-  relationshipCount.className = "item-meta";
-  relationshipCount.textContent = `${existingRelationships.length}`;
-  relationshipSummary.append(relationshipTitle, relationshipCount);
-  sequence.className = "sequence";
+  dialog.setAttribute("aria-label", `Junction configuration: ${junctionName}`);
+  content.className = "section-content";
+  relationshipContent.className = "section-content";
+  relationshipSequence.className = "sequence";
+  occupancyContent.className = "section-content";
+  occupancy.className = "occupancy";
   existingRelationships.forEach((relationship) => {
     const pathway = pathways.get(relationship.pathwayId);
     const endpointLabel = relationship.endpoint === "start" ? "End A" : "End B";
@@ -181,21 +179,33 @@ function openJunctionRelationships(harness, junction) {
     );
     row.dataset.pathwayId = relationship.pathwayId;
     row.dataset.endpoint = relationship.endpoint;
-    sequence.append(row);
+    relationshipSequence.append(row);
   });
   if (!existingRelationships.length) {
-    sequence.append(emptyMessage("No pathway relationships."));
+    relationshipSequence.append(emptyMessage("No pathway relationships."));
   }
-  relationships.append(relationshipSummary, sequence);
   add.type = "button";
   add.className = "button compact";
   add.textContent = "+ Add Relationship";
   add.addEventListener("click", () => addJunctionRelationship(junction.junctionId));
+  relationshipContent.append(relationshipSequence, add);
+  if (!memberWires.length) {
+    occupancy.append(emptyMessage("No wires traverse this junction."));
+  }
+  memberWires.forEach((wire) => {
+    const row = memberRow(
+      wireLabel(wire),
+      () => highlightMember(harness, "preview_wire", wire.wireId),
+    );
+    row.dataset.wireId = wire.wireId;
+    occupancy.append(row);
+  });
+  occupancyContent.append(occupancy);
   close.type = "button";
   close.className = "button";
   close.textContent = "Close";
   close.addEventListener("click", () => dialog.close());
-  actions.className = "dialog-actions";
+  actions.className = "pathway-popup-actions";
   actions.append(close);
   dialog.addEventListener("close", () => {
     if (document.body.querySelector(".junction-relationships-popup") === dialog) {
@@ -204,7 +214,6 @@ function openJunctionRelationships(harness, junction) {
     dialog.remove();
   });
   content.append(
-    heading,
     nameField(
       "Junction Name",
       junction.name,
@@ -213,11 +222,31 @@ function openJunctionRelationships(harness, junction) {
       "Junction name",
       { showLabel: false },
     ),
-    relationships,
-    add,
-    actions,
+    nestedSection(
+      `junction:${junction.junctionId}:relationships`,
+      "Pathway Relationships",
+      `${existingRelationships.length}`,
+      relationshipContent,
+      () => highlightMember(harness, "junction", junction.junctionId),
+    ),
+    nestedSection(
+      `junction:${junction.junctionId}:occupancy`,
+      "Wire Occupancy",
+      `${memberWires.length}`,
+      occupancyContent,
+      () => highlightMember(harness, "junction", junction.junctionId),
+    ),
   );
-  dialog.append(content);
+  const entry = nestedSection(
+    `junction:${junction.junctionId}`,
+    junctionName,
+    `${existingRelationships.length} pathway ${existingRelationships.length === 1 ? "endpoint" : "endpoints"} · ${memberWires.length} ${memberWires.length === 1 ? "wire" : "wires"}`,
+    content,
+    () => highlightMember(harness, "junction", junction.junctionId),
+  );
+  entry.open = true;
+  entry.classList.add("pathway-popup-entry");
+  dialog.append(entry, actions);
   document.body.append(dialog);
   dialog.showModal();
 }

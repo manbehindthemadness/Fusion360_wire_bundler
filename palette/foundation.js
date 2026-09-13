@@ -318,7 +318,6 @@ function renderPathways(harness, selectedPathwayId = null) {
     const occupancy = document.createElement("div");
     const addGates = document.createElement("button");
     const addRefine = document.createElement("button");
-    const addWiresButton = document.createElement("button");
     const members = harness.wires.filter(
       (wire) => wire.orderedPathwayIds.includes(pathway.pathwayId),
     );
@@ -422,10 +421,6 @@ function renderPathways(harness, selectedPathwayId = null) {
     addRefine.disabled = !hasInteriorInsertion;
     addRefine.title = addGates.title;
     addRefine.addEventListener("click", () => addPathwayRefine(harness, pathway));
-    addWiresButton.type = "button";
-    addWiresButton.className = "button compact";
-    addWiresButton.textContent = "+ Add Wire Pairs";
-    addWiresButton.addEventListener("click", () => addWires(pathway.pathwayId));
     const namePayload = { harnessId: harness.harnessId, pathwayId: pathway.pathwayId };
     gateContent.append(
       nameField("Start Name", pathway.startName, "rename_pathway", {
@@ -438,7 +433,7 @@ function renderPathways(harness, selectedPathwayId = null) {
       addGates,
       addRefine,
     );
-    occupancyContent.append(occupancy, addWiresButton);
+    occupancyContent.append(occupancy);
     pathwayContent.append(
       nameField("", pathway.name, "rename_pathway", {
         ...namePayload, field: "name",

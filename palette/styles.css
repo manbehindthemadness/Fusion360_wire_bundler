@@ -20,7 +20,8 @@ body {
 }
 .wire-details { display: grid; gap: 8px; }
 .wire-options { border: 1px solid var(--border); border-radius: 6px; width: 320px; max-width: 90vw; }
-.pathway-popup {
+.pathway-popup,
+.junction-relationships-popup {
   width: 620px;
   max-width: 92vw;
   max-height: 88vh;
@@ -31,8 +32,10 @@ body {
   background: var(--surface);
   color: var(--text);
 }
-.pathway-popup::backdrop { background: #0005; }
-.pathway-popup > .pathway-popup-entry { margin: 0; }
+.pathway-popup::backdrop,
+.junction-relationships-popup::backdrop { background: #0005; }
+.pathway-popup > .pathway-popup-entry,
+.junction-relationships-popup > .pathway-popup-entry { margin: 0; }
 .pathway-popup-actions {
   display: flex;
   justify-content: flex-end;
@@ -670,39 +673,6 @@ button.route-node:hover { border-color: var(--accent); color: var(--accent); }
 .relationship-chain-link .wire-trace { stroke-width: 7; }
 .relationship-connector .stripe-trace,
 .relationship-chain-link .stripe-trace { stroke-width: 1.4; }
-.junction-relationships-popup {
-  width: min(560px, 92vw);
-  max-height: 82vh;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 18px;
-  background: var(--surface);
-  color: var(--text);
-}
-.junction-relationships-popup::backdrop { background: #0007; }
-.junction-relationships-content { display: grid; gap: 12px; }
-.junction-relationships-popup h2,
-.junction-relationships-popup p { margin: 0; }
-.junction-relationship-stack {
-  margin: 0;
-  display: grid;
-  gap: 0;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-}
-.junction-relationship-stack > summary {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px;
-  cursor: pointer;
-  background: var(--surface-subtle);
-}
-.junction-relationship-stack > .sequence {
-  max-height: 52vh;
-  overflow-y: auto;
-  padding: 8px;
-}
 .wire-relationship-graphic {
   border: 1px solid #d9e1e7;
   border-radius: 5px;

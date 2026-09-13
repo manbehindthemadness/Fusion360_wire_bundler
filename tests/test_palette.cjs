@@ -377,7 +377,7 @@ test('isolated junction renders without traces and retains filtering and hover',
   assert.ok(junction);
 });
 
-asyncTest('junction popup shows only its collapsed relationship stack and one add control', async () => {
+asyncTest('junction popup matches pathway styling and shows traversing wire members', async () => {
   const { context, calls } = palette();
   const definition = harness();
   definition.pathways.push({
@@ -386,11 +386,14 @@ asyncTest('junction popup shows only its collapsed relationship stack and one ad
   definition.junctions = [
     { junctionId: 'j1', name: 'Intersection', controlId: 'c1', pathwayRelationships: [
       { pathwayId: 'p', endpoint: 'end' },
+      { pathwayId: 'p2', endpoint: 'start' },
     ] },
     { junctionId: 'j2', name: 'Owner', controlId: 'c2', pathwayRelationships: [
       { pathwayId: 'p2', endpoint: 'start' },
     ] },
   ];
+  definition.wires[0].orderedPathwayIds = ['p', 'p2'];
+  definition.wires[1].orderedPathwayIds = ['p', 'p2'];
 
   const rendered = context.renderRelationshipMap(definition, []);
   descendants(rendered, (node) => (
@@ -398,10 +401,15 @@ asyncTest('junction popup shows only its collapsed relationship stack and one ad
       && node.children[0].textContent === 'Intersection'
   ))[0].events.click();
   const dialog = context.document.body.querySelector('.junction-relationships-popup');
-  const stack = descendants(
-    dialog, (node) => node.className === 'junction-relationship-stack',
-  )[0];
-  assert.ok(!stack.open);
+  const junctionSection = dialog.querySelector('[data-section="junction:j1"]');
+  const relationshipSection = dialog.querySelector('[data-section="junction:j1:relationships"]');
+  const occupancySection = dialog.querySelector('[data-section="junction:j1:occupancy"]');
+  assert.equal(dialog.className, 'junction-relationships-popup');
+  assert.ok(junctionSection.className.split(' ').includes('pathway-popup-entry'));
+  assert.equal(junctionSection.open, true);
+  assert.ok(!relationshipSection.open);
+  assert.ok(!occupancySection.open);
+  assert.match(junctionSection.children[0].children[1].textContent, /2 pathway endpoints · 2 wires/);
   const inputs = descendants(dialog, (node) => node.tag === 'input');
   assert.equal(inputs.length, 1);
   assert.equal(inputs[0].value, 'Intersection');
@@ -415,15 +423,28 @@ asyncTest('junction popup shows only its collapsed relationship stack and one ad
   assert.equal(calls[0].payload.harnessId, 'h');
   assert.equal(calls[0].payload.junctionId, 'j1');
   assert.equal(calls[0].payload.name, 'Main Splice');
-  const rows = descendants(dialog, (node) => node.className === 'member-row');
-  assert.equal(rows.length, 1);
+  const relationshipRows = descendants(
+    relationshipSection, (node) => node.className === 'member-row',
+  );
+  assert.equal(relationshipRows.length, 2);
   assert.equal(descendants(
-    rows[0], (node) => node.className === 'member-reference',
+    relationshipRows[0], (node) => node.className === 'member-reference',
   )[0].textContent, 'lower fuse box path · End B');
   assert.equal(descendants(
     dialog, (node) => ['Branch', 'Owner'].includes(node.textContent),
   ).length, 0);
-  descendants(rows[0], (node) => node.textContent === '×')[0].events.click();
+  const wireRows = descendants(
+    occupancySection, (node) => node.className === 'member-row',
+  );
+  assert.deepEqual(wireRows.map((row) => row.dataset.wireId), ['w1', 'w2']);
+  assert.deepEqual(
+    wireRows.map((row) => descendants(
+      row, (node) => node.className === 'member-reference',
+    )[0].textContent),
+    ['Wire #001', 'Wire #002'],
+  );
+  context.window.confirm = () => true;
+  descendants(relationshipRows[0], (node) => node.textContent === '×')[0].events.click();
   assert.equal(calls[1].action, 'remove_junction_relationship');
   assert.equal(calls[1].payload.pathwayId, 'p');
   runInNewContext(
@@ -435,11 +456,47 @@ asyncTest('junction popup shows only its collapsed relationship stack and one ad
     return { ok: true };
   };
   const add = descendants(dialog, (node) => node.textContent === '+ Add Relationship')[0];
+  assert.ok(descendants(
+    relationshipSection, (node) => node === add,
+  ).length);
+  assert.equal(descendants(
+    occupancySection, (node) => node.textContent === '+ Add Relationship',
+  ).length, 0);
   add.events.click();
   await Promise.resolve();
 
   assert.equal(calls.at(-1).action, 'add_junction_relationship');
   assert.equal(calls.at(-1).payload.junctionId, 'j1');
+  definition.junctions[0].name = 'Updated Junction';
+  context.renderEditor(definition);
+  const refreshed = context.document.body.querySelector('.junction-relationships-popup');
+  assert.equal(context.document.body.querySelectorAll('.junction-relationships-popup').length, 1);
+  assert.equal(
+    refreshed.querySelector('[data-section="junction:j1"]').children[0].children[0].textContent,
+    'Updated Junction',
+  );
+});
+
+test('junction popup reports when no procedural wires traverse it', () => {
+  const { context } = palette();
+  const definition = harness();
+  definition.junctions = [{
+    junctionId: 'j1', name: 'Intersection', controlId: 'c1', pathwayRelationships: [
+      { pathwayId: 'p', endpoint: 'end' },
+    ],
+  }];
+
+  const rendered = context.renderRelationshipMap(definition, []);
+  descendants(rendered, (node) => node.className === 'relationship-junction-hub')[0]
+    .events.click();
+  const dialog = context.document.body.querySelector('.junction-relationships-popup');
+  const occupancySection = dialog.querySelector('[data-section="junction:j1:occupancy"]');
+  assert.equal(descendants(
+    occupancySection, (node) => node.textContent === 'No wires traverse this junction.',
+  ).length, 1);
+  assert.equal(descendants(
+    occupancySection, (node) => node.className === 'member-row',
+  ).length, 0);
 });
 
 asyncTest('junction relationship removal warns only for traversing wire pathways', async () => {
@@ -1047,8 +1104,17 @@ test('wire diagram nodes configure ends and open pathway popup by mouse or keybo
   pathwayNode.events.keydown({ key: ' ', preventDefault() {} });
   const popup = context.document.body.querySelector('.pathway-popup');
   const pathwaySection = popup.querySelector('[data-section="pathway:p"]');
+  const occupancySection = popup.querySelector('[data-section="pathway:p:occupancy"]');
   assert.equal(popup.open, true);
   assert.equal(pathwaySection.open, true);
+  assert.equal(descendants(
+    occupancySection,
+    (node) => node.className === 'member-row',
+  ).length, 3);
+  assert.equal(descendants(
+    popup,
+    (node) => node.textContent === '+ Add Wire Pairs',
+  ).length, 0);
 });
 
 test('each end editor contains only its own profile and sends its wire identity', () => {
